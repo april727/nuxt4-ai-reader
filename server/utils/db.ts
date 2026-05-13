@@ -20,6 +20,9 @@ export async function getDb(): Promise<any> {
     if (existsSync(DB_PATH)) {
       const buf = readFileSync(DB_PATH)
       db = new SQL.Database(buf)
+      // 已有数据库也需要运行 createTables()，用 IF NOT EXISTS 补齐旧库缺失的表
+      createTables()
+      saveDb()
     } else {
       db = new SQL.Database()
       db.run('PRAGMA journal_mode=WAL')
@@ -49,11 +52,8 @@ function createTables() {
     textId TEXT PRIMARY KEY, readCount INTEGER DEFAULT 0, lastReadAt TEXT,
     markCount INTEGER DEFAULT 0
   )`)
-  // migration: add missing columns/tables
+  // migration: add missing columns from older schema versions
   try { db.run('ALTER TABLE folders ADD COLUMN parent TEXT DEFAULT \'\'') } catch {}
-
-  // 确保 stats 表存在（旧库迁移）
-  db.run('CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY, readCount INTEGER DEFAULT 0, lastReadAt TEXT, markCount INTEGER DEFAULT 0)')
 }
 
 function migrateFromJson() {

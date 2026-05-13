@@ -1,8 +1,15 @@
 <template>
   <div class="folder-sidebar">
     <div class="fs-header">
+      <svg class="fs-logo-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
+        <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
+        <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
+      </svg>
       <h2 class="fs-title">书架</h2>
     </div>
+
+    <div class="fs-section-label">文件夹</div>
 
     <div class="fs-list">
       <div
@@ -18,7 +25,7 @@
         @dragleave.prevent="dragTarget = ''"
         @drop.prevent="$emit('dropOnFolder', f.id)"
       >
-        <svg class="fs-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg class="fs-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <span class="fs-name">{{ f.name }}</span>
@@ -26,14 +33,17 @@
         <button v-if="!['default'].includes(f.id)" class="fs-del" @click.stop="$emit('deleteFolder', f.id)" title="删除">×</button>
         <button class="fs-sub" @click.stop="$emit('addSub', f.id)" title="新建子文件夹">+</button>
       </div>
-    </div>
 
-    <div class="fs-create">
-      <input v-if="creating" ref="newFolderInput" v-model="newFolderName" class="fs-input" placeholder="文件夹名称" @keydown.enter="createFolder" @keydown.escape="creating=false; newFolderName=''" @blur="creating=false; newFolderName=''" />
-      <button v-else class="fs-add-btn" @click="startCreate">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>新建文件夹</span>
-      </button>
+      <!-- 新建文件夹 — 列表末尾 -->
+      <div class="fs-item fs-new-item" v-if="!creating" @click="startCreate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        <span class="fs-name">新建文件夹</span>
+      </div>
+      <div class="fs-item fs-new-input" v-else>
+        <input ref="newFolderInput" v-model="newFolderName" class="fs-input" placeholder="文件夹名称" @keydown.enter="createFolder" @keydown.escape="creating=false; newFolderName=''" @blur="creating=false; newFolderName=''" />
+      </div>
     </div>
   </div>
 </template>
@@ -61,24 +71,41 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 </script>
 
 <style scoped>
-.folder-sidebar { display: flex; flex-direction: column; height: 100%; background: #fafbfc; }
-.fs-header { padding: 16px 20px 12px; }
-.fs-title { font-size: 0.9em; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
-.fs-list { flex: 1; overflow-y: auto; padding: 0 8px; }
-.fs-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: none; border-radius: 8px; background: transparent; color: #475569; font-size: 13px; cursor: pointer; transition: all 0.12s; text-align: left; }
-.fs-item:hover { background: #f1f5f9; }
-.fs-item.active { background: #eef2ff; color: #6366f1; font-weight: 500; }
-.fs-icon { flex-shrink: 0; opacity: 0.5; }
+.folder-sidebar { display: flex; flex-direction: column; height: 100%; background: transparent; font-family: 'DM Sans', sans-serif; }
+.fs-header { display: flex; align-items: center; gap: 9px; padding: 18px 20px 0; }
+.fs-logo-icon { flex-shrink: 0; color: #1a1a18; }
+.fs-title { font-size: 15px; font-weight: 500; color: #1a1a18; }
+.fs-section-label {
+  font-size: 10.5px; font-weight: 500; color: #a09e97; letter-spacing: 0.07em;
+  text-transform: uppercase; padding: 0 10px; margin: 22px 0 6px 14px;
+}
+.fs-list { flex: 1; overflow-y: auto; padding: 0 10px; }
+.fs-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
+  border: 0.5px solid transparent; border-radius: 9px; background: transparent;
+  color: #6b6963; font-size: 13px; cursor: pointer; transition: background 0.12s, color 0.12s; text-align: left;
+  margin-bottom: 2px;
+}
+.fs-item:hover { background: rgba(0,0,0,0.04); color: #1a1a18; }
+.fs-item.active {
+  background: #ffffff;
+  border-color: rgba(0,0,0,0.08);
+  color: #1a1a18;
+  font-weight: 500;
+}
+.fs-icon { flex-shrink: 0; opacity: 0.6; color: #6b6963; }
 .fs-item.active .fs-icon { opacity: 1; }
 .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fs-count { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #e2e8f0; color: #64748b; }
-.fs-item.active .fs-count { background: #c7d2fe; color: #6366f1; }
-.fs-del, .fs-sub { width: 20px; height: 20px; border: none; border-radius: 50%; background: transparent; color: #94a3b8; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: all 0.12s; }
+.fs-count { font-size: 11px; color: #b0ae9f; font-family: 'DM Mono', monospace; font-weight: 400; }
+.fs-del, .fs-sub { width: 22px; height: 22px; border: none; border-radius: 50%; background: transparent; color: #a09e97; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: all 0.12s; font-family: 'DM Sans', sans-serif; }
 .fs-item:hover .fs-del, .fs-item:hover .fs-sub { opacity: 1; }
-.fs-del:hover { background: #fee2e2; color: #ef4444; }
-.fs-sub:hover { background: #e0e7ff; color: #6366f1; }
-.fs-create { padding: 12px 16px; border-top: 1px solid #e8ecf1; }
-.fs-add-btn { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px 12px; border: 1px dashed #cbd5e1; border-radius: 8px; background: transparent; color: #94a3b8; font-size: 12px; cursor: pointer; }
-.fs-add-btn:hover { border-color: #6366f1; color: #6366f1; }
-.fs-input { width: 100%; padding: 8px 12px; border: 1px solid #6366f1; border-radius: 8px; font-size: 13px; outline: none; background: #ffffff; }
+.fs-del:hover { background: #fce9e5; color: #b84b2e; }
+.fs-sub:hover { background: rgba(0,0,0,0.06); color: #4a4a46; }
+/* 新建文件夹 — 列表内样式 */
+.fs-new-item { color: #a09e97; }
+.fs-new-item:hover { color: #6b6963; background: rgba(0,0,0,0.04); }
+.fs-new-input { padding: 0 2px; cursor: default; }
+.fs-new-input:hover { background: transparent; }
+.fs-input { width: 100%; padding: 8px 10px; border: 1px solid #3d3591; border-radius: 8px; font-size: 13px; outline: none; background: #ffffff; color: #1a1a18; font-family: 'DM Sans', sans-serif; }
+.fs-input::placeholder { color: #c0bdb4; }
 </style>
