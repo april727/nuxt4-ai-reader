@@ -278,14 +278,15 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); if (selPlayTimer) 
 /* 段落序号位置标记 */
 .paragraph-index { transition: all 0.25s; }
 .paragraph-index.pos-marker {
-  background: #6366f1 !important;
+  background: #93c5fd !important;
   color: #ffffff !important;
-  box-shadow: 0 0 0 4px rgba(99,102,241,0.25);
+  box-shadow: 0 0 0 4px rgba(147,197,253,0.25);
   animation: pulsePos 2s infinite;
 }
-@keyframes pulsePos { 0%,100%{box-shadow:0 0 0 4px rgba(99,102,241,0.25)} 50%{box-shadow:0 0 0 10px rgba(99,102,241,0)}}
-.article-pos { font-size: 12px; color: #6366f1; margin-left: auto; }
-.article-pos button { margin-left: 6px; padding: 2px 8px; border: 1px solid #c7d2fe; border-radius: 4px; background: #eef2ff; color: #6366f1; cursor: pointer; font-size: 11px; }
+@keyframes pulsePos {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(147,197,253,0.25); }
+  50% { box-shadow: 0 0 0 10px rgba(147,197,253,0); }
+}
 
 /* 选中文字标记工具条 */
 .sel-toolbar {

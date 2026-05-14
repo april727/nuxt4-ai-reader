@@ -25,7 +25,7 @@
         @dragleave.prevent="dragTarget = ''"
         @drop.prevent="$emit('dropOnFolder', f.id)"
       >
-        <svg class="fs-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg class="fs-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <span class="fs-name">{{ f.name }}</span>
@@ -72,18 +72,18 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 
 <style scoped>
 .folder-sidebar { display: flex; flex-direction: column; height: 100%; background: transparent; font-family: 'DM Sans', sans-serif; }
-.fs-header { display: flex; align-items: center; gap: 9px; padding: 18px 20px 0; }
-.fs-logo-icon { flex-shrink: 0; color: #1a1a18; }
-.fs-title { font-size: 15px; font-weight: 500; color: #1a1a18; }
+.fs-header { display: flex; align-items: center; gap: 10px; padding: 20px 20px 0 24px; }
+.fs-logo-icon { flex-shrink: 0; color: #1a1a18; width: 24px; height: 24px; stroke-width: 1.6; }
+.fs-title { font-size: 18px; font-weight: 600; color: #1a1a18; }
 .fs-section-label {
   font-size: 10.5px; font-weight: 500; color: #a09e97; letter-spacing: 0.07em;
-  text-transform: uppercase; padding: 0 10px; margin: 22px 0 6px 14px;
+  text-transform: uppercase; padding: 0 10px; margin: 22px 0 6px 18px;
 }
-.fs-list { flex: 1; overflow-y: auto; padding: 0 10px; }
+.fs-list { flex: 1; overflow-y: auto; padding: 0 10px 0 16px; }
 .fs-item {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px 8px 14px;
   border: 0.5px solid transparent; border-radius: 9px; background: transparent;
-  color: #6b6963; font-size: 13px; cursor: pointer; transition: background 0.12s, color 0.12s; text-align: left;
+  color: #6b6963; font-size: 14px; cursor: pointer; transition: background 0.12s, color 0.12s; text-align: left;
   margin-bottom: 2px;
 }
 .fs-item:hover { background: rgba(0,0,0,0.04); color: #1a1a18; }
@@ -96,7 +96,7 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 .fs-icon { flex-shrink: 0; opacity: 0.6; color: #6b6963; }
 .fs-item.active .fs-icon { opacity: 1; }
 .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fs-count { font-size: 11px; color: #b0ae9f; font-family: 'DM Mono', monospace; font-weight: 400; }
+.fs-count { font-size: 12px; color: #b0ae9f; font-family: 'DM Mono', monospace; font-weight: 400; }
 .fs-del, .fs-sub { width: 22px; height: 22px; border: none; border-radius: 50%; background: transparent; color: #a09e97; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: all 0.12s; font-family: 'DM Sans', sans-serif; }
 .fs-item:hover .fs-del, .fs-item:hover .fs-sub { opacity: 1; }
 .fs-del:hover { background: #fce9e5; color: #b84b2e; }

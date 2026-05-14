@@ -42,7 +42,7 @@ function createTables() {
     id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT,
     folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT,
     analysis TEXT, segments TEXT, explanations TEXT,
-    marks TEXT, readingPosition TEXT,
+    marks TEXT, readingPosition TEXT, paragraphChats TEXT,
     createdAt TEXT, updatedAt TEXT
   )`)
   db.run(`CREATE TABLE IF NOT EXISTS folders (
@@ -54,6 +54,7 @@ function createTables() {
   )`)
   // migration: add missing columns from older schema versions
   try { db.run('ALTER TABLE folders ADD COLUMN parent TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN paragraphChats TEXT DEFAULT \'\'') } catch {}
 }
 
 function migrateFromJson() {
@@ -62,7 +63,7 @@ function migrateFromJson() {
     if (existsSync(textsFile)) {
       const texts = JSON.parse(readFileSync(textsFile, 'utf-8'))
       for (const t of texts) {
-        db.run(`INSERT OR REPLACE INTO texts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+        db.run(`INSERT OR REPLACE INTO texts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
           t.id, t.title || '', t.text || '', t.source || '', t.folder || 'default',
           t.excerpt || '', t.filePath || '',
           t.analysis ? JSON.stringify(t.analysis) : '',
@@ -70,6 +71,7 @@ function migrateFromJson() {
           t.explanations ? JSON.stringify(t.explanations) : '',
           t.marks ? JSON.stringify(t.marks) : '',
           t.readingPosition ? JSON.stringify(t.readingPosition) : '',
+          t.paragraphChats ? JSON.stringify(t.paragraphChats) : '',
           t.createdAt || '', t.updatedAt || '',
         ])
       }

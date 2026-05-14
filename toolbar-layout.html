@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: system-ui; background: #f5f5f5; padding: 40px; }
+  .diagram { max-width: 680px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 30px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+  h2 { font-size: 16px; color: #333; margin: 0 0 24px; }
+  .block {
+    position: relative; border: 2px dashed #93c5fd; border-radius: 10px; padding: 38px 14px 14px;
+    background: #edeafd; margin-bottom: 16px; min-height: 100px;
+  }
+  .block .num {
+    position: absolute; left: 14px; top: 14px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #93c5fd; color: #fff; font-size: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: monospace;
+  }
+  .block .toolbar {
+    position: absolute; top: 6px; right: 12px;
+    display: flex; gap: 4px;
+  }
+  .block .toolbar .btn {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: #fff; border: 1px solid #ddd;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #888;
+  }
+  .block .toolbar .btn.confirm { background: #ecfdf5; border-color: #10b981; color: #10b981; }
+  .block .text {
+    font-family: Georgia, serif; font-size: 15px; line-height: 1.8;
+    color: #1a1a18; padding-left: 38px;
+  }
+  .annotations { margin-top: 32px; display: flex; flex-direction: column; gap: 10px; }
+  .annot { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #555; }
+  .annot .swatch { width: 36px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+  .annot .label { font-weight: 600; min-width: 80px; }
+  .legend { display: flex; gap: 24px; margin-bottom: 24px; }
+  .leg { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #666; }
+  .leg .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="diagram">
+  <h2>激活段落 — 工具栏位置标注</h2>
+
+  <div class="legend">
+    <div class="leg"><div class="dot" style="background:#10b981"></div> 绿色勾 = 确认</div>
+    <div class="leg"><div class="dot" style="background:#d1d5db;border:1px solid #999"></div> 灰色 = 其他按钮</div>
+  </div>
+
+  <div class="block">
+    <div class="num">1</div>
+    <div class="toolbar">
+      <div class="btn confirm">&#10003;</div>
+      <div class="btn">&#128172;</div>
+      <div class="btn">&#128203;</div>
+    </div>
+    <div class="text">
+      This is the paragraph text. The toolbar sits in the top-right corner,
+      <strong style="color:#3d3591">above the text area</strong>, occupying the 38px
+      top padding reserved by <code>padding-top: 38px</code> on the active block.
+      Text starts below this zone and is never obscured.
+    </div>
+  </div>
+
+  <div class="annotations">
+    <div class="annot">
+      <div class="swatch" style="background:#3d3591"></div>
+      <span class="label">工具栏区</span>
+      <span>position: absolute; top: 6px; right: 12px — 3 按钮共 86px 宽</span>
+    </div>
+    <div class="annot">
+      <div class="swatch" style="background:#edeafd"></div>
+      <span class="label">顶部 padding</span>
+      <span>para-block.active → padding-top: 38px — 为工具栏腾出空间</span>
+    </div>
+    <div class="annot">
+      <div class="swatch" style="background:#93c5fd"></div>
+      <span class="label">文字区</span>
+      <span>文字从顶部 padding 下方开始，不受工具栏遮挡</span>
+    </div>
+    <div class="annot">
+      <div class="swatch" style="background:#ddd"></div>
+      <span class="label">段落边界</span>
+      <span>虚线 = para-block（padding: 14px，active → 38px top）</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

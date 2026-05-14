@@ -53,23 +53,49 @@
           :ref="el => { if (el) paraRefs[index] = el }"
           @click="handleParaClick(para, $event)"
           @mouseup="handleTextSelect(para)"
+          @dblclick="handleDoubleClick(para)"
         >
           <div
             class="para-num"
-            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id }"
+            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id, 'has-chat': paragraphsWithChats.has(para.id) }"
             @click.stop="handleSetPosition(para.id)"
             :title="readingPosition?.paragraphId === para.id ? '当前阅读位置' : '点击标记阅读位置'"
           >{{ index + 1 }}</div>
-          <p class="para-text" v-html="renderMarkedText(para)"></p>
+          <p v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></p>
+          <textarea
+            v-else
+            class="para-edit-area"
+            v-model="editText"
+            @keydown.escape="cancelEdit"
+            @keydown.ctrl.enter="saveEdit(para.id)"
+            rows="4"
+          ></textarea>
           <div class="para-actions" v-if="para.id === activeParagraphId" @click.stop>
-            <button class="para-action-btn" @click.stop="handleParagraphAction('translate', para.id, para.text)" title="翻译">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>
+            <button
+              v-if="editingParagraphId === para.id"
+              class="para-action-btn edit-confirm"
+              @click.stop="saveEdit(para.id)"
+              title="确认修改"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
               </svg>
             </button>
-            <button class="para-action-btn" @click.stop="startEdit(para.id)" title="编辑">
+            <button
+              v-else
+              class="para-action-btn"
+              @click.stop="startEdit(para.id)"
+              title="编辑"
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+              </svg>
+            </button>
+            <button class="para-action-btn" @click.stop="focusChatInput" title="快捷提问">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                <line x1="9" y1="10" x2="15" y2="10"/>
+                <line x1="12" y1="7" x2="12" y2="13"/>
               </svg>
             </button>
             <button class="para-action-btn" @click.stop="doCopy(para.text)" title="复制">
@@ -97,7 +123,7 @@
         </div>
 
         <!-- 理解 Tab -->
-        <div v-if="activeTab === 'understand'" class="panel-content">
+        <div v-if="activeTab === 'understand'" class="panel-content qa-panel" @mousemove="onPanelMouseMove">
           <div class="panel-scroll">
             <section class="panel-section" v-if="rightPanelContent || isTyping || displayedContent">
               <div class="section-header">
@@ -120,27 +146,37 @@
             </div>
           </div>
 
-          <!-- 聊天区 -->
-          <div class="chat-area">
-            <div class="chat-messages" ref="chatMessagesEl">
+          <!-- 问答浮动区：默认隐藏，鼠标移至理解框底部时出现 -->
+          <Transition name="qa-slide"><div v-if="qaVisible" class="qa-area" ref="qaAreaRef" :style="qaCollapsed ? { background: 'transparent', borderTopColor: 'transparent' } : {}" @mouseenter="stopQaHideTimer" @mouseleave="qaCollapsed && startQaHideTimer()">
+            <!-- 拖拽手柄（有回答内容时才显示） -->
+            <div v-if="hasAnswerContent" class="qa-resize-handle" @mousedown.prevent="startQaResize"></div>
+            <!-- 回答区 -->
+            <div class="qa-answer" ref="qaAnswerRef" :style="qaAnswerStyle">
               <div
                 v-for="(msg, i) in currentParagraphChat"
                 :key="i"
                 class="chat-msg"
                 :class="msg.role"
               >
-                <div class="chat-bubble">{{ msg.content }}</div>
+                <div class="chat-bubble"><MarkdownRenderer :content="msg.content" /></div>
               </div>
-              <div v-if="chatLoading && !chatTyping" class="chat-msg ai">
+              <!-- 流式输出中 -->
+              <div v-if="chatTyping" class="chat-msg ai">
+                <div class="chat-bubble"><MarkdownRenderer :content="typingChatContent" /><span class="typing-cursor">|</span></div>
+              </div>
+              <div v-else-if="chatLoading && !chatTyping" class="chat-msg ai">
                 <div class="chat-bubble" style="color:#a09e97">思考中…</div>
               </div>
             </div>
-            <div class="chat-input-row">
+            <!-- 提问输入框 -->
+            <div class="qa-input-row">
               <input
+                ref="chatInputEl"
                 class="chat-input"
                 v-model="chatInput"
                 placeholder="提问关于当前段落的问题…"
                 @keydown.enter="sendChat"
+                @focus="stopQaHideTimer"
                 :disabled="chatLoading"
               />
               <button class="send-btn" @click="sendChat" :disabled="!chatInput.trim() || chatLoading">
@@ -150,6 +186,7 @@
               </button>
             </div>
           </div>
+          </Transition>
         </div>
 
         <!-- 笔记 Tab -->
@@ -177,10 +214,15 @@
               </svg>
               <p>标记的生词会显示在这里</p>
             </div>
-            <div v-for="word in savedVocab" :key="word.word" class="vocab-card">
+            <div v-for="word in savedVocab" :key="word.text" class="vocab-card">
               <div class="vocab-word">{{ word.text }}</div>
               <div class="vocab-phonetic">{{ word.phonetic }}</div>
               <div class="vocab-meaning">{{ word.meaning }}</div>
+              <button class="vocab-pronounce" @click.stop="article.pronounceWord(word.text)" title="发音">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+              </button>
             </div>
           </div>
         </div>
@@ -267,14 +309,78 @@ const pdfUrl = ref(''); const showPdf = ref(false)
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
 const readerBodyEl = ref<HTMLElement | null>(null)
 const articlePane = ref<HTMLElement | null>(null)
-const chatMessagesEl = ref<HTMLElement | null>(null)
 const paraRefs = ref<HTMLElement[]>([])
 const leftWidth = ref(0)
 const rightWidth = ref(340)
+// 记录哪些段落有问答历史（用于段落序号指示器）
+const paragraphsWithChats = reactive(new Set<string>())
+
+// QA 浮动区状态（按段落独立存储高度和拖拽标记）
+const qaVisible = ref(false)
+const answerHeightMap = ref<Record<string, number>>({})
+const userAdjustedMap = ref<Record<string, boolean>>({})
+const answerHeight = computed({
+  get: () => answerHeightMap.value[activeParagraphId.value] ?? 120,
+  set: (v) => { answerHeightMap.value[activeParagraphId.value] = v }
+})
+const userAdjustedHeight = computed({
+  get: () => userAdjustedMap.value[activeParagraphId.value] ?? false,
+  set: (v) => { userAdjustedMap.value[activeParagraphId.value] = v }
+})
+const QA_MIN_HEIGHT = 0
+let qaResizing = false
+const qaAnswerRef = ref<HTMLElement | null>(null)
+const qaAreaRef = ref<HTMLElement | null>(null)
+const chatInputEl = ref<HTMLInputElement | null>(null)
+// 是否有回答内容（用于控制回答区是否显示）
+const hasAnswerContent = computed(() =>
+  currentParagraphChat.value.length > 0 || chatLoading.value || chatTyping.value
+)
+// QA 是否处于完全折叠态（无内容 + 高度归零）
+const qaCollapsed = computed(() => !hasAnswerContent.value && answerHeight.value === 0)
+// 回答区样式：折叠态透明，流式输出时自适应高度，手动拖拽后锁定高度
+const isStreaming = computed(() => chatTyping.value || chatLoading.value)
+const qaAnswerStyle = computed(() => {
+  if (!hasAnswerContent.value || answerHeight.value === 0) {
+    return { height: '0', padding: '0', overflow: 'hidden' }
+  }
+  // 流式输出中 → 自适应；用户未手动拖拽过 → 自适应
+  if (isStreaming.value || !userAdjustedHeight.value) {
+    return {}
+  }
+  return { height: answerHeight.value + 'px' }
+})
+// 流式输出期间自动滚到底部
+watch(typingChatContent, () => {
+  nextTick(() => {
+    if (qaAnswerRef.value) qaAnswerRef.value.scrollTop = qaAnswerRef.value.scrollHeight
+  })
+})
+// 折叠态自动隐藏定时器
+let qaHideTimer: ReturnType<typeof setTimeout> | null = null
+function startQaHideTimer() {
+  stopQaHideTimer()
+  qaHideTimer = setTimeout(() => { hideQa() }, 1000)
+}
+function stopQaHideTimer() {
+  if (qaHideTimer) { clearTimeout(qaHideTimer); qaHideTimer = null }
+}
 
 // 笔记/生词本地数据
-const notes = ref<Array<{ id: string; paraIdx: number; content: string; createdAt: string }>>([])
-const savedVocab = ref<Array<{ text: string; phonetic: string; meaning: string }>>([])
+// 生词 — 从全文章 marks 中自动提取 type=word 的标记
+const savedVocab = computed(() => {
+  return marks.value
+    .filter(m => m.type === 'word')
+    .map(m => {
+      const phoneticMatch = m.detail?.match(/\[PHONETIC\]\/(.+?)\/\[\/PHONETIC\]/)
+      const meaningMatch = m.detail?.match(/### 基本释义\n(.+)/)
+      return {
+        text: m.text,
+        phonetic: phoneticMatch?.[1] || '',
+        meaning: meaningMatch?.[1]?.trim() || '',
+      }
+    })
+})
 
 const tabs = [
   { key: 'understand', label: '理解' },
@@ -336,6 +442,94 @@ function startResize(e: MouseEvent) {
   document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
 }
 
+// ---- QA 浮动区控制 ----
+function onPanelMouseMove(e: MouseEvent) {
+  if (qaVisible.value) return
+  const panel = e.currentTarget as HTMLElement
+  const rect = panel.getBoundingClientRect()
+  if (e.clientY >= rect.bottom - 50) {
+    showQa()
+  }
+}
+
+function showQa() {
+  qaVisible.value = true
+  stopQaHideTimer()
+  userAdjustedHeight.value = false
+  if (currentParagraphChat.value.length > 0) {
+    answerHeight.value = Math.min(200, (qaAreaRef.value?.closest('.qa-panel')?.getBoundingClientRect().height || 400) - 56)
+  } else {
+    answerHeight.value = 0
+    startQaHideTimer()
+  }
+}
+
+function hideQa() {
+  stopQaHideTimer()
+  qaVisible.value = false
+  qaResizing = false
+}
+
+function startQaResize(e: MouseEvent) {
+  if (qaResizing) return
+  qaResizing = true
+  userAdjustedHeight.value = true
+  // 捕获当前实际高度作为拖拽起点（border-box 下高度含 padding，与 getBoundingClientRect 一致）
+  if (qaAnswerRef.value) {
+    answerHeight.value = qaAnswerRef.value.getBoundingClientRect().height
+  }
+  stopQaHideTimer()
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+
+  const startY = e.clientY
+  const startH = answerHeight.value
+
+  const SNAP_THRESHOLD = 30
+  const QA_SNAP_MIN = 80
+
+  const onMove = (ev: MouseEvent) => {
+    if (!qaResizing) return
+    const dy = startY - ev.clientY // 往上拖为正
+    const newH = startH + dy
+
+    // 向下拖拽：接近折叠态时磁吸归零，重新锚定以便继续向上拖
+    if (newH <= SNAP_THRESHOLD) {
+      answerHeight.value = 0
+      startH = 0
+      startY = ev.clientY
+      if (!hasAnswerContent.value) startQaHideTimer()
+      return
+    }
+
+    // 从折叠态向上拖拽：超过阈值后从最小高度起偏移计算，鼠标移动直接映射为高度变化
+    const effectiveH = startH === 0
+      ? QA_SNAP_MIN + (newH - SNAP_THRESHOLD)
+      : newH
+
+    if (effectiveH > 0) stopQaHideTimer()
+
+    const panel = (e.target as HTMLElement).closest('.qa-panel')
+    if (panel) {
+      const maxH = panel.getBoundingClientRect().height - 56
+      answerHeight.value = effectiveH > maxH ? maxH : effectiveH
+    } else {
+      answerHeight.value = effectiveH
+    }
+  }
+
+  const cleanup = () => {
+    qaResizing = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  const onUp = () => { userAdjustedHeight.value = true; cleanup() }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
 // ---- 文本选择工具条（与旧版 ArticlePanel 完全一致的 mouseup 方式） ----
 const selToolbar = reactive({ visible: false, x: 0, y: 0, text: '', paraId: '', startOffset: 0, endOffset: 0 })
 const selToolbarStyle = computed(() => {
@@ -372,6 +566,17 @@ function handleTextSelect(p: Paragraph) {
   }, 10)
 }
 
+function handleDoubleClick(para: Paragraph) {
+  // 双击：选中单词 → 显示工具条 → 自动发音
+  setTimeout(() => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) return
+    const word = sel.toString().trim()
+    if (word.length < 2 || word.length > 50) return
+    article.pronounceWord(word)
+  }, 20)
+}
+
 function getTextOffset(root: Element, targetNode: Node, nodeOffset: number): number {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   let offset = 0; let node: Node | null
@@ -403,6 +608,12 @@ function handleParaClick(p: Paragraph, e: MouseEvent) {
   const sel = window.getSelection()
   if (sel && !sel.isCollapsed) return
   article.setActiveParagraph(p.id)
+  // 切换段落：有问答内容则自动展示，无内容则隐藏
+  if (currentParagraphChat.value.length > 0) {
+    if (!qaVisible.value) { qaVisible.value = true; stopQaHideTimer() }
+  } else {
+    hideQa()
+  }
   pendingPara = p
   clickTimer = setTimeout(() => {
     if (pendingPara) {
@@ -413,7 +624,32 @@ function handleParaClick(p: Paragraph, e: MouseEvent) {
 }
 
 function doCopy(text: string) { navigator.clipboard.writeText(text).catch(() => {}) }
-function startEdit(pid: string) {} // placeholder — 保留给未来编辑功能
+
+// 段落文本编辑
+const editingParagraphId = ref<string | null>(null)
+const editText = ref('')
+function startEdit(pid: string) {
+  const para = paragraphs.value.find(p => p.id === pid)
+  if (!para) return
+  editingParagraphId.value = pid
+  editText.value = para.text
+}
+function saveEdit(pid: string) {
+  if (editText.value.trim()) {
+    article.updateParagraphText(pid, editText.value.trim())
+  }
+  editingParagraphId.value = null
+  editText.value = ''
+}
+function cancelEdit() {
+  editingParagraphId.value = null
+  editText.value = ''
+}
+
+function focusChatInput() {
+  if (!qaVisible.value) { qaVisible.value = true; stopQaHideTimer() }
+  nextTick(() => { chatInputEl.value?.focus() })
+}
 
 // ---- 加载 ----
 onMounted(() => {
@@ -432,6 +668,10 @@ onMounted(async () => {
     if (data.explanations) for (const [k, v] of Object.entries(data.explanations)) { const [pid, act] = k.split(':'); article.setCachedExplanation(pid, act as any, v as string) }
     if (data.marks) marks.value = data.marks
     if (data.readingPosition) readingPosition.value = data.readingPosition
+    if (data.paragraphChats) {
+      article.loadParagraphChats(data.paragraphChats)
+      for (const pid of Object.keys(data.paragraphChats)) paragraphsWithChats.add(pid)
+    }
     if (!data.analysis || !data.segments) await runAnalysis(data.text)
     const markPid = route.query.mark as string
     if (markPid) { await nextTick(); const el = document.querySelector(`[data-id="${markPid}"]`); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
@@ -489,7 +729,7 @@ async function handleParagraphAction(action: ParagraphAction, pid: string, ptext
   const typeLabel = action === 'translate' ? '专业翻译' : '双语阅读导师'
   const requirements = action === 'translate'
     ? `将以下段落翻译成流畅自然的中文。忠实原文，只输出翻译结果，不要添加任何解释。\n\n待翻译段落：\n${ptext}`
-    : `深度解读以下段落，结合文章背景。用 Markdown 输出三部分：### 一、整体翻译 ### 二、难点词汇解析（表格） ### 三、段落精讲。\n\n文章背景：${article.getArticleContext()}\n\n段落：${ptext}`
+    : `深度解读以下段落，结合文章背景。用 Markdown 输出三部分：### 一、整体翻译 ### 二、难点词汇解析（表格，词性用英文缩写如 n. v. adj. adv. prep. conj.） ### 三、段落精讲。\n\n文章背景：${article.getArticleContext()}\n\n段落：${ptext}`
   const messages = [
     { role: 'system' as const, content: `你是一位${typeLabel}。禁止开场白和自我介绍。` },
     { role: 'user' as const, content: requirements }
@@ -543,12 +783,7 @@ async function handleCreateMark(pid: string, text: string, type: MarkType, start
   try {
     await deepseek.streamExplain(msgs, (chunk: string) => { full += chunk; markPopup.typingContent = full })
     m.detail = full; markPopup.typing = false; markPopup.loading = false
-    // 生词自动收藏
-    if (type === 'word') {
-      const phoneticMatch = full.match(/\[PHONETIC\]\/(.+?)\/\[\/PHONETIC\]/)
-      const meaningMatch = full.match(/### 基本释义\n(.+)/)
-      savedVocab.value.push({ text, phonetic: phoneticMatch?.[1] || '', meaning: meaningMatch?.[1]?.trim() || '' })
-    }
+    // savedVocab 已改为 computed 自动从 marks 提取，无需手动插入
   } catch { markPopup.typing = false; markPopup.loading = false }
   saveMarks()
 }
@@ -586,24 +821,35 @@ function jumpToReadingPos() {
 
 function handlePronounce(word: string) { article.pronounceWord(word) }
 
+// 持久化所有段落的对话历史
+function saveChats() {
+  const chats = article.getAllParagraphChats()
+  if (Object.keys(chats).length === 0) return
+  $fetch('/api/text/update', { method: 'POST', body: { id, paragraphChats: chats } }).catch(() => {})
+}
+
 async function sendChat() {
   const msg = chatInput.value.trim(); if (!msg || chatLoading.value) return
   const pid = activeParagraphId.value; if (!pid) return
+  // 确保 QA 可见并有足够高度
+  if (!qaVisible.value) showQa()
+  userAdjustedHeight.value = false
+  if (answerHeight.value < 80) { answerHeight.value = 80; stopQaHideTimer() }
   const para = paragraphs.value.find(p => p.id === pid)
   const ctx = [para ? `段落原文：\n${para.text}` : '', rightPanelContent.value ? `分析内容：\n${rightPanelContent.value}` : ''].filter(Boolean).join('\n\n')
-  const um: ChatMessage = { role: 'user', content: msg }; article.addParagraphChatMessage(pid, um); chatLoading.value = true; chatInput.value = ''
+  const um: ChatMessage = { role: 'user', content: msg }; article.addParagraphChatMessage(pid, um); saveChats(); paragraphsWithChats.add(pid); chatLoading.value = true; chatInput.value = ''
   const systemMsg = { role: 'system' as const, content: `你是专注的阅读导师。结合文章背景和当前段落回答用户问题。\n\n文章背景：${article.getArticleContext()}\n\n当前段落上下文：${ctx}` }
   const messages = [systemMsg, ...article.getParagraphChat(pid)]
   let fullReply = ''; startChatStream('')
   try {
     await deepseek.streamExplain(messages, (chunk: string) => { fullReply += chunk; appendChatText(chunk) })
     endChatStream()
-    const am: ChatMessage = { role: 'assistant', content: fullReply }; article.addParagraphChatMessage(pid, am)
+    const am: ChatMessage = { role: 'assistant', content: fullReply }; article.addParagraphChatMessage(pid, am); saveChats()
   } catch (e: any) { stopChatStream() }
-  finally { chatLoading.value = false; nextTick(() => { if (chatMessagesEl.value) chatMessagesEl.value.scrollTop = chatMessagesEl.value.scrollHeight }) }
+  finally { chatLoading.value = false; nextTick(() => { if (qaAnswerRef.value) qaAnswerRef.value.scrollTop = qaAnswerRef.value.scrollHeight }) }
 }
 
-onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); if (selPlayTimer) clearTimeout(selPlayTimer) })
+onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 </script>
 
 <style scoped>
@@ -624,16 +870,140 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); if (selPlayTimer) 
 :deep(mark) { cursor: pointer; transition: filter 0.12s; }
 :deep(mark:hover) { filter: brightness(0.92); }
 
-/* 阅读位置标记 */
+/* 阅读位置标记 — 淡蓝底色 + 脉冲扩散 */
 .para-num.pos-marker {
-  background: #3d3591 !important;
+  background: #93c5fd !important;
   color: #ffffff !important;
-  box-shadow: 0 0 0 4px rgba(61,53,145,0.2);
+  box-shadow: 0 0 0 4px rgba(147,197,253,0.25);
   animation: pulsePos 2s infinite;
 }
-@keyframes pulsePos { 0%,100%{box-shadow:0 0 0 4px rgba(61,53,145,0.2)} 50%{box-shadow:0 0 0 10px rgba(61,53,145,0)}}
+@keyframes pulsePos {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(147,197,253,0.25); }
+  50% { box-shadow: 0 0 0 10px rgba(147,197,253,0); }
+}
+
+/* 段落编辑区 */
+.para-edit-area {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 15px; line-height: 1.82;
+  color: #1a1a18;
+  flex: 1;
+  border: 1.5px solid #3d3591;
+  border-radius: 8px;
+  padding: 8px 12px;
+  resize: vertical;
+  outline: none;
+  background: #fafaf8;
+}
+
+/* 编辑确认按钮 — 绿色 */
+.para-action-btn.edit-confirm {
+  color: #10b981;
+  border-color: #10b981;
+  background: #ecfdf5;
+}
+.para-action-btn.edit-confirm:hover {
+  background: #d1fae5;
+}
+
+/* 问答历史标记 — 序号下方紫色圆点 */
+.para-num.has-chat {
+  position: relative;
+}
+.para-num.has-chat::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #3d3591;
+}
+
+/* ---- QA 浮动区 ---- */
+.qa-panel { position: relative; }
+
+.qa-area {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #f0efe9;
+  border-top: 0.5px solid rgba(0,0,0,0.08);
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
+    z-index: 10;
+}
+
+.qa-resize-handle {
+  height: 8px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  z-index: 2;
+}
+.qa-resize-handle::before,
+.qa-resize-handle::after {
+  content: '';
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: #c4c1ba;
+  transition: background 0.15s;
+}
+/* 中间的点通过 box-shadow 生成 */
+.qa-resize-handle::before {
+  box-shadow: 6px 0 0 #c4c1ba, -6px 0 0 #c4c1ba;
+}
+.qa-resize-handle:hover::before,
+.qa-resize-handle:hover::after {
+  background: #3d3591;
+}
+.qa-resize-handle:hover::before {
+  box-shadow: 6px 0 0 #3d3591, -6px 0 0 #3d3591;
+}
+
+.qa-answer {
+  box-sizing: border-box;
+  overflow-y: auto;
+  flex: 0 1 auto;
+  min-height: 0;
+  padding: 8px 14px;
+  scrollbar-width: none;
+}
+.qa-answer::-webkit-scrollbar {
+  display: none;
+}
+
+.qa-input-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 0.5px solid rgba(0,0,0,0.08);
+  background: #f0efe9;
+}
 
 /* typing cursor */
 .typing-cursor { display: inline; color: #3d3591; animation: blink 0.8s infinite; font-weight: 100; }
 @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
+/* QA slide transition */
+.qa-slide-enter-active {
+  transition: transform 0.25s linear, opacity 0.25s linear;
+}
+.qa-slide-leave-active {
+  transition: transform 0.15s linear, opacity 0.15s linear;
+}
+.qa-slide-enter-from,
+.qa-slide-leave-to {
+  transform: translateY(100%);
+  opacity: 0;
+}
 </style>

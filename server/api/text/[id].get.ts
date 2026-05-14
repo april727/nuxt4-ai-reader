@@ -17,6 +17,7 @@ export default defineEventHandler(async (event) => {
   if (row.explanations) try { row.explanations = JSON.parse(row.explanations) } catch { row.explanations = null }
   if (row.marks) try { row.marks = JSON.parse(row.marks) } catch { row.marks = null }
   if (row.readingPosition) try { row.readingPosition = JSON.parse(row.readingPosition) } catch { row.readingPosition = null }
+  if (row.paragraphChats) try { row.paragraphChats = JSON.parse(row.paragraphChats) } catch { row.paragraphChats = null }
 
   return row
 })

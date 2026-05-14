@@ -57,6 +57,31 @@ function addParagraphChatMessage(paragraphId: string, message: ChatMessage) {
   }
 }
 
+function loadParagraphChats(data: Record<string, ChatMessage[]>) {
+  for (const [pid, msgs] of Object.entries(data)) {
+    paragraphChats.set(pid, [...msgs])
+  }
+  // 如果当前活跃段落有已存储的聊天，同步到 currentParagraphChat
+  if (activeParagraphId.value && paragraphChats.has(activeParagraphId.value)) {
+    currentParagraphChat.value = [...paragraphChats.get(activeParagraphId.value)!]
+  }
+}
+
+function getAllParagraphChats(): Record<string, ChatMessage[]> {
+  const result: Record<string, ChatMessage[]> = {}
+  for (const [pid, msgs] of paragraphChats.entries()) {
+    result[pid] = msgs
+  }
+  return result
+}
+
+function updateParagraphText(paragraphId: string, text: string) {
+  const idx = paragraphs.value.findIndex(p => p.id === paragraphId)
+  if (idx !== -1) {
+    paragraphs.value[idx] = { ...paragraphs.value[idx], text }
+  }
+}
+
 // 发音 API 基础 URL
 const PRONUNCIATION_BASE = 'https://audio.beingfine.cn/speeches/UK/UK-speech'
 
@@ -166,6 +191,9 @@ export function useArticle() {
     getParagraphChat,
     setParagraphChat,
     addParagraphChatMessage,
+    loadParagraphChats,
+    getAllParagraphChats,
+    updateParagraphText,
     currentParagraphChatWritable: currentParagraphChat,
   }
 }
