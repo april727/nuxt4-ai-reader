@@ -7,3 +7,5 @@ dist
 .DS_Store
 server/data/backups/
 server/data/youtube_cookies.txt
+server/data/cookies.json
+server/data/cookies.txt
