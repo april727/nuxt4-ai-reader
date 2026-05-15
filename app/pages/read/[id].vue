@@ -16,19 +16,26 @@
       <div class="reader-topbar-right">
         <div v-if="paragraphs.length" class="progress-wrap">
           <div class="progress-dots">
-            <span
-              v-for="(p, i) in paragraphs"
-              :key="p.id"
-              class="progress-dot"
-              :class="{ done: i < currentParaIdx, current: p.id === activeParagraphId }"
-            />
+            <template v-for="item in visibleDots" :key="item.key">
+              <span v-if="item.type === 'dot'" class="progress-dot" :class="{ done: item.index < currentParaIdx, current: paragraphs[item.index]?.id === activeParagraphId }" />
+              <span v-else class="progress-gap">…</span>
+            </template>
           </div>
           <span class="progress-text">第 {{ currentParaIdx + 1 }} 段 · 共 {{ paragraphs.length }} 段</span>
         </div>
-        <div v-if="isProcessing" class="reader-progress-bar">
-          <div class="mini-spinner"></div><span>{{ progressMsg }}</span>
+        <div v-if="isProcessing || progressMsg" class="reader-progress-bar" :class="{ error: progressError }">
+          <div v-if="isProcessing" class="mini-spinner"></div>
+          <svg v-else-if="progressError" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="16 10 11 15 8 12"/></svg>
+          <span>{{ progressMsg }}</span>
+          <button v-if="progressError" class="progress-dismiss" @click="dismissProgress">×</button>
         </div>
-        <button v-if="pdfUrl" class="reader-icon-btn" @click="showPdf = true" title="查看 PDF 原文">
+        <button v-if="isVideo" class="reader-icon-btn" @click="goToWatch" title="回到播放模式">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+        </button>
+        <button v-if="pdfUrl" class="reader-icon-btn" @click="pdfPage = null; showPdf = true" title="查看 PDF 原文">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
           </svg>
@@ -36,6 +43,15 @@
         <button v-if="readingPosition" class="reader-icon-btn" @click="jumpToReadingPos" title="跳转到上次阅读位置">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </button>
+        <button class="reader-icon-btn" @click="runManualAnalysis" title="AI 智能分析" :disabled="analyzing">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+            <path d="M8 12a4 4 0 1 1 8 0"/>
+            <circle cx="12" cy="12" r="2.5"/>
+            <line x1="12" y1="2" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
           </svg>
         </button>
       </div>
@@ -57,10 +73,13 @@
         >
           <div
             class="para-num"
-            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id, 'has-chat': paragraphsWithChats.has(para.id) }"
+            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id, 'has-chat': paragraphsWithChats.has(para.id), 'is-video': isVideo }"
             @click.stop="handleSetPosition(para.id)"
             :title="readingPosition?.paragraphId === para.id ? '当前阅读位置' : '点击标记阅读位置'"
-          >{{ index + 1 }}</div>
+          >
+            <template v-if="isVideo && (para as any).start !== undefined">{{ formatCueTime((para as any).start) }}</template>
+            <template v-else>{{ index + 1 }}</template>
+          </div>
           <p v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></p>
           <textarea
             v-else
@@ -71,6 +90,21 @@
             rows="4"
           ></textarea>
           <div class="para-actions" v-if="para.id === activeParagraphId" @click.stop>
+            <button
+              v-if="isVideo && (para as any).start !== undefined"
+              class="para-action-btn"
+              @click.stop="playSegment(para)"
+              :title="miniPlayerVisible && miniPlayerStart === (para as any).start ? '跳转到播放页' : '播放本段'"
+            >
+              <!-- 播放中：音频波形动画 -->
+              <span v-if="miniPlayerPlaying && miniPlayerStart === (para as any).start" class="playing-bars">
+                <span v-for="i in 3" :key="i" class="playing-bar" :style="{ animationDelay: (i * 0.15) + 's' }"></span>
+              </span>
+              <!-- 暂停 / 未播放：三角 -->
+              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+            </button>
             <button
               v-if="editingParagraphId === para.id"
               class="para-action-btn edit-confirm"
@@ -101,6 +135,27 @@
             <button class="para-action-btn" @click.stop="doCopy(para.text)" title="复制">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            </button>
+            <button
+              v-if="pdfUrl && !isVideo"
+              class="para-action-btn"
+              @click.stop="openPdfAtParagraph(para)"
+              title="在原文中定位"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+            </button>
+            <button class="para-action-btn" @click.stop="cleanParagraph(para.id, para.text)" title="整理内容" :disabled="cleaningPara === para.id">
+              <div v-if="cleaningPara === para.id" class="mini-spinner-inline"></div>
+              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><path d="M17 4l3 3-3 3"/><path d="M21 7H9"/>
+              </svg>
+            </button>
+            <button class="para-action-btn" @click.stop="reAnalyzeParagraph(para.id, para.text)" title="重新分析">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
             </button>
           </div>
@@ -277,9 +332,21 @@
     <div v-if="showPdf && pdfUrl" class="pdf-overlay" @click.self="showPdf = false">
       <div class="pdf-viewer">
         <div class="pdf-viewer-header"><span>PDF 原文</span><button class="modal-close" @click="showPdf = false">&times;</button></div>
-        <iframe :src="pdfUrl" class="pdf-iframe" frameborder="0"></iframe>
+        <iframe :src="pdfViewerUrl" class="pdf-iframe" frameborder="0"></iframe>
       </div>
     </div>
+
+    <!-- 迷你播放条（字幕阅读页底部） -->
+    <MiniPlayer
+      v-if="videoMeta"
+      ref="miniPlayerRef"
+      :src="videoMeta.url"
+      :file-type="videoMeta.type"
+      :visible="miniPlayerVisible"
+      :start-time="miniPlayerStart"
+      :end-time="miniPlayerEnd"
+      @close="miniPlayerVisible = false"
+    />
   </div>
 </template>
 
@@ -297,6 +364,29 @@ useHead({ title: 'AI 阅读分析' })
 const article = useArticle(); const deepseek = useDeepSeek(); const textStream = useTextStream()
 const chatTextStream = useTextStream()
 const { rawText, title, paragraphs, analysis, chatHistory, activeParagraphId, rightPanelContent, isProcessing, currentParagraphChat } = article
+
+const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
+const source = ref('')
+const isVideo = computed(() => videoSources.includes(source.value))
+const originalSubtitles = ref<Array<{ text: string; start: number; end: number }> | null>(null)
+const videoMeta = ref<{ url: string; type: string; duration: number } | null>(null)
+const miniPlayerVisible = ref(false)
+const miniPlayerStart = ref(0)
+const miniPlayerEnd = ref<number | undefined>(undefined)
+const miniPlayerRef = ref<any>(null)
+const miniPlayerPlaying = computed(() => miniPlayerRef.value?.playing ?? false)
+
+function playSegment(para: any) {
+  if (!videoMeta.value) return
+  miniPlayerEnd.value = para.end
+  if (miniPlayerVisible.value && miniPlayerStart.value === para.start && isVideo.value) {
+    // 同一个段落：切回跳转模式
+    jumpToWatch(para)
+    return
+  }
+  miniPlayerStart.value = para.start
+  miniPlayerVisible.value = true
+}
 const { displayText: displayedContent, isTyping, startStreaming, appendText, endStream, finishStreaming, stopStreaming, showAll } = textStream
 const { displayText: tcc, isTyping: chatTyping, startStreaming: startChatStream, appendText: appendChatText, endStream: endChatStream, stopStreaming: stopChatStream } = chatTextStream
 const typingChatContent = computed(() => tcc.value)
@@ -305,7 +395,12 @@ const activeTab = ref('understand')
 const chatInput = ref('')
 const chatLoading = ref(false)
 const progressMsg = ref('')
-const pdfUrl = ref(''); const showPdf = ref(false)
+const pdfUrl = ref(''); const showPdf = ref(false); const pdfPage = ref<number | null>(null)
+const pdfViewerUrl = computed(() => {
+  if (!pdfUrl.value) return ''
+  if (pdfPage.value) return `${pdfUrl.value}#page=${pdfPage.value}`
+  return pdfUrl.value
+})
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
 const readerBodyEl = ref<HTMLElement | null>(null)
 const articlePane = ref<HTMLElement | null>(null)
@@ -391,6 +486,45 @@ const tabs = [
 const currentParaIdx = computed(() => {
   if (!activeParagraphId.value) return 0
   return paragraphs.value.findIndex(p => p.id === activeParagraphId.value)
+})
+
+/** 超过 80 段时用滑动窗口显示 dots，避免溢出顶栏 */
+const MAX_VISIBLE_DOTS = 80
+const visibleDots = computed(() => {
+  const total = paragraphs.value.length
+  if (total <= MAX_VISIBLE_DOTS) {
+    return Array.from({ length: total }, (_, i) => ({ type: 'dot' as const, index: i, key: `d${i}` }))
+  }
+  const cur = currentParaIdx.value
+  const edge = 20      // 首尾各保留
+  const midHalf = 15   // 当前附近各保留
+  const start = Math.max(0, cur - midHalf)
+  const end = Math.min(total, cur + midHalf + 1)
+  const items: Array<{ type: 'dot' | 'gap'; index: number; key: string }> = []
+
+  // 首部
+  for (let i = 0; i < edge && i < start; i++) {
+    items.push({ type: 'dot', index: i, key: `s${i}` })
+  }
+  // 间隙
+  if (start > edge + 2) items.push({ type: 'gap', index: -1, key: 'g1' })
+  else if (start > edge) {
+    for (let i = edge; i < start; i++) items.push({ type: 'dot', index: i, key: `a${i}` })
+  }
+  // 中部
+  for (let i = start; i < end; i++) {
+    items.push({ type: 'dot', index: i, key: `m${i}` })
+  }
+  // 尾部间隙
+  if (end < total - edge - 2) items.push({ type: 'gap', index: -1, key: 'g2' })
+  else if (end < total - edge) {
+    for (let i = end; i < total - edge; i++) items.push({ type: 'dot', index: i, key: `b${i}` })
+  }
+  // 尾部
+  for (let i = Math.max(end, total - edge); i < total; i++) {
+    items.push({ type: 'dot', index: i, key: `e${i}` })
+  }
+  return items
 })
 
 const readingPosIdx = computed(() => {
@@ -660,6 +794,7 @@ onMounted(async () => {
   try {
     const data = await $fetch<any>(`/api/text/${id}`)
     if (!data?.text) throw new Error('No text')
+    source.value = data.source || ''
     article.setRawText(data.text)
     article.setParagraphs(quickSegment(data.text))
     if (data.filePath) pdfUrl.value = `/api/file/${data.filePath}`
@@ -672,7 +807,17 @@ onMounted(async () => {
       article.loadParagraphChats(data.paragraphChats)
       for (const pid of Object.keys(data.paragraphChats)) paragraphsWithChats.add(pid)
     }
-    if (!data.analysis || !data.segments) await runAnalysis(data.text)
+    if (data.videoSubtitles && Array.isArray(data.videoSubtitles)) {
+      originalSubtitles.value = data.videoSubtitles
+    }
+    if (data.videoMeta) {
+      videoMeta.value = data.videoMeta as { url: string; type: string; duration: number }
+    }
+    if (!data.analysis || !data.segments) {
+      try { await runAnalysis(data.text) } catch {
+        // runAnalysis 内部已处理兜底和错误提示，此处静默
+      }
+    }
     const markPid = route.query.mark as string
     if (markPid) { await nextTick(); const el = document.querySelector(`[data-id="${markPid}"]`); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
     $fetch('/api/text/stats', { method: 'POST', body: { id, marks: marks.value.length } }).catch(() => {})
@@ -681,44 +826,311 @@ onMounted(async () => {
 
 function goBack() { stopStreaming(); article.reset(); navigateTo('/') }
 
+function goToWatch() {
+  navigateTo(`/watch/${id}?from=read${currentTimeForWatch.value > 0 ? `&time=${currentTimeForWatch.value}` : ''}`)
+}
+
+function jumpToWatch(para: any) {
+  const time = para?.start
+  if (time !== undefined) {
+    navigateTo(`/watch/${id}?time=${time}`)
+  } else {
+    navigateTo(`/watch/${id}`)
+  }
+}
+
+const currentTimeForWatch = computed(() => {
+  if (route.query.time) return parseFloat(route.query.time as string) || 0
+  return 0
+})
+
+function formatCueTime(seconds: number): string {
+  if (seconds === undefined || seconds === null) return ''
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
 function quickSegment(text: string): Paragraph[] {
   const blocks = text.split(/\n\s*\n/).filter(b => b.trim())
-  if (blocks.length <= 1) {
-    const prepped = text.replace(/\.{3,}/g, '…'); const sentences = prepped.split(/(?<=[.!?。！？"」])\s*/).map(s => s.replace(/…/g, '...')).filter(s => s.trim().length > 0)
-    if (sentences.length > 1) { const ts = Math.max(2, Math.round(sentences.length / Math.round(sentences.length / 2.5))); const g: string[] = []
-      for (let i = 0; i < sentences.length; i += ts) { const grp = sentences.slice(i, i + ts); if (grp.length === 1 && g.length > 0) g[g.length - 1] += ' ' + grp[0]; else g.push(grp.join('')) }
-      return g.map((t, i) => ({ id: `q-${i}`, index: i, text: t.trim() })) }
-    return [{ id: 'q-0', index: 0, text }]
+  if (blocks.length > 1) return splitIntoParagraphs(blocks.join('\n\n'))
+  return splitIntoParagraphs(text)
+}
+
+/** 按句子拆分并每 4 句合并为一段 */
+function splitIntoParagraphs(text: string): Paragraph[] {
+  const GROUP = 4
+  const prepared = text.replace(/\.{3,}/g, '…')
+  const sentences = prepared.split(/(?<=[.!?。！？"」])\s*/)
+    .map(s => s.replace(/…/g, '...').trim())
+    .filter(s => s.length > 0)
+  if (sentences.length <= 1) return [{ id: 'q-0', index: 0, text }]
+
+  const result: Paragraph[] = []
+  for (let i = 0; i < sentences.length; i += GROUP) {
+    const chunk = sentences.slice(i, i + GROUP).join(' ').trim()
+    if (chunk) result.push({ id: `q-${result.length}`, index: result.length, text: chunk })
   }
-  return blocks.map((t, i) => ({ id: `q-${i}`, index: i, text: t.trim() }))
+  // 如果最后一组只剩 1-2 句，合并到前一段
+  if (result.length > 1) {
+    const lastGroupSize = sentences.length % GROUP
+    if (lastGroupSize > 0 && lastGroupSize <= 2) {
+      const last = result.pop()!
+      result[result.length - 1].text += ' ' + last.text
+    }
+  }
+  return result
 }
 
 function formatMd(a: any) { return [`## ${a.title}`, '', `**风格**：${a.tone}`, '', '### 内容摘要', a.summary, '', '### 背景分析', a.background, '', '### 关键要点', ...(a.keyPoints||[]).map((k: string) => `- ${k}`)].join('\n') }
 
+/**
+ * 将 AI 分段结果映射回原始字幕 cue，保留时间信息。
+ * 对每个 AI 分段文本，在完整字幕拼接文本中定位 → 找到覆盖该位置的字幕 cue →
+ * 取第一个 cue 的 start 作为段落时间戳。
+ */
+function mapSegmentsToCues(
+  segments: Paragraph[],
+  cues: Array<{ text: string; start: number; end: number }>,
+): Paragraph[] {
+  if (!cues.length) return segments
+
+  // 完整拼接文本
+  const fullText = cues.map(c => c.text).join(' ').replace(/\s{2,}/g, ' ').trim()
+
+  // 构建每个 cue 在完整文本中的字符范围
+  let offset = 0
+  const ranges: Array<{ start: number; end: number; cueIdx: number }> = []
+  for (let i = 0; i < cues.length; i++) {
+    // 在当前 offset 位置找 cue 文本
+    const idx = fullText.indexOf(cues[i].text, offset)
+    const start = idx >= 0 ? idx : offset
+    const end = start + cues[i].text.length
+    ranges.push({ start, end, cueIdx: i })
+    offset = end + 1
+  }
+
+  return segments.map((seg) => {
+    // 用段落前 60 字符在完整文本中进行匹配
+    const segClean = seg.text.replace(/\s+/g, ' ').trim()
+    const head = segClean.slice(0, 60)
+    let startPos = fullText.indexOf(head)
+    if (startPos < 0) {
+      startPos = fullText.indexOf(segClean.slice(0, 40))
+    }
+    if (startPos < 0) return seg // 无法定位
+
+    const endPos = startPos + segClean.length
+
+    // 找到覆盖该范围的 cue
+    let firstCue: { text: string; start: number; end: number } | null = null
+    let lastCue: { text: string; start: number; end: number } | null = null
+    for (const r of ranges) {
+      if (r.start <= startPos && r.end > startPos && !firstCue) firstCue = cues[r.cueIdx]
+      if (r.start < endPos && lastCue) lastCue = cues[r.cueIdx]
+    }
+    if (!firstCue) firstCue = cues[0]
+    if (!lastCue) lastCue = cues[cues.length - 1]
+
+    return {
+      ...seg,
+      start: firstCue?.start,
+      end: lastCue?.end,
+    }
+  })
+}
+
+/**
+ * 统一的 AI 分析流程：先分析（流式）→ 再分段（专用端点）
+ *
+ * 分离理由：
+ * - 分析需要截断文本 + 流式体验，长文短文都能用
+ * - 分段走 segment 端点：短文全文送入、长文截断 + 本地兜底，精度远高于正则挖断点
+ * - 两步分开后不互相污染，各自失败有独立兜底
+ */
 async function runAnalysis(text: string) {
-  article.isProcessingWritable.value = true; progressMsg.value = ''
-  const sentences = text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?。！？"」])\s*/).filter((s: string) => s.trim())
+  // ---- 第一步：AI 分析（流式，只出元信息 + 右面板展示） ----
   const maxInput = 15000
-  const inputText = text.length > maxInput ? text.slice(0, maxInput) + `\n[全文共${text.length}字]` : text
-  const prompt = `分析以下文章，输出分析摘要和分段断点。\n\n## 文章\n${inputText}\n\n## 句子索引\n${sentences.map((s: string, i: number) => `[${i}] ${s.slice(0,80)}`).join('\n')}\n\n## 格式\n### 标题\n### 风格\n### 内容摘要\n### 背景分析\n### 关键要点\n- 要点\n### 分段断点\n索引（逗号分隔）:`
-  const msgs = [{ role: 'system' as const, content: '按格式输出，禁止开场白。直接从###开始。' }, { role: 'user' as const, content: prompt }]
-  let full = ''; startStreaming('')
+  const inputText = text.length > maxInput
+    ? text.slice(0, maxInput) + `\n\n[全文共 ${text.length} 字符，此处仅提供前 ${maxInput} 字符用于分析]`
+    : text
+
+  const prompt = `你是一位专业的文章分析助手。请分析以下文章并输出：
+
+### 标题
+简洁标题（10字以内）
+
+### 风格
+学术/科普/叙事/议论 等
+
+### 内容摘要
+核心内容概括（100-200字）
+
+### 背景分析
+写作背景和上下文
+
+### 关键要点
+- 要点一
+- 要点二
+- 要点三（3-5个）
+
+## 文章内容
+${inputText}
+
+请严格按上述格式输出，直接从 "### 标题" 开始。`
+
+  const msgs = [
+    { role: 'system' as const, content: '按格式输出，禁止开场白。直接从 ### 开始。' },
+    { role: 'user' as const, content: prompt },
+  ]
+  let full = ''
+
+  startStreaming('')
   try {
     await deepseek.streamExplain(msgs, (chunk: string) => { full += chunk; appendText(chunk) })
     endStream()
-    const a = { title: (full.match(/### 标题\n(.+)/)?.[1]||'').trim(), tone: (full.match(/### 风格\n(.+)/)?.[1]||'').trim(), summary: (full.match(/### 内容摘要\n([\s\S]+?)(?=\n###|$)/)?.[1]||'').trim(), background: (full.match(/### 背景分析\n([\s\S]+?)(?=\n###|$)/)?.[1]||'').trim(), keyPoints: (full.match(/### 关键要点\n([\s\S]+?)(?=\n###|$)/)?.[1]||'').split('\n').filter((s: string) => s.trim().startsWith('-')).map((s: string) => s.replace(/^-\s*/, '')) }
+
+    const a = {
+      title: (full.match(/### 标题\n(.+)/)?.[1] || '').trim(),
+      tone: (full.match(/### 风格\n(.+)/)?.[1] || '').trim(),
+      summary: (full.match(/### 内容摘要\n([\s\S]+?)(?=\n###|$)/)?.[1] || '').trim(),
+      background: (full.match(/### 背景分析\n([\s\S]+?)(?=\n###|$)/)?.[1] || '').trim(),
+      keyPoints: (full.match(/### 关键要点\n([\s\S]+?)(?=\n###|$)/)?.[1] || '')
+        .split('\n').filter((s: string) => s.trim().startsWith('-')).map((s: string) => s.replace(/^-\s*/, '')),
+    }
     article.setAnalysis(a)
-    const bm = full.match(/### 分段断点[^\d]*([\d,\s]+)/); const breaks = (bm?.[1]||'').split(/[,\s]+/).map(Number).filter((n: number) => !isNaN(n))
-    const bset = new Set(breaks); const segs: any[] = []; let start = 0
-    for (let i = 0; i < sentences.length; i++) { if (bset.has(i) || i === sentences.length - 1) { const t = sentences.slice(start, i + 1).join('').trim(); if (t) segs.push({ id: `p-${segs.length}`, index: segs.length, text: t }); start = i + 1 } }
-    if (segs.length <= 1) segs[0] = { id: 'p-0', index: 0, text: sentences.join('') }
+    $fetch('/api/text/update', { method: 'POST', body: { id, analysis: a } }).catch(() => {})
+  } catch (err: any) {
+    stopStreaming()
+    const reason = err?.message || '未知错误'
+    console.error('AI 分析失败:', reason)
+    progressMsg.value = `AI 分析失败（${reason}），继续分段…`
+  }
+
+  // ---- 第二步：AI 分段（按来源类型走不同策略） ----
+  try {
+    const segType = isVideo.value ? 'subtitle' : 'document'
+    let segs = await $fetch<Paragraph[]>('/api/deepseek/segment', {
+      method: 'POST',
+      body: { text, type: segType },
+    })
+
+    // 视频字幕：将 AI 分段映射回原始字幕时间轴
+    if (isVideo.value && originalSubtitles.value?.length) {
+      segs = mapSegmentsToCues(segs, originalSubtitles.value)
+    }
+
     article.setParagraphs(segs)
-    $fetch('/api/text/update', { method: 'POST', body: { id, analysis: a, segments: segs } }).catch(() => {})
-  } catch { stopStreaming() }
-  finally { article.isProcessingWritable.value = false; progressMsg.value = '' }
+    article.clearParagraphCaches()
+    // 保存分段 + 清除数据库中的旧解释和对话
+    $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs, explanations: {}, paragraphChats: {} } }).catch(() => {})
+  } catch (err: any) {
+    // segment 端点内部已有 fallback，此处额外的兜底
+    const fallbackSegs = splitIntoParagraphs(text)
+    article.setParagraphs(fallbackSegs)
+    article.clearParagraphCaches()
+    $fetch('/api/text/update', { method: 'POST', body: { id, segments: fallbackSegs, explanations: {}, paragraphChats: {} } }).catch(() => {})
+    const reason = err?.message || '未知错误'
+    progressMsg.value = `分段失败（${reason}），已使用本地分段。`
+    progressError.value = true
+    throw err
+  }
+}
+
+const analyzing = ref(false)
+const progressError = ref(false)
+
+function dismissProgress() {
+  progressMsg.value = ''
+  progressError.value = false
+}
+
+async function runManualAnalysis() {
+  if (analyzing.value || !article.rawText.value) return
+  analyzing.value = true
+  article.isProcessingWritable.value = true
+  progressError.value = false
+  progressMsg.value = 'AI 正在分析文章…'
+  try {
+    await runAnalysis(article.rawText.value)
+    progressMsg.value = '分析完成'
+    progressError.value = false
+  } catch {
+    // runAnalysis 内部已设置错误信息
+  } finally {
+    analyzing.value = false
+    article.isProcessingWritable.value = false
+    if (!progressError.value) {
+      setTimeout(() => { progressMsg.value = '' }, 3000)
+    }
+  }
 }
 
 const pendingExplain = ref('')
+
+/**
+ * 从段落文本在原文中定位页码。
+ * 原文每页起始处有 [PAGE:N] 标记，从段落位置往回搜索最近的标记。
+ * 性能：单次 lastIndexOf，O(n) 但对百万字文本也是微秒级。
+ */
+function locateParagraphPage(para: Paragraph): number | null {
+  const fullText = article.rawText.value
+  if (!fullText) return null
+  // 在原文中查找段落起始位置（用前 60 字符精确匹配）
+  const pos = fullText.indexOf(para.text.replace(/\s+/g, ' ').trim().slice(0, 60))
+  if (pos < 0) return null
+  // 从该位置往回搜索最近的 [PAGE:N] 标记
+  const prefix = fullText.slice(0, pos)
+  const matches = [...prefix.matchAll(/\[PAGE:(\d+)\]/g)]
+  if (matches.length === 0) return null
+  return parseInt(matches[matches.length - 1][1], 10)
+}
+
+function openPdfAtParagraph(para: Paragraph) {
+  const page = locateParagraphPage(para)
+  if (page !== null) {
+    pdfPage.value = page
+  } else {
+    pdfPage.value = null
+  }
+  showPdf.value = true
+}
+
+/** 整理段落：补标点、分句、排版 */
+const cleaningPara = ref<string | null>(null)
+async function cleanParagraph(pid: string, ptext: string) {
+  if (cleaningPara.value) return
+  cleaningPara.value = pid
+  try {
+    const { cleaned } = await $fetch<{ cleaned: string }>('/api/deepseek/clean', {
+      method: 'POST',
+      body: { text: ptext },
+    })
+    if (cleaned && cleaned !== ptext) {
+      article.updateParagraphText(pid, cleaned)
+      // 清除此段落缓存（文本变了，旧解释可能不准确）
+      article.setCachedExplanation(pid, 'explain', '')
+      article.setCachedExplanation(pid, 'translate', '')
+      // 持久化到 DB
+      $fetch('/api/text/update-segment', {
+        method: 'POST',
+        body: { textId: id, segmentId: pid, text: cleaned },
+      }).catch(() => {})
+    }
+  } catch (e: any) {
+    // 静默失败，不打断阅读
+  } finally {
+    cleaningPara.value = null
+  }
+}
+
+/** 重新分析段落：清除缓存 → 强制重新请求 AI */
+function reAnalyzeParagraph(pid: string, ptext: string) {
+  article.setCachedExplanation(pid, 'explain', '')
+  article.setCachedExplanation(pid, 'translate', '')
+  handleParagraphAction('explain', pid, ptext)
+}
+
 async function handleParagraphAction(action: ParagraphAction, pid: string, ptext: string) {
   article.setActiveParagraph(pid)
   const cached = article.getCachedExplanation(pid, action)
@@ -729,7 +1141,19 @@ async function handleParagraphAction(action: ParagraphAction, pid: string, ptext
   const typeLabel = action === 'translate' ? '专业翻译' : '双语阅读导师'
   const requirements = action === 'translate'
     ? `将以下段落翻译成流畅自然的中文。忠实原文，只输出翻译结果，不要添加任何解释。\n\n待翻译段落：\n${ptext}`
-    : `深度解读以下段落，结合文章背景。用 Markdown 输出三部分：### 一、整体翻译 ### 二、难点词汇解析（表格，词性用英文缩写如 n. v. adj. adv. prep. conj.） ### 三、段落精讲。\n\n文章背景：${article.getArticleContext()}\n\n段落：${ptext}`
+    : `深度解读以下段落，结合文章背景。用 Markdown 输出三部分：
+
+### 一、整体翻译
+
+### 二、难点词汇解析
+用表格输出，列名为：| 词汇 | 释义 | 语境理解 |
+其中"语境理解"为该词在当前段落语境中的具体含义和用法。
+
+### 三、段落精讲
+
+文章背景：${article.getArticleContext()}
+
+段落：${ptext}`
   const messages = [
     { role: 'system' as const, content: `你是一位${typeLabel}。禁止开场白和自我介绍。` },
     { role: 'user' as const, content: requirements }
@@ -904,6 +1328,32 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 }
 .para-action-btn.edit-confirm:hover {
   background: #d1fae5;
+}
+
+/* 播放中音频波动画 */
+.playing-bars {
+  display: flex; align-items: flex-end; gap: 2px; height: 12px;
+}
+.playing-bar {
+  width: 2px; background: #3d3591; border-radius: 1px;
+  animation: barPulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes barPulse {
+  0% { height: 4px; }
+  100% { height: 12px; }
+}
+
+/* 行内小 spinner（段落工具条用） */
+.mini-spinner-inline {
+  width: 13px; height: 13px;
+  border: 1.5px solid #e2e8f0;
+  border-top-color: #3d3591;
+  border-radius: 50%;
+  animation: spinInline 0.6s linear infinite;
+}
+
+@keyframes spinInline {
+  to { transform: rotate(360deg); }
 }
 
 /* 问答历史标记 — 序号下方紫色圆点 */

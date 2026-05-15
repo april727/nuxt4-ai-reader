@@ -8,22 +8,38 @@
     @contextmenu.prevent="$emit('contextmenu', $event)"
   >
     <div class="doc-thumb">
-      <svg v-if="isWeb" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
-        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-      </svg>
-      <svg v-else-if="isPdf" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/>
-      </svg>
-      <svg v-else width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+      <!-- YouTube 封面 -->
+      <img
+        v-if="isVideo && thumbnail"
+        :src="thumbnail"
+        class="thumb-cover"
+        loading="lazy"
+        alt=""
+        @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
+      />
+      <!-- 网页 favicon -->
+      <img
+        v-else-if="isWeb"
+        :src="faviconUrl"
+        class="thumb-icon"
+        loading="lazy"
+        alt=""
+        @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
+      />
+      <!-- 兜底 SVG 图标 -->
+      <svg v-else-if="!thumbnail" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+        <template v-if="isPdf"><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></template>
       </svg>
       <span class="thumb-label">{{ sourceLabel }}</span>
     </div>
     <div class="doc-body">
       <p class="doc-title">{{ title }}</p>
       <div class="doc-meta">
-        <span class="doc-reads">阅读 {{ readCount || 0 }} 次</span>
+        <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
+        <span v-else class="doc-reads">阅读 {{ readCount || 0 }} 次</span>
         <span class="doc-marks" v-if="markCount">· {{ markCount }} 标记</span>
+        <span v-if="!isVideo && !markCount" class="doc-reads" style="display:none">&nbsp;</span>
       </div>
     </div>
     <div class="doc-hover-actions" @click.stop @contextmenu.stop>
@@ -39,24 +55,52 @@
 <script setup lang="ts">
 const props = defineProps<{
   id: string; title: string; length: number; source: string; draggable?: boolean
-  readCount?: number; lastReadAt?: string; markCount?: number
+  readCount?: number; lastReadAt?: string; markCount?: number; duration?: number
+  thumbnail?: string
 }>()
 
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent] }>()
 
+const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
+
+const isVideo = computed(() => videoSources.includes(props.source))
 const isPdf = computed(() => props.source?.toLowerCase().includes('.pdf') || props.source === 'upload')
 const isWeb = computed(() => props.source?.startsWith('http'))
 const coverTypeClass = computed(() => {
+  if (isVideo.value) return 'thumb-video'
   if (isPdf.value) return 'thumb-pdf'
   if (isWeb.value) return 'thumb-web'
   return 'thumb-text'
 })
 const sourceLabel = computed(() => {
+  if (isVideo.value) {
+    if (props.source === 'youtube') return 'YouTube'
+    if (props.source === 'bilibili') return 'B站'
+    if (props.source === 'audio_file') return '音频'
+    return '视频'
+  }
   if (props.source?.includes('.pdf')) return 'PDF'
   if (props.source?.startsWith('http')) return '网页'
   if (props.source === 'paste') return '粘贴'
   return '文本'
 })
+
+const faviconUrl = computed(() => {
+  if (!isWeb.value || !props.source?.startsWith('http')) return ''
+  try {
+    const u = new URL(props.source)
+    return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`
+  } catch { return '' }
+})
+
+function formatDuration(seconds: number): string {
+  if (!seconds || seconds <= 0) return ''
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 </script>
 
 <style scoped>
@@ -84,12 +128,15 @@ const sourceLabel = computed(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  position: relative;
+  overflow: hidden;
 }
 
 /* Pastel type colors */
 .thumb-pdf .doc-thumb { background: #fce9e5; color: #b84b2e; }
 .thumb-web .doc-thumb { background: #e2f4ec; color: #0e6b51; }
 .thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
+.thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
 
 .thumb-label {
   font-size: 11px;
@@ -98,21 +145,34 @@ const sourceLabel = computed(() => {
   font-family: 'DM Mono', monospace;
 }
 
-.doc-body { padding: 10px 12px 13px; }
+.thumb-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+}
+
+.doc-body { padding: 10px 12px 13px; height: 52px; display: flex; flex-direction: column; }
 
 .doc-title {
   font-size: 12.5px;
   font-weight: 400;
   color: #1a1a18;
-  line-height: 1.5;
-  margin-bottom: 7px;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  line-height: 1.4;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
-.doc-meta { display: flex; gap: 4px; font-size: 11px; color: #b0ae9f; }
+.doc-meta { display: flex; gap: 4px; font-size: 11px; color: #b0ae9f; margin-top: auto; }
 
 .doc-hover-actions {
   position: absolute;

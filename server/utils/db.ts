@@ -55,6 +55,10 @@ function createTables() {
   // migration: add missing columns from older schema versions
   try { db.run('ALTER TABLE folders ADD COLUMN parent TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN paragraphChats TEXT DEFAULT \'\'') } catch {}
+  // video fields (added 2026-05-14)
+  try { db.run('ALTER TABLE texts ADD COLUMN videoMeta TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN videoSubtitles TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN subtitlePractice TEXT DEFAULT \'\'') } catch {}
 }
 
 function migrateFromJson() {
@@ -63,7 +67,7 @@ function migrateFromJson() {
     if (existsSync(textsFile)) {
       const texts = JSON.parse(readFileSync(textsFile, 'utf-8'))
       for (const t of texts) {
-        db.run(`INSERT OR REPLACE INTO texts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+        db.run(`INSERT OR REPLACE INTO texts (id,title,text,source,folder,excerpt,filePath,analysis,segments,explanations,marks,readingPosition,paragraphChats,createdAt,updatedAt,videoMeta,videoSubtitles,subtitlePractice) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
           t.id, t.title || '', t.text || '', t.source || '', t.folder || 'default',
           t.excerpt || '', t.filePath || '',
           t.analysis ? JSON.stringify(t.analysis) : '',
@@ -73,6 +77,7 @@ function migrateFromJson() {
           t.readingPosition ? JSON.stringify(t.readingPosition) : '',
           t.paragraphChats ? JSON.stringify(t.paragraphChats) : '',
           t.createdAt || '', t.updatedAt || '',
+          '', '', '',
         ])
       }
     }
@@ -80,7 +85,7 @@ function migrateFromJson() {
     if (existsSync(foldersFile)) {
       const folders = JSON.parse(readFileSync(foldersFile, 'utf-8'))
       for (const f of folders) {
-        db.run('INSERT OR REPLACE INTO folders VALUES (?,?,?)', [f.id, f.name, f.createdAt])
+        db.run('INSERT OR REPLACE INTO folders (id,name,parent,createdAt) VALUES (?,?,?,?)', [f.id, f.name, f.parent || '', f.createdAt])
       }
     }
     // 迁移后删除旧 JSON 文件

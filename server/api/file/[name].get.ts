@@ -20,6 +20,13 @@ export default defineEventHandler(async (event) => {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.ogg': 'audio/ogg',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.mov': 'video/quicktime',
   }
 
   setHeader(event, 'Content-Type', mimeMap[ext] || 'application/octet-stream')

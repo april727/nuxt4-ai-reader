@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
-  if (!apiKey) throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+  if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
 
   const typeLabel = body.type === 'word' ? '单词/词汇' : body.type === 'phrase' ? '短语/搭配' : '句子'
 

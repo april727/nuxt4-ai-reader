@@ -5,7 +5,7 @@ export default defineEventHandler(async (event) => {
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
-  if (!apiKey) throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+  if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
 
   const response = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   })
 
   if (!response.ok || !response.body) {
-    throw createError({ statusCode: 502, statusMessage: 'DeepSeek API error' })
+    throw createError({ statusCode: 502, message: 'DeepSeek API error' })
   }
 
   // 逐块转发 SSE

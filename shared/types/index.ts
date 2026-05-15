@@ -36,7 +36,35 @@ export interface Mark {
 export interface ReadingPosition {
   paragraphId: string
   updatedAt: string
+  videoTime?: number
 }
+
+// ---- 视频/音频字幕 ----
+
+export interface SubtitleCue {
+  id: string
+  index: number
+  start: number
+  end: number
+  text: string
+}
+
+export interface SubtitlePractice {
+  cueId: string
+  repeatCount: number
+  mastered: boolean
+  lastPracticed: string
+}
+
+export interface VideoMeta {
+  url: string
+  type: 'youtube' | 'bilibili' | 'video_file' | 'audio_file'
+  duration: number
+  thumbnail?: string
+  originalFileName?: string
+}
+
+export type VideoSourceType = 'youtube' | 'bilibili' | 'video_file' | 'audio_file'
 
 // API
 export interface AnalyzeRequest { text: string; title?: string }

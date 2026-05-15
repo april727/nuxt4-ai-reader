@@ -37,14 +37,25 @@
     <!-- 右侧内容区 -->
     <main class="lib-main">
       <div class="lib-toolbar">
-        <h1 class="lib-title">{{ activeFolderName }}</h1>
+        <div class="lib-toolbar-left">
+          <h1 class="lib-title">{{ activeFolderName }}</h1>
+          <div class="lib-filter-bar">
+            <button class="lib-filter-btn" :class="{ active: sourceFilter === 'all' }" @click="sourceFilter = 'all'">全部</button>
+            <button class="lib-filter-btn" :class="{ active: sourceFilter === 'text' }" @click="sourceFilter = 'text'">文本</button>
+            <button class="lib-filter-btn" :class="{ active: sourceFilter === 'video' }" @click="sourceFilter = 'video'">视频</button>
+          </div>
+        </div>
         <div class="lib-actions">
+          <button class="lib-btn" @click="showVideoImport = true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            导入视频
+          </button>
           <button class="lib-btn" @click="navigateTo('/reviews')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             复习本
           </button>
           <button class="lib-btn" @click="showUpload = true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-1.5-.5"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             上传文件
           </button>
           <button class="lib-btn" @click="showUrl = true">
@@ -55,9 +66,9 @@
       </div>
 
       <!-- 书本网格（支持拖入文件夹） -->
-      <div v-if="books.length > 0" class="lib-grid">
+      <div v-if="filteredBooks.length > 0" class="lib-grid">
         <BookCard
-          v-for="book in books"
+          v-for="book in filteredBooks"
           :key="book.id"
           :id="book.id"
           :title="book.title"
@@ -65,6 +76,8 @@
           :source="book.source"
           :read-count="book.readCount"
           :mark-count="book.markCount"
+          :duration="book.duration"
+          :thumbnail="(book as any).thumbnail"
           draggable="true"
           @dragstart="handleBookDragStart($event, book.id)"
           @open="openBook"
@@ -78,9 +91,17 @@
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
           </svg>
         </div>
-        <p>拖拽文件到此处，或点击上方按钮</p>
-        <p class="lib-empty-hint">支持 PDF、Markdown、TXT</p>
+        <p v-if="sourceFilter === 'video'">暂无视频，点击「导入视频」添加</p>
+        <p v-else>拖拽文件到此处，或点击上方按钮</p>
+        <p v-if="sourceFilter !== 'video'" class="lib-empty-hint">支持 PDF、Markdown、TXT</p>
       </div>
+
+      <!-- 视频导入弹窗 -->
+      <VideoImportModal
+        v-if="showVideoImport"
+        @imported="handleVideoImported"
+        @close="showVideoImport = false"
+      />
     </main>
 
     <!-- 右键菜单 -->
@@ -137,7 +158,9 @@
 useHead({ title: 'AI 阅读分析 - 书架' })
 
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number }
+
+const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
 const folders = ref<Folder[]>([])
 const activeFolder = ref('default')
@@ -146,11 +169,21 @@ const folderCounts = ref<Record<string, number>>({})
 const showUpload = ref(false)
 const showPaste = ref(false)
 const showUrl = ref(false)
+const showVideoImport = ref(false)
 const sidebarRef = ref<any>(null)
 const urlInput = ref('')
 const urlLoading = ref(false)
 const uploading = ref(false)
 const dragOver = ref(false)
+
+// 过滤
+const sourceFilter = ref<'all' | 'text' | 'video'>('all')
+
+const filteredBooks = computed(() => {
+  if (sourceFilter.value === 'video') return books.value.filter(b => videoSources.includes(b.source))
+  if (sourceFilter.value === 'text') return books.value.filter(b => !videoSources.includes(b.source) && b.source !== '')
+  return books.value
+})
 
 // 右键菜单
 const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '' })
@@ -170,6 +203,12 @@ async function loadBooks() {
     books.value = data
     counts()
   } catch { books.value = [] }
+}
+
+function handleVideoImported(result: { id: string; title: string }) {
+  showVideoImport.value = false
+  loadBooks()
+  if (result.id) navigateTo(`/watch/${result.id}`)
 }
 
 async function counts() {
@@ -196,7 +235,14 @@ async function handleDropOnFolder(folderId: string) {
   } catch (e: any) {}
 }
 
-function openBook(id: string) { navigateTo(`/read/${id}`) }
+function openBook(id: string) {
+  const book = books.value.find(b => b.id === id)
+  if (book && videoSources.includes(book.source)) {
+    navigateTo(`/watch/${id}`)
+  } else {
+    navigateTo(`/read/${id}`)
+  }
+}
 
 // 全局拖拽上传
 async function handleGlobalDrop(e: DragEvent) {

@@ -1,5 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import path from 'node:path'
 import { getDb, saveDb } from '../utils/db'
 
@@ -211,6 +212,27 @@ function fixHyphenation(text: string): string {
   return text.replace(/(\w+)-\s*\n\s*(\w+)/g, '$1$2')
 }
 
+// ====== pymupdf4llm PDF → Markdown 解析 ======
+function parseWithPyMuPDF4LLM(pdfPath: string): string | null {
+  try {
+    const result = execSync(`python "${path.resolve('server/scripts/parse_pdf.py')}" "${pdfPath}"`, {
+      encoding: 'utf-8',
+      timeout: 120_000,
+      maxBuffer: 50 * 1024 * 1024,  // 50MB 上限
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const stdout = result.toString().trim()
+    if (!stdout || stdout.startsWith('PDF_PARSE_ERROR')) {
+      console.warn('[parse-pdf] pymupdf4llm 失败:', stdout)
+      return null
+    }
+    return stdout
+  } catch (err: any) {
+    console.warn('[parse-pdf] pymupdf4llm 调用失败:', err.message)
+    return null
+  }
+}
+
 // ====== 路由处理 ======
 
 export default defineEventHandler(async (event) => {
@@ -228,6 +250,16 @@ export default defineEventHandler(async (event) => {
   const pdfPath = path.join(uploadsDir, `${Date.now()}_${safeName}`)
   await writeFile(pdfPath, fileEntry.data)
 
+  // ---- 主路径：pymupdf4LLM 版面感知 Markdown 提取 ----
+  const mdOutput = parseWithPyMuPDF4LLM(pdfPath)
+
+  if (mdOutput) {
+    await saveTextToDataStore(mdOutput, fileEntry.filename || 'upload.pdf', path.basename(pdfPath))
+    return { text: mdOutput, filePath: path.basename(pdfPath), parser: 'pymupdf4llm' }
+  }
+
+  // ---- 兜底：pdfjs-dist 坐标感知提取 ----
+  console.log('[parse-pdf] 回退到 pdfjs-dist 文本提取')
   try {
     const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const data = new Uint8Array(
@@ -246,7 +278,7 @@ export default defineEventHandler(async (event) => {
 
     await saveTextToDataStore(fullText, fileEntry.filename || 'upload.pdf', path.basename(pdfPath))
 
-    return { text: fullText, filePath: path.basename(pdfPath) }
+    return { text: fullText, filePath: path.basename(pdfPath), parser: 'pdfjs' }
   } catch (err: any) {
     console.error('PDF 服务端解析失败:', err)
     throw createError({ statusCode: 500, message: err.message || 'PDF 解析失败' })
