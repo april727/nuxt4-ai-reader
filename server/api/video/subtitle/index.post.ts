@@ -49,10 +49,10 @@ export default defineEventHandler(async (event) => {
 
     // 尝试顺序：cookies 文件（优先，绕过浏览器锁）→ 无 cookies
     // 只在 cookies 文件不存在时才尝试从浏览器读取
-    const cookiesPath = path.resolve('server/data/youtube_cookies.txt').replace(/\\/g, '/')
+    const cookiesPath = path.resolve('server/data/youtube-cookies.txt').replace(/\\/g, '/')
     const cookieAttempts: Array<{ name: string; flag: string }> = []
     if (existsSync(cookiesPath)) {
-      cookieAttempts.push({ name: 'file', flag: `--cookies ${cookiesPath}` })
+      cookieAttempts.push({ name: 'file', flag: `--cookies "${cookiesPath}"` })
     } else {
       cookieAttempts.push(
         { name: 'edge', flag: '--cookies-from-browser edge' },

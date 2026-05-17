@@ -59,6 +59,7 @@ function createTables() {
   try { db.run('ALTER TABLE texts ADD COLUMN videoMeta TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN videoSubtitles TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN subtitlePractice TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN completedAt TEXT DEFAULT NULL') } catch {}
 }
 
 function migrateFromJson() {

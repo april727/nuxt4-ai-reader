@@ -34,10 +34,24 @@ function splitIntoParagraphs(text: string, type: SegmentType = 'document'): Para
  * 纯本地处理，不消耗 API token。只适用于字幕类型。
  */
 function deduplicateText(text: string): string {
-  const sentences = text.replace(/\s+/g, ' ').trim()
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  // 先试标点切分
+  let sentences = normalized
     .split(/(?<=[.!?。！？"」])\s*/)
     .map(s => s.trim())
     .filter(s => s.length > 5)
+  // 无标点则按换行/长块切分
+  if (sentences.length <= 1) {
+    sentences = normalized.split(/\n+/).map(s => s.trim()).filter(s => s.length > 20)
+  }
+  // 如果依然只有一个块，按长度 50 字符切分
+  if (sentences.length <= 1) {
+    sentences = []
+    for (let i = 0; i < normalized.length; i += 50) {
+      const chunk = normalized.slice(i, i + 50).trim()
+      if (chunk) sentences.push(chunk)
+    }
+  }
 
   if (sentences.length <= 1) return text
 
@@ -80,9 +94,21 @@ function mergeTinyTails(segments: Paragraph[], minChars = 50): Paragraph[] {
 //  无论面对对话、演讲、教程、论文还是新闻，AI 都用同样的信号体系来定位边界。
 //
 function buildUniversalPrompt(inputText: string): string {
-  return `你是一位内容分段专家。请将以下文本拆分为有意义的阅读段落。
+  return `你是一位内容分段与标点修复专家。请完成以下两步：
 
-## 第一步：自检文本特征（内部判断，不输出）
+**第一步：修复标点**
+如果文本缺少标点符号（常见于字幕、语音转写），请先恢复适当的标点：
+- 英文句尾加 .（句号），疑问加 ?，感叹加 !
+- 中文句尾加 。（句号），疑问加 ?，感叹加 !
+- 对话/引用加引号 ""
+- 并列词语之间加逗号，长句内部按语气加断句逗号
+- 不要改变原文措辞、不要翻译、不要改写
+- 如果原文已经有正确的标点，保持不变
+
+**第二步：分段**
+在已修复标点的基础上，按以下信号体系拆分为有意义的阅读段落。
+
+## 自检文本特征（内部判断，不输出）
 
 快速扫描文本开头 2~3 句，判断内容类型：
 - 长句密集、有章节标题 → 书籍/文章
@@ -92,7 +118,7 @@ function buildUniversalPrompt(inputText: string): string {
 
 这个判断用于指导后续分段——不输出，仅内部校准。
 
-## 第二步：信号体系定位边界
+## 信号体系定位边界
 
 基于自检结果，结合以下信号定位段落边界：
 
@@ -141,17 +167,15 @@ function buildUniversalPrompt(inputText: string): string {
   {"index": 3, "text": "最后分析数据得出结论。"}
 ]
 
-### 教育播客/课程
-输入：Welcome to English Podcast. Today we're talking about ordering coffee. Let's listen to a dialogue. A: I'd like a latte please. B: Sure. Now let's look at the vocabulary. A latte is coffee with steamed milk. Let's listen again. A: I'd like a latte please. Now for the grammar. Would like is more polite than want. Before we go, a cultural note. In the US, tipping is expected. That's all for today.
+### 无标点字幕（YouTube 播客）
+输入：today were talking about how to order coffee in English lets listen to a dialogue A Id like a latte please B Sure now lets look at the vocabulary a latte is coffee with steamed milk lets listen again A Id like a latte please now for the grammar would like is more polite than want
 输出：
 [
-  {"index": 0, "text": "Welcome to English Podcast. Today we're talking about ordering coffee."},
-  {"index": 1, "text": "Let's listen to a dialogue. A: I'd like a latte please. B: Sure."},
+  {"index": 0, "text": "Today we're talking about how to order coffee in English."},
+  {"index": 1, "text": "Let's listen to a dialogue. A: \"I'd like a latte, please.\" B: \"Sure.\""},
   {"index": 2, "text": "Now let's look at the vocabulary. A latte is coffee with steamed milk."},
-  {"index": 3, "text": "Let's listen again. A: I'd like a latte please."},
-  {"index": 4, "text": "Now for the grammar. Would like is more polite than want."},
-  {"index": 5, "text": "Before we go, a cultural note. In the US, tipping is expected."},
-  {"index": 6, "text": "That's all for today."}
+  {"index": 3, "text": "Let's listen again. A: \"I'd like a latte, please.\""},
+  {"index": 4, "text": "Now for the grammar. Would like is more polite than want."}
 ]
 
 ### 采访/对话

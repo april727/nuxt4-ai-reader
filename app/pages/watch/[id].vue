@@ -14,11 +14,11 @@
       </div>
 
       <div class="watch-topbar-right">
-        <button class="watch-learn-btn" @click="goToLearn">
+        <button class="watch-learn-btn" :class="{ disabled: subtitlesLoading }" :disabled="subtitlesLoading" @click="goToLearn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
           </svg>
-          学习模式
+          {{ subtitlesLoading ? '字幕加载中…' : '学习模式' }}
         </button>
       </div>
     </header>
@@ -45,25 +45,31 @@
 
       <!-- 右侧：字幕 + 精听 -->
       <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
-        <SubtitleList
-          :cues="subtitles"
-          :active-cue-id="activeCueId"
-          :practice="practice"
-          :loop-cue-id="loopCueId"
-          @cue-click="handleCueClick"
-          @toggle-save="handleToggleSave"
-          @toggle-loop="handleToggleLoop"
-        />
-        <PracticeList
-          :cues="subtitles"
-          :practice="practice"
-          :active-cue-id="activeCueId"
-          :loop-cue-id="loopCueId"
-          @cue-click="handleCueClick"
-          @toggle-loop="handleToggleLoop"
-          @mark-mastered="handleMarkMastered"
-          @remove="handleRemovePractice"
-        />
+        <div v-if="subtitlesLoading" class="subs-loading">
+          <div class="mini-spinner"></div>
+          <p>正在后台加载字幕...</p>
+        </div>
+        <template v-else>
+          <SubtitleList
+            :cues="subtitles"
+            :active-cue-id="activeCueId"
+            :practice="practice"
+            :loop-cue-id="loopCueId"
+            @cue-click="handleCueClick"
+            @toggle-save="handleToggleSave"
+            @toggle-loop="handleToggleLoop"
+          />
+          <PracticeList
+            :cues="subtitles"
+            :practice="practice"
+            :active-cue-id="activeCueId"
+            :loop-cue-id="loopCueId"
+            @cue-click="handleCueClick"
+            @toggle-loop="handleToggleLoop"
+            @mark-mastered="handleMarkMastered"
+            @remove="handleRemovePractice"
+          />
+        </template>
       </div>
     </div>
   </div>
@@ -87,6 +93,7 @@ const title = ref('')
 const source = ref('')
 const videoUrl = ref('')
 const subtitles = ref<SubtitleCue[]>([])
+const subtitlesLoading = ref(false)
 const practice = ref<Record<string, SubtitlePractice>>({})
 const isPlaying = ref(false)
 const currentTime = ref(0)
@@ -143,10 +150,40 @@ onMounted(async () => {
     }
 
     loaded.value = true
+
+    // 字幕为空 → 自动后台拉取
+    if (!subtitles.value || subtitles.value.length === 0) {
+      extractSubtitlesInBackground()
+    }
   } catch (e: any) {
     alert('加载失败: ' + (e?.message || ''))
   }
 })
+
+async function extractSubtitlesInBackground() {
+  subtitlesLoading.value = true
+  try {
+    // 触发后台提取（立即返回）
+    await $fetch(`/api/video/extract-subtitles/${id}`, { method: 'POST' })
+
+    // 轮询等待提取完成（每 2 秒检查一次）
+    const poll = async () => {
+      const data = await $fetch<any>(`/api/video/${id}`)
+      if (data.subtitles?.length > 0) {
+        title.value = data.title
+        subtitles.value = data.subtitles
+        practice.value = data.practice || {}
+        subtitlesLoading.value = false
+      } else {
+        setTimeout(poll, 2000)
+      }
+    }
+    setTimeout(poll, 2000)
+  } catch (e: any) {
+    console.warn('[watch] 后台字幕提取失败:', e?.message || '')
+    subtitlesLoading.value = false
+  }
+}
 
 // ---- 时间同步 ----
 function onTimeUpdate(time: number) {
@@ -169,9 +206,11 @@ function onDurationChange(duration: number) {
   totalDuration.value = duration
 }
 
-function onEnded() {
+async function onEnded() {
   isPlaying.value = false
   loopCueId.value = null
+  // 自动标记为已完成
+  try { await $fetch('/api/text/complete', { method: 'POST', body: { id } }) } catch {}
 }
 
 // ---- 点击字幕 -> 跳转 ----
@@ -345,6 +384,7 @@ function startResize(e: MouseEvent) {
   font-weight: 500;
 }
 .watch-learn-btn:hover { background: #ddd8fa; }
+.watch-learn-btn.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
 .watch-body {
   display: flex;
@@ -371,6 +411,11 @@ function startResize(e: MouseEvent) {
 
 .watch-sidebar .subtitle-list { flex: 1; min-height: 0; }
 .watch-sidebar .practice-list { flex-shrink: 0; }
+
+.subs-loading {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; height: 200px; color: #a09e97; font-size: 13px;
+}
 
 .watch-loading {
   display: flex;

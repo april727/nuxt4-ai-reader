@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   const db = await getDb()
 
   const stmt = db.prepare(
-    'SELECT id,title,source,folder,excerpt,filePath,analysis,segments,marks,videoMeta,videoSubtitles,subtitlePractice,readingPosition,createdAt FROM texts WHERE id=?'
+    'SELECT id,title,source,folder,excerpt,filePath,analysis,segments,marks,videoMeta,videoSubtitles,subtitlePractice,readingPosition,completedAt,createdAt FROM texts WHERE id=?'
   )
   stmt.bind([id])
   let row: any = null

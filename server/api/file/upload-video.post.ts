@@ -20,22 +20,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '文件过大，限制 200MB' })
   }
 
-  const uploadDir = path.resolve('server/data/uploads/videos')
+  const uploadDir = path.resolve('server/data/uploads')
   if (!existsSync(uploadDir)) {
     await mkdir(uploadDir, { recursive: true })
   }
 
   // 时间戳 + 随机后缀防重名
   const timestamp = Date.now()
-  const safeName = `${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const safeName = `vid_${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   const filePath = path.join(uploadDir, safeName)
 
   const buffer = Buffer.from(await file.arrayBuffer())
   await writeFile(filePath, buffer)
 
   return {
-    filePath: `videos/${safeName}`,
-    url: `/api/file/videos/${safeName}`,
+    filePath: safeName,
+    url: `/api/file/${safeName}`,
     originalName: file.name,
     size: file.size,
   }

@@ -35,6 +35,18 @@
         class="mp-yt-hidden"
         :id="ytContainerId"
       ></div>
+      <video
+        v-else-if="isLocalVideo"
+        ref="videoEl"
+        class="mp-audio-hidden"
+        :src="src"
+        preload="auto"
+        @timeupdate="onTimeUpdate"
+        @loadedmetadata="onLoaded"
+        @play="playing = true"
+        @pause="playing = false"
+        @ended="onEnded"
+      ></video>
       <audio
         v-else-if="isLocalAudio"
         ref="audioEl"
@@ -84,10 +96,12 @@ const emit = defineEmits<{
 
 // ---- 类型判断 ----
 const isYoutube = computed(() => props.fileType === 'youtube')
+const isLocalVideo = computed(() => props.fileType === 'video_file')
 const isLocalAudio = computed(() => props.fileType === 'audio_file')
 
 // ---- Refs ----
 const ytContainer = ref<HTMLDivElement | null>(null)
+const videoEl = ref<HTMLVideoElement | null>(null)
 const audioEl = ref<HTMLAudioElement | null>(null)
 const trackEl = ref<HTMLDivElement | null>(null)
 
@@ -211,6 +225,9 @@ function togglePlay() {
     const state = ytPlayer.getPlayerState()
     if (state === 1) ytPlayer.pauseVideo()
     else { if (currentTime.value < props.startTime) ytPlayer.seekTo(props.startTime, true); ytPlayer.playVideo() }
+  } else if (videoEl.value) {
+    if (videoEl.value.paused) videoEl.value.play().catch(() => {})
+    else videoEl.value.pause()
   } else if (audioEl.value) {
     if (audioEl.value.paused) audioEl.value.play().catch(() => {})
     else audioEl.value.pause()
@@ -223,6 +240,7 @@ function onTrackClick(e: MouseEvent) {
   const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
   const t = pct * duration.value
   if (isYoutube.value && ytPlayer) ytPlayer.seekTo(t, true)
+  else if (videoEl.value) videoEl.value.currentTime = t
   else if (audioEl.value) audioEl.value.currentTime = t
 }
 
@@ -248,6 +266,7 @@ watch(() => props.visible, async (v) => {
     }
   } else {
     if (isYoutube.value) destroyYT()
+    else if (videoEl.value) { videoEl.value.pause(); videoEl.value.currentTime = 0 }
     else if (audioEl.value) { audioEl.value.pause(); audioEl.value.currentTime = 0 }
     playing.value = false
   }
@@ -260,6 +279,10 @@ watch(() => props.startTime, (t) => {
       // 防止 seek 后已超 end（极短段落）
       if (props.endTime && t >= props.endTime) return
       ytPlayer.playVideo()
+    } else if (videoEl.value) {
+      videoEl.value.currentTime = t
+      if (props.endTime && t >= props.endTime) return
+      videoEl.value.play().catch(() => {})
     } else if (audioEl.value) {
       audioEl.value.currentTime = t
       if (props.endTime && t >= props.endTime) return

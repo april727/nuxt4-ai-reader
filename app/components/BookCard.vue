@@ -1,7 +1,7 @@
 <template>
   <div
     class="doc-card"
-    :class="coverTypeClass"
+    :class="[coverTypeClass, { completed: !!completedAt }]"
     :draggable="draggable"
     @click="$emit('open', id)"
     @dragstart="$emit('dragstart', $event)"
@@ -36,10 +36,16 @@
     <div class="doc-body">
       <p class="doc-title">{{ title }}</p>
       <div class="doc-meta">
-        <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
-        <span v-else class="doc-reads">阅读 {{ readCount || 0 }} 次</span>
-        <span class="doc-marks" v-if="markCount">· {{ markCount }} 标记</span>
-        <span v-if="!isVideo && !markCount" class="doc-reads" style="display:none">&nbsp;</span>
+        <span class="doc-meta-left">
+          <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
+          <span v-else class="doc-reads">阅读 {{ readCount || 0 }} 次</span>
+          <span class="doc-marks" v-if="markCount">· {{ markCount }} 标记</span>
+          <span v-if="!isVideo && !markCount" class="doc-reads" style="display:none">&nbsp;</span>
+        </span>
+        <span v-if="completedAt" class="completed-label">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          已完成
+        </span>
       </div>
     </div>
     <div class="doc-hover-actions" @click.stop @contextmenu.stop>
@@ -56,7 +62,7 @@
 const props = defineProps<{
   id: string; title: string; length: number; source: string; draggable?: boolean
   readCount?: number; lastReadAt?: string; markCount?: number; duration?: number
-  thumbnail?: string
+  thumbnail?: string; completedAt?: string
 }>()
 
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent] }>()
@@ -159,7 +165,7 @@ function formatDuration(seconds: number): string {
   border-radius: 4px;
 }
 
-.doc-body { padding: 10px 12px 13px; height: 52px; display: flex; flex-direction: column; }
+.doc-body { padding: 10px 12px 13px; display: flex; flex-direction: column; min-height: 52px; }
 
 .doc-title {
   font-size: 12.5px;
@@ -172,7 +178,36 @@ function formatDuration(seconds: number): string {
   flex-shrink: 0;
 }
 
-.doc-meta { display: flex; gap: 4px; font-size: 11px; color: #b0ae9f; margin-top: auto; }
+.doc-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #b0ae9f;
+  margin-top: auto;
+}
+.doc-meta-left {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.completed-label {
+  color: #10b981;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 10.5px;
+}
+
+/* 已完成卡片视觉 */
+.doc-card.completed { opacity: 0.65; }
+.doc-card.completed .doc-thumb { filter: saturate(0.6); }
+.doc-card.completed .doc-title { color: #6b6963; }
 
 .doc-hover-actions {
   position: absolute;

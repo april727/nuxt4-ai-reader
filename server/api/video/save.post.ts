@@ -16,31 +16,33 @@ export default defineEventHandler(async (event) => {
   }>(event)
 
   if (!body?.url) throw createError({ statusCode: 400, message: '缺少视频 URL' })
-  if (!body?.subtitles?.length) throw createError({ statusCode: 400, message: '缺少字幕数据' })
 
-  // 拼接字幕纯文本
-  const plainText = body.text || subtitlesToText(body.subtitles)
-  const fp = plainText.slice(0, 300).replace(/\s+/g, ' ').trim()
+  // 拼接字幕纯文本（空字幕时用标题占位）
+  const plainText = body.text || (body.subtitles?.length ? subtitlesToText(body.subtitles) : body.title || '')
+  const hasSubtitles = body.subtitles && body.subtitles.length > 0
 
   // 自动生成标题
   const title = body.title && body.title !== '未命名'
     ? body.title
-    : (body.subtitles[0]?.text?.slice(0, 60) || '未命名视频')
+    : (hasSubtitles ? body.subtitles![0].text.slice(0, 60) : '未命名视频')
 
   const id = `vid_${Date.now()}`
   const db = await getDb()
 
-  // 去重
-  const stmt = db.prepare('SELECT id,title,createdAt FROM texts')
-  while (stmt.step()) {
-    const row = stmt.getAsObject()
-    const f = String(row.text).slice(0, 300).replace(/\s+/g, ' ').trim()
-    if (f === fp) {
-      stmt.free()
-      return { id: row.id, title: row.title, createdAt: row.createdAt, existed: true }
+  // 有字幕才去重
+  if (hasSubtitles) {
+    const fp = plainText.slice(0, 300).replace(/\s+/g, ' ').trim()
+    const stmt = db.prepare('SELECT id,title,createdAt FROM texts')
+    while (stmt.step()) {
+      const row = stmt.getAsObject()
+      const f = String(row.text).slice(0, 300).replace(/\s+/g, ' ').trim()
+      if (f === fp) {
+        stmt.free()
+        return { id: row.id, title: row.title, createdAt: row.createdAt, existed: true }
+      }
     }
+    stmt.free()
   }
-  stmt.free()
 
   const videoMeta: VideoMeta = {
     url: body.url,
@@ -50,17 +52,21 @@ export default defineEventHandler(async (event) => {
     originalFileName: body.filePath?.split('/').pop() || '',
   }
 
-  const excerpt = plainText.replace(/\s+/g, ' ').trim().slice(0, 150)
+  const excerpt = hasSubtitles
+    ? plainText.replace(/\s+/g, ' ').trim().slice(0, 150)
+    : ''
   const createdAt = new Date().toISOString()
 
-  // 自动分段：每条字幕作为一段（用于阅读页展示）
-  const segments = body.subtitles.map((c, idx) => ({
-    id: `p-${idx}`,
-    index: idx,
-    text: c.text,
-    start: c.start,
-    end: c.end,
-  }))
+  // 有字幕时自动分段
+  const segments = hasSubtitles
+    ? body.subtitles!.map((c, idx) => ({
+        id: `p-${idx}`,
+        index: idx,
+        text: c.text,
+        start: c.start,
+        end: c.end,
+      }))
+    : []
 
   db.run(
     `INSERT INTO texts (id,title,text,source,folder,excerpt,filePath,segments,analysis,videoMeta,videoSubtitles,createdAt)
@@ -68,7 +74,7 @@ export default defineEventHandler(async (event) => {
     [
       id,
       title,
-      plainText.slice(0, 100000),
+      hasSubtitles ? plainText.slice(0, 100000) : '',
       body.type,
       body.folder || 'default',
       excerpt,
@@ -76,7 +82,7 @@ export default defineEventHandler(async (event) => {
       JSON.stringify(segments),
       '',
       JSON.stringify(videoMeta),
-      JSON.stringify(body.subtitles),
+      JSON.stringify(body.subtitles || []),
       createdAt,
     ]
   )

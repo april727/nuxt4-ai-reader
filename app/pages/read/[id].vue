@@ -888,46 +888,54 @@ function formatMd(a: any) { return [`## ${a.title}`, '', `**风格**：${a.tone}
  * 将 AI 分段结果映射回原始字幕 cue，保留时间信息。
  * 对每个 AI 分段文本，在完整字幕拼接文本中定位 → 找到覆盖该位置的字幕 cue →
  * 取第一个 cue 的 start 作为段落时间戳。
+ *
+ * 匹配时做归一化（小写+去标点），让 AI 添加的标点和大小写不影响定位。
  */
+function normalizeText(s: string): string {
+  return s.toLowerCase().replace(/[.,!?;:'"()\-\[\]{}<>/\\@#$%^&*~`]/g, '').replace(/\s+/g, ' ').trim()
+}
+
 function mapSegmentsToCues(
   segments: Paragraph[],
   cues: Array<{ text: string; start: number; end: number }>,
 ): Paragraph[] {
   if (!cues.length) return segments
 
-  // 完整拼接文本
+  // 完整拼接文本 + 归一化版本（用于匹配）
   const fullText = cues.map(c => c.text).join(' ').replace(/\s{2,}/g, ' ').trim()
+  const normFull = normalizeText(fullText)
 
-  // 构建每个 cue 在完整文本中的字符范围
+  // 构建每个 cue 在归一化文本中的字符范围
   let offset = 0
   const ranges: Array<{ start: number; end: number; cueIdx: number }> = []
   for (let i = 0; i < cues.length; i++) {
-    // 在当前 offset 位置找 cue 文本
-    const idx = fullText.indexOf(cues[i].text, offset)
+    const normCue = normalizeText(cues[i].text)
+    const idx = normFull.indexOf(normCue, offset)
     const start = idx >= 0 ? idx : offset
-    const end = start + cues[i].text.length
+    const end = start + normCue.length
     ranges.push({ start, end, cueIdx: i })
     offset = end + 1
   }
 
   return segments.map((seg) => {
-    // 用段落前 60 字符在完整文本中进行匹配
+    // AI 输出文本也做归一化，消除大小写/标点差异
     const segClean = seg.text.replace(/\s+/g, ' ').trim()
-    const head = segClean.slice(0, 60)
-    let startPos = fullText.indexOf(head)
+    const normSeg = normalizeText(segClean)
+    const head = normSeg.slice(0, 60)
+    let startPos = normFull.indexOf(head)
     if (startPos < 0) {
-      startPos = fullText.indexOf(segClean.slice(0, 40))
+      startPos = normFull.indexOf(normSeg.slice(0, 40))
     }
     if (startPos < 0) return seg // 无法定位
 
-    const endPos = startPos + segClean.length
+    const endPos = startPos + normSeg.length
 
     // 找到覆盖该范围的 cue
     let firstCue: { text: string; start: number; end: number } | null = null
     let lastCue: { text: string; start: number; end: number } | null = null
     for (const r of ranges) {
       if (r.start <= startPos && r.end > startPos && !firstCue) firstCue = cues[r.cueIdx]
-      if (r.start < endPos && lastCue) lastCue = cues[r.cueIdx]
+      if (r.start < endPos) lastCue = cues[r.cueIdx]
     }
     if (!firstCue) firstCue = cues[0]
     if (!lastCue) lastCue = cues[cues.length - 1]

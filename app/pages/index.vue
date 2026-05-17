@@ -78,7 +78,8 @@
           :mark-count="book.markCount"
           :duration="book.duration"
           :thumbnail="(book as any).thumbnail"
-          draggable="true"
+          :completed-at="(book as any).completedAt"
+          :draggable="true"
           @dragstart="handleBookDragStart($event, book.id)"
           @open="openBook"
           @contextmenu.prevent="openContextMenu($event, book)"
@@ -112,6 +113,7 @@
       @click.self="contextMenu.show = false"
     >
       <button @click="renameBook">重命名</button>
+      <button @click="toggleComplete">{{ contextMenu.completedAt ? '取消完成' : '标记完成' }}</button>
       <button @click="deleteBook">删除</button>
       <button class="danger" @click="contextMenu.show = false">取消</button>
     </div>
@@ -158,13 +160,23 @@
 useHead({ title: 'AI 阅读分析 - 书架' })
 
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number; duration?: number }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string }
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
-const folders = ref<Folder[]>([])
 const activeFolder = ref('default')
-const books = ref<BookItem[]>([])
+
+// SSR 预取：数据在服务端渲染时一并获取，避免客户端空状态闪变
+const { data: folders, refresh: refreshFolders } = await useAsyncData('folders', () =>
+  $fetch<Folder[]>('/api/folder/list'), { default: () => [] as Folder[] }
+)
+
+const { data: books, refresh: refreshBooks } = await useAsyncData(
+  'books',
+  () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
+  { watch: [activeFolder], default: () => [] as BookItem[] }
+)
+
 const folderCounts = ref<Record<string, number>>({})
 const showUpload = ref(false)
 const showPaste = ref(false)
@@ -186,7 +198,7 @@ const filteredBooks = computed(() => {
 })
 
 // 右键菜单
-const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '' })
+const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '' })
 const showRename = ref(false)
 const renameText = ref('')
 const renameBookId = ref('')
@@ -194,15 +206,12 @@ const renameBookId = ref('')
 const activeFolderName = computed(() => folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹')
 
 async function loadFolders() {
-  try { folders.value = await $fetch<Folder[]>('/api/folder/list') } catch {}
+  try { await refreshFolders() } catch {}
 }
 
 async function loadBooks() {
-  try {
-    const data = await $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`)
-    books.value = data
-    counts()
-  } catch { books.value = [] }
+  try { await refreshBooks() } catch {}
+  counts()
 }
 
 function handleVideoImported(result: { id: string; title: string }) {
@@ -286,7 +295,7 @@ function handleBookDragStart(e: DragEvent, id: string) {
 
 // 右键菜单
 function openContextMenu(e: MouseEvent, book: BookItem) {
-  contextMenu.show = true; contextMenu.x = e.clientX; contextMenu.y = e.clientY; contextMenu.bookId = book.id
+  contextMenu.show = true; contextMenu.x = e.clientX; contextMenu.y = e.clientY; contextMenu.bookId = book.id; contextMenu.completedAt = book.completedAt || ''
   document.addEventListener('click', () => { contextMenu.show = false }, { once: true })
 }
 
@@ -307,6 +316,18 @@ async function deleteBook() {
   try {
     await $fetch('/api/text/delete', { method: 'POST', body: { id: contextMenu.bookId } })
     contextMenu.show = false; await loadBooks()
+  } catch (e: any) {}
+}
+
+async function toggleComplete() {
+  try {
+    if (contextMenu.completedAt) {
+      await $fetch('/api/text/uncomplete', { method: 'POST', body: { id: contextMenu.bookId } })
+    } else {
+      await $fetch('/api/text/complete', { method: 'POST', body: { id: contextMenu.bookId } })
+    }
+    contextMenu.show = false
+    await loadBooks()
   } catch (e: any) {}
 }
 
@@ -337,6 +358,9 @@ async function fetchUrl() {
   finally { urlLoading.value = false }
 }
 
-watch(activeFolder, loadBooks)
-onMounted(async () => { await loadFolders(); await loadBooks() })
+// useAsyncData 的 watch: [activeFolder] 已自动处理切换文件夹时的数据重新获取
+// 顶层 await useAsyncData 已处理初始化加载，无需 onMounted 数据请求
+
+// 客户端侧边栏数量刷新（SSR 期间不执行）
+onMounted(() => { counts() })
 </script>

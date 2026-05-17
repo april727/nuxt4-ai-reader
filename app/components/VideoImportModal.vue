@@ -16,42 +16,17 @@
         >{{ tab.label }}</button>
       </div>
 
-      <!-- Tab 1: URL 导入 -->
+      <!-- Tab 1: URL 导入（跳过 yt-dlp，保存后播放页后台提取） -->
       <div v-if="activeTab === 'url'" class="vim-panel">
-        <div class="vim-hint">支持 YouTube 和 Bilibili 链接，自动提取字幕</div>
+        <div class="vim-hint">支持 YouTube 和 Bilibili 链接，字幕将在播放页面后台自动加载</div>
         <input
           v-model="urlInput"
           class="vim-input"
           placeholder="https://www.youtube.com/watch?v=..."
-          @keydown.enter="fetchSubtitles"
+          :disabled="urlLoading"
+          @keydown.enter="quickSave"
         />
-        <div v-if="urlLoading" class="processing"><div class="spinner"></div><p>正在提取字幕...</p></div>
-
-        <!-- 预览 -->
-        <div v-if="preview" class="vim-preview">
-          <div class="vim-preview-header">
-            <span v-if="preview.thumbnail" class="vim-thumb">
-              <img :src="preview.thumbnail" alt="" />
-            </span>
-            <div class="vim-preview-info">
-              <strong>{{ preview.title }}</strong>
-              <span class="vim-cue-count">{{ preview.subtitles.length }} 条字幕 · {{ preview.durationFormatted }}</span>
-            </div>
-          </div>
-          <div class="vim-preview-list">
-            <div v-for="cue in preview.subtitles.slice(0, 5)" :key="cue.id" class="vim-preview-cue">
-              <span class="vim-cue-time">{{ formatTime(cue.start) }}</span>
-              <span class="vim-cue-text">{{ cue.text }}</span>
-            </div>
-            <div v-if="preview.subtitles.length > 5" class="vim-preview-more">
-              ... 还有 {{ preview.subtitles.length - 5 }} 条
-            </div>
-          </div>
-          <div class="paste-actions">
-            <button class="btn-ghost" @click="resetPreview">取消</button>
-            <button class="btn-primary" @click="confirmImport">确认导入</button>
-          </div>
-        </div>
+        <div v-if="urlLoading" class="processing"><div class="spinner"></div><p>添加到列表...</p></div>
       </div>
 
       <!-- Tab 2: 上传字幕文件 -->
@@ -141,11 +116,10 @@ interface PreviewData {
   title: string
   type: string
   url: string
-  subtitles: SubtitleCue[]
   duration: number
   durationFormatted: string
   thumbnail: string
-  text: string
+  subtitles?: SubtitleCue[]
 }
 
 const emit = defineEmits<{
@@ -160,53 +134,26 @@ const tabs = [
   { key: 'video', label: '上传视频' },
 ]
 
-// ---- Tab 1: URL 导入 ----
+// ---- Tab 1: URL 导入（零等待，保存后播放页后台提取） ----
 const urlInput = ref('')
 const urlLoading = ref(false)
-const preview = ref<PreviewData | null>(null)
 
-async function fetchSubtitles() {
+async function quickSave() {
   const url = urlInput.value.trim()
   if (!url) return
   urlLoading.value = true
-  preview.value = null
   try {
-    const result = await $fetch<PreviewData>('/api/video/subtitle', {
+    const result = await $fetch<{ id: string; title: string }>('/api/video/quick-save', {
       method: 'POST',
       body: { url },
     })
-    preview.value = { ...result, url, durationFormatted: formatTime(result.duration) }
+    emit('imported', result)
+    urlInput.value = ''
   } catch (e: any) {
-    alert('字幕提取失败: ' + (e?.message || e?.statusMessage || '未知错误'))
+    alert('导入失败: ' + (e?.message || e?.statusMessage || '未知错误'))
   } finally {
     urlLoading.value = false
   }
-}
-
-async function confirmImport() {
-  if (!preview.value) return
-  try {
-    const result = await $fetch<{ id: string; title: string }>('/api/video/save', {
-      method: 'POST',
-      body: {
-        title: preview.value.title,
-        url: preview.value.url,
-        type: preview.value.type,
-        subtitles: preview.value.subtitles,
-        duration: preview.value.duration,
-        thumbnail: preview.value.thumbnail,
-      },
-    })
-    emit('imported', result)
-    resetPreview()
-  } catch (e: any) {
-    alert('导入失败: ' + (e?.message || e?.statusMessage || '未知错误'))
-  }
-}
-
-function resetPreview() {
-  preview.value = null
-  urlInput.value = ''
 }
 
 // ---- Tab 2: 上传字幕文件 ----
@@ -515,6 +462,15 @@ function formatTime(seconds: number): string {
 
 .vim-cue-text {
   color: #4a4a46;
+}
+
+.vim-preview-pending {
+  display: flex; align-items: center; gap: 8px;
+  padding: 16px 0; font-size: 12.5px; color: #a09e97;
+  justify-content: center;
+}
+.vim-preview-pending .mini-spinner {
+  width: 14px; height: 14px; border-width: 1.5px;
 }
 
 .vim-preview-more {
