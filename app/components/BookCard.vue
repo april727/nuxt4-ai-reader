@@ -1,5 +1,5 @@
 <template>
-  <div
+  <article
     class="doc-card"
     :class="[coverTypeClass, { completed: !!completedAt }]"
     :draggable="draggable"
@@ -8,54 +8,54 @@
     @contextmenu.prevent="$emit('contextmenu', $event)"
   >
     <div class="doc-thumb">
-      <!-- YouTube 封面 -->
       <img
         v-if="isVideo && thumbnail"
         :src="thumbnail"
         class="thumb-cover"
-        loading="lazy"
         alt=""
         @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
       />
-      <!-- 网页 favicon -->
       <img
         v-else-if="isWeb"
         :src="faviconUrl"
         class="thumb-icon"
-        loading="lazy"
         alt=""
         @error="(e) => (e.target as HTMLImageElement).style.display = 'none'"
       />
-      <!-- 兜底 SVG 图标 -->
-      <svg v-else-if="!thumbnail" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-        <template v-if="isPdf"><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></template>
+      <svg
+        v-else
+        class="thumb-fallback"
+        width="28" height="28"
+        viewBox="0 0 24 24"
+        fill="none" stroke="currentColor"
+        stroke-width="1.3"
+      >
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <template v-if="isPdf"><line x1="9" y1="13" x2="16" y2="13"/><line x1="9" y1="17" x2="14" y2="17"/></template>
+        <template v-if="isText">
+          <line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="16" y2="16"/>
+        </template>
       </svg>
       <span class="thumb-label">{{ sourceLabel }}</span>
     </div>
     <div class="doc-body">
-      <p class="doc-title">{{ title }}</p>
+      <h3 class="doc-title">{{ title }}</h3>
       <div class="doc-meta">
         <span class="doc-meta-left">
           <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
-          <span v-else class="doc-reads">阅读 {{ readCount || 0 }} 次</span>
-          <span class="doc-marks" v-if="markCount">· {{ markCount }} 标记</span>
-          <span v-if="!isVideo && !markCount" class="doc-reads" style="display:none">&nbsp;</span>
+          <span v-else class="doc-reads">{{ readCount ? `阅读 ${readCount} 次` : '尚未阅读' }}</span>
+          <span v-if="markCount" class="doc-sep">·</span>
+          <span v-if="markCount" class="doc-marks">{{ markCount }} 标记</span>
         </span>
         <span v-if="completedAt" class="completed-label">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          已完成
+          完成
         </span>
       </div>
     </div>
-    <div class="doc-hover-actions" @click.stop @contextmenu.stop>
-      <button class="doc-action-btn" title="更多操作" @click.stop="$emit('contextmenu', $event)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
-        </svg>
-      </button>
-    </div>
-  </div>
+    <div class="doc-hover-glow"></div>
+  </article>
 </template>
 
 <script setup lang="ts">
@@ -72,6 +72,7 @@ const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 const isVideo = computed(() => videoSources.includes(props.source))
 const isPdf = computed(() => props.source?.toLowerCase().includes('.pdf') || props.source === 'upload')
 const isWeb = computed(() => props.source?.startsWith('http'))
+const isText = computed(() => !isVideo.value && !isPdf.value && !isWeb.value)
 const coverTypeClass = computed(() => {
   if (isVideo.value) return 'thumb-video'
   if (isPdf.value) return 'thumb-pdf'
@@ -111,24 +112,49 @@ function formatDuration(seconds: number): string {
 
 <style scoped>
 .doc-card {
-  border: 0.5px solid rgba(0,0,0,0.09);
-  border-radius: 12px;
-  overflow: hidden;
-  cursor: pointer;
-  background: #ffffff;
-  transition: border-color 0.15s, box-shadow 0.15s;
   position: relative;
   display: flex;
   flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.25s ease,
+              border-color 0.25s ease;
 }
 .doc-card:hover {
-  border-color: rgba(0,0,0,0.18);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  transform: translateY(-3px);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.06),
+    0 2px 8px rgba(0, 0, 0, 0.04);
 }
-.doc-card:hover .doc-hover-actions { opacity: 1; }
+.doc-card:hover .doc-hover-glow {
+  opacity: 1;
+}
+.doc-card.completed {
+  opacity: 0.72;
+}
+.doc-card.completed .doc-thumb {
+  filter: saturate(0.5);
+}
 
+/* subtle glow on hover */
+.doc-hover-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 14px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  box-shadow: inset 0 1px 0 rgba(61, 53, 145, 0.06);
+}
+
+/* ── Thumbnail ── */
 .doc-thumb {
-  height: 100px;
+  height: 108px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -138,16 +164,16 @@ function formatDuration(seconds: number): string {
   overflow: hidden;
 }
 
-/* Pastel type colors */
-.thumb-pdf .doc-thumb { background: #fce9e5; color: #b84b2e; }
-.thumb-web .doc-thumb { background: #e2f4ec; color: #0e6b51; }
+.thumb-pdf .doc-thumb { background: #fdf2ed; color: #b85a3c; }
+.thumb-web .doc-thumb { background: #ebf7f1; color: #187a52; }
 .thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
-.thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
+.thumb-video .doc-thumb { background: #e5efff; color: #2a4d8c; }
 
 .thumb-label {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 500;
-  opacity: 0.7;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
   font-family: 'DM Mono', monospace;
 }
 
@@ -160,75 +186,69 @@ function formatDuration(seconds: number): string {
 }
 
 .thumb-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
 }
 
-.doc-body { padding: 10px 12px 13px; display: flex; flex-direction: column; min-height: 52px; }
+.thumb-fallback {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+/* ── Body ── */
+.doc-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
 
 .doc-title {
-  font-size: 12.5px;
-  font-weight: 400;
+  font-family: 'Lora', Georgia, serif;
+  font-size: 13.5px;
+  font-weight: 450;
   color: #1a1a18;
-  line-height: 1.4;
-  white-space: nowrap;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 0;
 }
 
 .doc-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 11px;
-  color: #b0ae9f;
+  color: #a09e97;
   margin-top: auto;
 }
 .doc-meta-left {
   display: flex;
+  align-items: center;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
+  flex-wrap: wrap;
+}
+.doc-sep {
+  color: #d4d1c8;
+}
+.doc-duration {
+  font-family: 'DM Mono', monospace;
+  color: #8a877c;
 }
 
 .completed-label {
-  color: #10b981;
-  font-weight: 500;
   display: flex;
   align-items: center;
   gap: 3px;
-  flex-shrink: 0;
+  color: #10b981;
+  font-weight: 500;
   font-size: 10.5px;
+  flex-shrink: 0;
 }
-
-/* 已完成卡片视觉 */
-.doc-card.completed { opacity: 0.65; }
-.doc-card.completed .doc-thumb { filter: saturate(0.6); }
-.doc-card.completed .doc-title { color: #6b6963; }
-
-.doc-hover-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.doc-action-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: rgba(255,255,255,0.9);
-  border: 0.5px solid rgba(0,0,0,0.12);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: #6b6963;
-  transition: background 0.12s;
-}
-.doc-action-btn:hover { background: #ffffff; color: #3d3591; }
 </style>

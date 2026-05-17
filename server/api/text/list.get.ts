@@ -35,6 +35,10 @@ export default defineEventHandler(async (event) => {
     if (r.videoMeta) {
       try { const vm = JSON.parse(r.videoMeta); duration = vm.duration || 0; thumbnail = vm.thumbnail || '' } catch {}
     }
+    // 本地缩略图（thumb_ 前缀）转为 /api/file/ URL
+    if (thumbnail && thumbnail.startsWith('thumb_')) {
+      thumbnail = `/api/file/${thumbnail}`
+    }
     return {
       id: r.id, title: r.title || '未命名', source: r.source || 'paste', folder: r.folder || r.folder,
       excerpt: r.excerpt || '', createdAt: r.createdAt, completedAt: r.completedAt || null,

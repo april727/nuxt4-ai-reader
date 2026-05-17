@@ -1,5 +1,7 @@
 import { execSync, exec } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs'
+import { get } from 'node:https'
+import { get as httpGet } from 'node:http'
 import path from 'node:path'
 import os from 'node:os'
 import { getDb, saveDb } from '../../../utils/db'
@@ -70,6 +72,38 @@ export default defineEventHandler(async (event) => {
 
   return { status: 'processing', message: '字幕正在后台提取' }
 })
+
+// ============================================================
+//  下载缩略图到本地（避免每次书架打开都从 YouTube CDN 加载）
+// ============================================================
+const UPLOADS_DIR = path.resolve('server/data/uploads')
+
+function downloadThumbnail(imageUrl: string, destName: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!imageUrl || !imageUrl.startsWith('http')) return resolve(null)
+    const extMatch = imageUrl.match(/\.(jpg|jpeg|webp|png)(\?|$)/i)
+    const ext = extMatch?.[1] || 'jpg'
+    const filename = `thumb_${destName}.${ext}`
+    const filePath = path.join(UPLOADS_DIR, filename)
+    if (existsSync(filePath)) return resolve(filename) // 已存在
+
+    if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true })
+
+    const fetcher = imageUrl.startsWith('https') ? get : httpGet
+    fetcher(imageUrl, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const redirectUrl = res.headers.location
+        if (redirectUrl) return resolve(downloadThumbnail(redirectUrl, destName))
+        return resolve(null)
+      }
+      if (res.statusCode !== 200) return resolve(null)
+      const file = createWriteStream(filePath)
+      res.pipe(file)
+      file.on('finish', () => resolve(filename))
+      file.on('error', () => resolve(null))
+    }).on('error', () => resolve(null))
+  })
+}
 
 // ============================================================
 //  后台提取逻辑（异步非阻塞）
@@ -148,6 +182,12 @@ async function runExtraction(id: string, url: string, isBilibili: boolean, row: 
       fetchedThumbnail = meta.thumbnail || ''
     } catch { /* 元数据不是必须的 */ }
 
+    // 下载缩略图到本地（避免每次书架打开都从 YouTube CDN 重新加载）
+    let localThumbnail = ''
+    if (fetchedThumbnail) {
+      localThumbnail = await downloadThumbnail(fetchedThumbnail, id) || ''
+    }
+
     // 更新 DB
     const db = await getDb()
     const text = subtitlesToText(subtitles)
@@ -160,7 +200,7 @@ async function runExtraction(id: string, url: string, isBilibili: boolean, row: 
       url: videoMeta?.url || '',
       type: videoMeta?.type || 'youtube',
       duration: fetchedDuration || videoMeta?.duration || 0,
-      thumbnail: fetchedThumbnail || videoMeta?.thumbnail || '',
+      thumbnail: localThumbnail || fetchedThumbnail || videoMeta?.thumbnail || '',
       originalFileName: videoMeta?.originalFileName || '',
     }
 

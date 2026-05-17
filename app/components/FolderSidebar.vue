@@ -1,7 +1,7 @@
 <template>
   <div class="folder-sidebar">
     <div class="fs-header">
-      <svg class="fs-logo-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg class="fs-logo-icon" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
         <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
         <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
         <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
@@ -72,12 +72,12 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 
 <style scoped>
 .folder-sidebar { display: flex; flex-direction: column; height: 100%; background: transparent; font-family: 'DM Sans', sans-serif; }
-.fs-header { display: flex; align-items: center; gap: 10px; padding: 20px 20px 0 24px; }
-.fs-logo-icon { flex-shrink: 0; color: #1a1a18; width: 24px; height: 24px; stroke-width: 1.6; }
-.fs-title { font-size: 18px; font-weight: 600; color: #1a1a18; }
+.fs-header { display: flex; align-items: center; gap: 10px; padding: 28px 20px 0 24px; }
+.fs-logo-icon { flex-shrink: 0; color: #1a1a18; width: 30px; height: 30px; stroke-width: 1.6; }
+.fs-title { font-family: 'Lora', Georgia, serif; font-size: 26px; font-weight: 500; color: #1a1a18; }
 .fs-section-label {
   font-size: 10.5px; font-weight: 500; color: #a09e97; letter-spacing: 0.07em;
-  text-transform: uppercase; padding: 0 10px; margin: 22px 0 6px 18px;
+  text-transform: uppercase; padding: 0 10px; margin: 28px 0 6px 18px;
 }
 .fs-list { flex: 1; overflow-y: auto; padding: 0 10px 0 16px; }
 .fs-item {

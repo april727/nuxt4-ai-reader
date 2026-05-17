@@ -769,9 +769,35 @@ function startEdit(pid: string) {
   editText.value = para.text
 }
 function saveEdit(pid: string) {
-  if (editText.value.trim()) {
-    article.updateParagraphText(pid, editText.value.trim())
+  const newText = editText.value.trim()
+  if (!newText) { editingParagraphId.value = null; editText.value = ''; return }
+
+  // 处理该段落的标记：尝试在新文本中重新定位，定位不到才删除
+  const paraMarks = marks.value.filter(m => m.paragraphId === pid)
+  const oldText = paragraphs.value.find(p => p.id === pid)?.text || ''
+  let marksChanged = false
+
+  for (const m of paraMarks) {
+    const markedText = oldText.slice(m.startOffset, m.endOffset)
+    const newIdx = newText.indexOf(markedText)
+    if (newIdx !== -1 && newIdx === newText.lastIndexOf(markedText)) {
+      // 唯一匹配 → 更新 offset
+      m.startOffset = newIdx
+      m.endOffset = newIdx + markedText.length
+      marksChanged = true
+    } else {
+      // 找不到或有多处匹配 → 删除该标记
+      marks.value = marks.value.filter(x => x.id !== m.id)
+      marksChanged = true
+    }
   }
+  if (marksChanged) saveMarks()
+
+  article.updateParagraphText(pid, newText)
+  $fetch('/api/text/update-segment', {
+    method: 'POST',
+    body: { textId: id, segmentId: pid, text: newText },
+  }).catch(() => {})
   editingParagraphId.value = null
   editText.value = ''
 }
