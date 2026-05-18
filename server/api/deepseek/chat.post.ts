@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
   if (!apiKey) {
-    throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
   }
 
   const systemParts = [

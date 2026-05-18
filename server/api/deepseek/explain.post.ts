@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
   if (!apiKey) {
-    throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
   }
 
   const prompt = `对以下段落进行深度解读。结合文章整体语境分析。
@@ -28,10 +28,10 @@ ${body.paragraph}
 ### 二、难点词汇解析
 选出本段落中 **有难度的单词、短语、俚语、习语**（3~8 个），以表格形式列出：
 
-| 词汇/短语 | 音标 | 在文中的含义 | 补充说明 |
-|----------|------|-------------|---------|
+| 词汇 | 释义 | 原文解析 |
+|------|------|---------|
 
-（挑选真正有难度的内容，基础词汇不列）
+（"词汇"列只写单词/短语本身；"释义"列用简短中文解释其在文中的含义；"原文解析"列摘录原文中用到的具体句子或上下文，展示该词在段落中的实际用法。挑选真正有难度的内容，基础词汇不列）
 
 ### 三、段落精讲
 结合文章背景，用 2~4 句话总结这段话的核心意思及其在全文中的作用。

@@ -8,7 +8,7 @@ export function useDeepSeek() {
     loading.value = true; error.value = null
     try {
       return await $fetch<{ analysis: ArticleAnalysis; segments: Paragraph[] }>('/api/deepseek/analyze', { method: 'POST', body: { text } })
-    } catch (e: any) { error.value = e?.statusMessage || '分析失败'; throw e }
+    } catch (e: any) { error.value = e?.message || '分析失败'; throw e }
     finally { loading.value = false }
   }
 
@@ -20,21 +20,21 @@ export function useDeepSeek() {
         ? { messages: [...(chatHistory || []), { role: 'user' as const, content: `请搜索并解释以下段落的相关信息：\n\n${paragraph}` }], articleContext }
         : { paragraph, action, articleContext }
       return (await $fetch<{ content: string }>(endpoint, { method: 'POST', body: payload })).content
-    } catch (e: any) { error.value = e?.statusMessage || '操作失败'; throw e }
+    } catch (e: any) { error.value = e?.message || '操作失败'; throw e }
     finally { loading.value = false }
   }
 
   async function lookupWord(word: string, context?: string): Promise<WordDetail> {
     loading.value = true; error.value = null
     try { return await $fetch<WordDetail>('/api/deepseek/word', { method: 'POST', body: { word, context } }) }
-    catch (e: any) { error.value = e?.statusMessage || '查询失败'; throw e }
+    catch (e: any) { error.value = e?.message || '查询失败'; throw e }
     finally { loading.value = false }
   }
 
   async function sendChat(messages: ChatMessage[], articleContext: string, paragraphContext?: string): Promise<string> {
     loading.value = true; error.value = null
     try { return (await $fetch<{ content: string }>('/api/deepseek/chat', { method: 'POST', body: { messages, articleContext, paragraphContext } })).content }
-    catch (e: any) { error.value = e?.statusMessage || '对话失败'; throw e }
+    catch (e: any) { error.value = e?.message || '对话失败'; throw e }
     finally { loading.value = false }
   }
 
@@ -44,7 +44,7 @@ export function useDeepSeek() {
       return await $fetch<{ detail: string; phonetic: string }>('/api/deepseek/mark', {
         method: 'POST', body: { text, type, paragraphContext, articleContext }
       })
-    } catch (e: any) { error.value = e?.statusMessage || '标记解释失败'; throw e }
+    } catch (e: any) { error.value = e?.message || '标记解释失败'; throw e }
     finally { loading.value = false }
   }
 

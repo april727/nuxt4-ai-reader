@@ -85,6 +85,7 @@ body {
 .progress-dot { width: 5px; height: 5px; border-radius: 50%; background: #dddcd4; transition: background 0.2s, transform 0.2s; }
 .progress-dot.done { background: #3d3591; }
 .progress-dot.current { background: #3d3591; transform: scale(1.3); }
+.progress-gap { font-size: 9px; color: #c4c2ba; letter-spacing: 1px; margin: 0 1px; }
 .progress-text { font-size: 11px; color: #a09e97; font-family: 'DM Mono', monospace; white-space: nowrap; }
 
 .reader-icon-btn {
@@ -97,11 +98,18 @@ body {
 
 /* 进度条 + 处理中 */
 .reader-progress-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #3d3591; white-space: nowrap; }
+.reader-progress-bar.error { color: #dc2626; }
+.reader-progress-bar.success { color: #059669; }
 .mini-spinner {
   width: 14px; height: 14px; border: 2px solid #e2e8f0;
   border-top-color: #3d3591; border-radius: 50%;
   animation: spin 0.6s linear infinite; flex-shrink: 0;
 }
+.progress-dismiss {
+  background: none; border: none; color: inherit; font-size: 16px; cursor: pointer;
+  padding: 0 2px; line-height: 1; opacity: 0.6; margin-left: -2px;
+}
+.progress-dismiss:hover { opacity: 1; }
 
 /* ---- 阅读页主体布局 ---- */
 .reader-body { display: flex; flex: 1; overflow: hidden; }
@@ -131,7 +139,8 @@ body {
   cursor: pointer; transition: background 0.15s; position: relative;
 }
 .para-block:hover { background: #f7f6f3; }
-.para-block.active { background: #edeafd; }
+.para-block.active { background: #edeafd; cursor: default; }
+.para-block.active .para-text { cursor: text; }
 .para-block.past .para-text { color: #a09e97; }
 
 .para-num {
@@ -144,6 +153,15 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 .para-block.active .para-num { background: #93c5fd; color: #fff; }
+.para-num.is-video {
+  width: auto;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 12px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
 
 .para-text {
   font-family: 'Lora', Georgia, serif;
@@ -438,6 +456,41 @@ body {
   color: #1a1a18;
 }
 
+.lib-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.lib-filter-bar {
+  display: flex;
+  gap: 2px;
+  background: #f0efe9;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.lib-filter-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a8880;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'DM Sans', sans-serif;
+}
+.lib-filter-btn:hover {
+  color: #4a4a46;
+}
+.lib-filter-btn.active {
+  background: #ffffff;
+  color: #1a1a18;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
 .lib-actions {
   display: flex;
   align-items: center;
@@ -481,10 +534,12 @@ body {
 .lib-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  grid-auto-rows: min-content;
   gap: 16px;
   padding: 24px 28px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   align-content: start;
 }
 

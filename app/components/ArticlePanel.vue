@@ -194,28 +194,32 @@ function createMark(type: MarkType) {
   window.getSelection()?.removeAllRanges()
 }
 
-// 渲染标记文字 — 去重重叠标记，从后往前插入
+// 渲染标记文字 — 逐段转义，避免 escapeHtml 导致 offset 偏移
 function renderMarkedText(p: Paragraph): string {
-  let html = escapeHtml(p.text)
-  const all = props.marks.filter(m => m.paragraphId === p.id)
-    .sort((a, b) => b.startOffset - a.startOffset)  // 从后往前
+  const raw = p.text
+  const allMarks = props.marks
+    .filter(m => m.paragraphId === p.id)
+    .sort((a, b) => a.startOffset - b.startOffset)
 
-  // 跟踪已覆盖区间，跳过重叠
+  // 去重重叠标记（从前往后，先出现的优先）
+  const filt: typeof allMarks = []
   const covered: Array<{ s: number; e: number }> = []
-
-  for (const m of all) {
-    // 检查是否与已有标记重叠
+  for (const m of allMarks) {
     const overlaps = covered.some(c => m.startOffset < c.e && m.endOffset > c.s)
-    if (overlaps) continue
-
-    const before = html.slice(0, m.startOffset)
-    const marked = html.slice(m.startOffset, m.endOffset)
-    const after = html.slice(m.endOffset)
-    html = `${before}<mark class="hl-${m.type}" data-mark-id="${m.id}" style="background:${m.color}22;border-bottom:2px solid ${m.color};cursor:pointer;border-radius:2px;padding:1px 0">${marked}</mark>${after}`
-
-    // 记录已覆盖区间（使用原始 offset，HTML 标签不影响后续判断因为从后往前处理）
-    covered.push({ s: m.startOffset, e: m.endOffset })
+    if (!overlaps) {
+      filt.push(m)
+      covered.push({ s: m.startOffset, e: m.endOffset })
+    }
   }
+
+  let html = ''
+  let pos = 0
+  for (const m of filt) {
+    html += escapeHtml(raw.slice(pos, m.startOffset))
+    html += `<mark class="hl-${m.type}" data-mark-id="${m.id}" style="background:${m.color}22;border-bottom:2px solid ${m.color};cursor:pointer;border-radius:2px;padding:1px 0">${escapeHtml(raw.slice(m.startOffset, m.endOffset))}</mark>`
+    pos = m.endOffset
+  }
+  html += escapeHtml(raw.slice(pos))
   return html
 }
 

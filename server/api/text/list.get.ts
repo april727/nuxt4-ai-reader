@@ -19,9 +19,9 @@ export default defineEventHandler(async (event) => {
 
   let stmt
   if (folder === 'all') {
-    stmt = db.prepare('SELECT id,title,source,folder,excerpt,createdAt,length(text) as len,filePath FROM texts ORDER BY createdAt DESC')
+    stmt = db.prepare('SELECT id,title,source,folder,excerpt,createdAt,completedAt,length(text) as len,filePath,videoMeta FROM texts ORDER BY createdAt DESC')
   } else {
-    stmt = db.prepare('SELECT id,title,source,folder,excerpt,createdAt,length(text) as len,filePath FROM texts WHERE folder=? ORDER BY createdAt DESC')
+    stmt = db.prepare('SELECT id,title,source,folder,excerpt,createdAt,completedAt,length(text) as len,filePath,videoMeta FROM texts WHERE folder=? ORDER BY createdAt DESC')
     stmt.bind([folder])
   }
   const rows: any[] = []
@@ -30,10 +30,21 @@ export default defineEventHandler(async (event) => {
 
   return rows.map((r: any) => {
     const s = statsMap.get(r.id) || {}
+    let duration = 0
+    let thumbnail = ''
+    if (r.videoMeta) {
+      try { const vm = JSON.parse(r.videoMeta); duration = vm.duration || 0; thumbnail = vm.thumbnail || '' } catch {}
+    }
+    // 本地缩略图（thumb_ 前缀）转为 /api/file/ URL
+    if (thumbnail && thumbnail.startsWith('thumb_')) {
+      thumbnail = `/api/file/${thumbnail}`
+    }
     return {
       id: r.id, title: r.title || '未命名', source: r.source || 'paste', folder: r.folder || r.folder,
-      excerpt: r.excerpt || '', createdAt: r.createdAt, length: Number(r.len) || 0,
+      excerpt: r.excerpt || '', createdAt: r.createdAt, completedAt: r.completedAt || null,
+      length: Number(r.len) || 0,
       readCount: s.readCount || 0, lastReadAt: s.lastReadAt || '', markCount: s.markCount || 0,
+      duration, thumbnail,
     }
   })
 })

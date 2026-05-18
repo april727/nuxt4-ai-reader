@@ -18,6 +18,8 @@ export default defineEventHandler(async (event) => {
   if (row.marks) try { row.marks = JSON.parse(row.marks) } catch { row.marks = null }
   if (row.readingPosition) try { row.readingPosition = JSON.parse(row.readingPosition) } catch { row.readingPosition = null }
   if (row.paragraphChats) try { row.paragraphChats = JSON.parse(row.paragraphChats) } catch { row.paragraphChats = null }
+  if (row.videoSubtitles) try { row.videoSubtitles = JSON.parse(row.videoSubtitles) } catch { row.videoSubtitles = null }
+  if (row.videoMeta) try { row.videoMeta = JSON.parse(row.videoMeta) } catch { row.videoMeta = null }
 
   return row
 })

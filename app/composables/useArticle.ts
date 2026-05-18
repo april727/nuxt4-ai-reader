@@ -146,6 +146,16 @@ export function useArticle() {
     })
   }
 
+  /** 分段变更后清除所有旧段落相关的缓存（解释、对话） */
+  function clearParagraphCaches() {
+    explanationCache.clear()
+    paragraphChats.clear()
+    currentParagraphChat.value = []
+    rightPanelContent.value = ''
+    rightPanelAction.value = 'analyze'
+    activeParagraphId.value = null
+  }
+
   function reset() {
     rawText.value = ''
     title.value = ''
@@ -184,6 +194,7 @@ export function useArticle() {
     getPronunciationUrl,
     pronounceWord,
     reset,
+    clearParagraphCaches,
     isProcessingWritable: isProcessing,
     // 缓存
     getCachedExplanation,

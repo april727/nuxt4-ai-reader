@@ -6,3 +6,8 @@ dist
 *.log
 .DS_Store
 server/data/backups/
+server/data/youtube_cookies.txt
+server/data/youtube-cookies.txt
+server/data/cookies.json
+server/data/cookies.txt
+server/data/youtube_cookies.json

@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
   if (!apiKey) {
-    throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
   }
 
   // 截断输入，只取前 15000 字符送给 AI（超长书原文会超出 token 限制）
@@ -30,15 +30,20 @@ export default defineEventHandler(async (event) => {
 - keyPoints: 提取3-5个关键要点，每个一句话
 
 ## 任务二：智能分段
-以下文本已被预分割为句子序列，共 ${sentences.length} 句。
-请选择哪些句子之后需要分段（即在这里插入段落分隔），输出 breakAfter 数组。
-- 通常将 2~3 个紧密相关的句子合并为一段
-- 超长句（超过 60 字）可独立成段
-- 避免单句段落（除非该句本身很长或语义独立）
-- 确保每个段落有完整的信息量，不以孤立短句成段
-- breakAfter 值为该句的 index（在这个 index 之后分段）
+以下文本已被预分割为单句序列，共 ${sentences.length} 句。
+请选择哪些句子之后需要分段，输出 breakAfter 数组（值为句子 index，表示在该句之后插入段落分隔）。
 
-句子序列：
+### 分段规则
+- **段落长度控制**：每段通常 1~3 句。总句数 ≥ 6 时，避免出现超过 4 句的段落。如果连续 3 句以上都是短句（< 30 字），请在它们之间适当断开。
+- **保持合理段落**：超长句（超过 60 字）可独立成段；相关主题的 2~3 句合并为一段。
+- **识别分段线索**：如果句子序列中存在明显的段落标题（如 \`##\`、\`###\`、数字编号、章节名等），标题句**必须独立成段**，并与后面的正文分开。
+- **避免单句段落**：只有在该句本身很长（> 60 字）或语义完整独立时才允许单句成段。
+
+### 输出约定
+- breakAfter 值为句子 index，表示在该 index 句子之后插入分段
+- 最后一句之后不需要 breakAfter（自动结束）
+
+句子序列（[index] 句子内容）：
 ${sentences.map((s, i) => `[${i}] ${s.length > 80 ? s.slice(0, 80) + '...' : s}`).join('\n')}
 
 ## 提供的文本前部
@@ -75,7 +80,7 @@ ${inputText}
   const content = response.choices[0]?.message?.content || ''
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
-    throw createError({ statusCode: 500, statusMessage: 'Failed to parse AI response' })
+    throw createError({ statusCode: 500, message: 'Failed to parse AI response' })
   }
 
   const result = safeJsonParse(jsonMatch[0])
@@ -117,7 +122,7 @@ function buildSegmentsFromBreaks(sentences: string[], breakAfter: number[]): Arr
 
   for (let i = 0; i < sentences.length; i++) {
     if (breaks.has(i) || i === sentences.length - 1) {
-      const segText = sentences.slice(start, i + 1).join('').trim()
+      const segText = sentences.slice(start, i + 1).join(' ').replace(/\s+([。！？，、；：])/g, '$1').replace(/\s{2,}/g, ' ').trim()
       if (segText) {
         raw.push({ id: '', index: 0, text: segText })
       }
@@ -145,7 +150,7 @@ function buildSegmentsFromBreaks(sentences: string[], breakAfter: number[]): Arr
   }
 
   if (raw.length <= 1) {
-    return fallbackSegment(sentences.join(''))
+    return fallbackSegment(sentences.join(' '))
   }
 
   return raw.map((s, idx) => ({ id: `p-${idx}`, index: idx, text: s.text }))
@@ -181,7 +186,7 @@ function fallbackSegment(text: string): Array<{ id: string; index: number; text:
     if (group.length === 1 && groups.length > 0) {
       groups[groups.length - 1] += ' ' + group[0]
     } else {
-      groups.push(group.join(''))
+      groups.push(group.join(' '))
     }
   }
 
@@ -222,5 +227,5 @@ function safeJsonParse(raw: string): any {
   try { return JSON.parse(fixed) } catch {}
 
   // 最后兜底
-  throw createError({ statusCode: 500, statusMessage: 'AI returned malformed JSON' })
+  throw createError({ statusCode: 500, message: 'AI returned malformed JSON' })
 }

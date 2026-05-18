@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
 
   if (!apiKey) {
-    throw createError({ statusCode: 500, statusMessage: 'DEEPSEEK_API_KEY not configured' })
+    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
   }
 
   const contextLine = body.context ? `\n该单词出现在以下语境中：${body.context}` : ''
@@ -46,7 +46,7 @@ export default defineEventHandler(async (event) => {
   const content = response.choices[0]?.message?.content || ''
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
-    throw createError({ statusCode: 500, statusMessage: 'Failed to parse AI response' })
+    throw createError({ statusCode: 500, message: 'Failed to parse AI response' })
   }
 
   return JSON.parse(jsonMatch[0]) as WordDetail

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>已完成标识样式对比</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #f7f6f3;
+  font-family: 'DM Sans', 'Noto Sans SC', sans-serif;
+  color: #1a1a18;
+  padding: 40px;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 500;
+  color: #3d3591;
+  margin-bottom: 6px;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: #a09e97;
+  margin-bottom: 32px;
+}
+
+.styles-grid {
+  display: flex;
+  gap: 48px;
+  flex-wrap: wrap;
+}
+
+.style-column {
+  flex: 1;
+  min-width: 300px;
+  max-width: 380px;
+}
+
+.style-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3d3591;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1.5px solid #edeafd;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.style-label .tag {
+  font-size: 10px;
+  font-weight: 500;
+  background: #edeafd;
+  color: #3d3591;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'DM Mono', monospace;
+}
+
+.grid-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+/* ====================
+   基础卡片样式
+   ==================== */
+.doc-card {
+  border: 0.5px solid rgba(0,0,0,0.09);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #ffffff;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.doc-card:hover {
+  border-color: rgba(0,0,0,0.18);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+
+.doc-thumb {
+  height: 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+}
+.thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
+.thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
+
+.thumb-label {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.7;
+  font-family: 'DM Mono', monospace;
+}
+
+.doc-body {
+  padding: 8px 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.doc-title {
+  font-size: 12px;
+  font-weight: 400;
+  color: #1a1a18;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-meta {
+  font-size: 10.5px;
+  color: #b0ae9f;
+}
+
+/* ====================
+   样式 A: 角标
+   ==================== */
+.style-a .completed-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #10b981;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(16,185,129,0.3);
+  z-index: 2;
+}
+.style-a .completed-badge svg {
+  width: 11px;
+  height: 11px;
+  color: #fff;
+  stroke-width: 2.5;
+}
+
+/* ====================
+   样式 B: 半透明 + 完成标记文本
+   ==================== */
+.style-b .doc-card.completed {
+  opacity: 0.65;
+  border-color: rgba(16,185,129,0.25);
+}
+.style-b .doc-card.completed .doc-thumb {
+  filter: saturate(0.6);
+}
+.style-b .doc-card.completed .doc-title {
+  color: #6b6963;
+}
+.style-b .doc-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+.style-b .completed-label {
+  color: #10b981;
+  font-weight: 500;
+  font-size: 10.5px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-family: 'DM Sans', sans-serif;
+}
+.style-b .completed-label svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 2.5;
+}
+
+/* ====================
+   样式 C: 缩略图覆盖层
+   ==================== */
+.style-c .completed-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.45);
+  z-index: 2;
+}
+.style-c .completed-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.style-c .completed-overlay-inner svg {
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  stroke-width: 2;
+}
+.style-c .completed-overlay-inner span {
+  font-size: 10px;
+  font-weight: 500;
+  color: #fff;
+  letter-spacing: 0.3px;
+}
+.style-c .doc-card.completed {
+  border-color: rgba(16,185,129,0.2);
+}
+
+/* ====================
+   样式说明面板
+   ==================== */
+.pros-cons {
+  background: #ffffff;
+  border: 0.5px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.pros-cons h4 {
+  font-size: 11px;
+  font-weight: 600;
+  color: #3d3591;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.pros-cons .good { color: #10b981; }
+.pros-cons .bad { color: #ef4444; }
+.pros-cons .neutral { color: #a09e97; }
+.pros-cons p { margin-bottom: 3px; }
+.pros-cons .section { margin-bottom: 8px; }
+
+/* 未完成对照卡片 */
+.doc-card.uncompleted .doc-body .doc-meta .meta-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d1d5db;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* 细节文字 */
+.compare-note {
+  margin-top: 32px;
+  padding: 16px 20px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 0.5px solid rgba(0,0,0,0.08);
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4a4a46;
+}
+.compare-note strong { color: #3d3591; }
+</style>
+</head>
+<body>
+
+<h1>已完成标识样式对比</h1>
+<p class="subtitle">鼠标悬停卡片可预览交互效果 · 左侧为未完成，右侧为已完成</p>
+
+<div class="styles-grid">
+
+  <!-- 样式 A: 角标 -->
+  <div class="style-column style-a">
+    <div class="style-label">
+      样式 A · 角标
+      <span class="tag">✓ 圆勾</span>
+    </div>
+    <div class="grid-preview">
+      <div class="doc-card uncompleted thumb-text">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">文本</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未完成的文章标题</p>
+          <p class="doc-meta"><span class="meta-dot"></span>阅读 3 次 · 1 标记</p>
+        </div>
+      </div>
+
+      <div class="doc-card thumb-text" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">文本</span>
+        </div>
+        <div class="completed-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已完成阅读的文章标题</p>
+          <p class="doc-meta">阅读 5 次 · 3 标记 · 昨天完成</p>
+        </div>
+      </div>
+
+      <div class="doc-card uncompleted thumb-video">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">视频</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未观看的 YouTube 视频</p>
+          <p class="doc-meta">12:34</p>
+        </div>
+      </div>
+
+      <div class="doc-card thumb-video" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">视频</span>
+        </div>
+        <div class="completed-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已看完的视频标题</p>
+          <p class="doc-meta">12:34</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="section">
+        <h4>👍 优点</h4>
+        <p class="good">✓ 极简洁，几乎不改变卡片视觉</p>
+        <p class="good">✓ 视频缩略图上不遮挡内容</p>
+      </div>
+      <div class="section">
+        <h4>👎 缺点</h4>
+        <p class="bad">✗ 容易忽略，不够醒目</p>
+        <p class="bad">✗ 多卡片扫视时缺少视觉区分</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 样式 B: 半透明 + 底边条 -->
+  <div class="style-column style-b">
+    <div class="style-label">
+      样式 B · 半透明 + 底边条
+      <span class="tag">绿色条</span>
+    </div>
+    <div class="grid-preview">
+      <div class="doc-card uncompleted thumb-text">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">文档</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未完成的文章标题</p>
+          <p class="doc-meta">阅读 3 次 · 1 标记</p>
+        </div>
+      </div>
+
+      <div class="doc-card completed thumb-text" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">文档</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已完成阅读的文章标题</p>
+          <div class="doc-meta">
+            <span>阅读 5 次 · 3 标记</span>
+            <span class="completed-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>已完成</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-card uncompleted thumb-video">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">视频</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未观看的 YouTube 视频</p>
+          <p class="doc-meta">8:45 · 英语对话</p>
+        </div>
+      </div>
+
+      <div class="doc-card completed thumb-video" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">视频</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已看完的视频标题</p>
+          <div class="doc-meta">
+            <span>12:34 · BBC 纪录片</span>
+            <span class="completed-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>已完成</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="section">
+        <h4>👍 优点</h4>
+        <p class="good">✓ 扫视时一眼区分已完成卡片</p>
+        <p class="good">✓ 不额外占用卡片空间，融入 meta 行</p>
+        <p class="good">✓ 半透明降低已完成项的视觉权重</p>
+      </div>
+      <div class="section">
+        <h4>👎 缺点</h4>
+        <p class="bad">✗ 半透明可能导致文字可读性略降</p>
+        <p class="bad">✗ 缩略图去饱和后可能不好看</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 样式 C: 缩略图覆盖层 -->
+  <div class="style-column style-c">
+    <div class="style-label">
+      样式 C · 缩略图覆盖层
+      <span class="tag">✓ 覆盖层</span>
+    </div>
+    <div class="grid-preview">
+      <div class="doc-card uncompleted thumb-text">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">网页</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未完成的网页文章</p>
+          <p class="doc-meta">约 3200 字</p>
+        </div>
+      </div>
+
+      <div class="doc-card completed thumb-text" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <span class="thumb-label">网页</span>
+          <div class="completed-overlay">
+            <div class="completed-overlay-inner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>已完成</span>
+            </div>
+          </div>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已完成阅读的网页文章标题</p>
+          <p class="doc-meta">约 3200 字 · 5 标记</p>
+        </div>
+      </div>
+
+      <div class="doc-card uncompleted thumb-video">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">B站</span>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">未观看的 Bilibili 视频</p>
+          <p class="doc-meta">15:20 · 英语听力</p>
+        </div>
+      </div>
+
+      <div class="doc-card completed thumb-video" style="position:relative">
+        <div class="doc-thumb">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25">
+            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+          </svg>
+          <span class="thumb-label">B站</span>
+          <div class="completed-overlay">
+            <div class="completed-overlay-inner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>已完成</span>
+            </div>
+          </div>
+        </div>
+        <div class="doc-body">
+          <p class="doc-title">已看完的 Bilibili 视频标题</p>
+          <p class="doc-meta">15:20 · 英语听力 · 已精听</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="section">
+        <h4>👍 优点</h4>
+        <p class="good">✓ 非常醒目，一眼区分</p>
+        <p class="good">✓ YouTube 缩略图上有覆盖层更直观</p>
+      </div>
+      <div class="section">
+        <h4>👎 缺点</h4>
+        <p class="bad">✗ 遮挡缩略图内容</p>
+        <p class="bad">✗ 卡片密集时可能显乱</p>
+        <p class="bad">✗ 纯色卡片上覆盖层略显突兀</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="compare-note">
+  <strong>个人建议：</strong>
+  如果追求简洁，<strong>样式 A（角标）</strong>最合适，不破坏现有视觉，与现有卡片设计融合度最高。<br>
+  <strong>样式 B（半透明 + 完成标记文字）</strong>是平衡方案，已完成卡片降低视觉权重，同时「已完成」文字内置在 meta 行，不额外占空间。<br>
+  样式 C 更适合有真实缩略图的场景，纯色卡片上稍显突兀。
+</div>
+
+</body>
+</html>

@@ -147,7 +147,7 @@ async function processFile(file: File) {
       }
     } catch (err: any) {
       console.error('PDF 上传解析失败:', err)
-      alert('PDF 解析失败: ' + (err?.statusMessage || err?.message || '请尝试粘贴文本'))
+      alert('PDF 解析失败: ' + (err?.message || err?.statusMessage || '请尝试粘贴文本'))
     } finally {
       uploadLoading.value = false
       uploadMessage.value = ''
