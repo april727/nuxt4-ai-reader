@@ -92,7 +92,8 @@
           :style="{ '--enter-delay': Math.min(i * 0.03, 0.6) + 's' }"
           @dragstart="handleBookDragStart($event, book.id)"
           @open="openBook"
-          @contextmenu.prevent="openContextMenu($event, book)"
+          @menu="openContextMenu($event, book)"
+          @contextmenu.prevent
         />
       </div>
 

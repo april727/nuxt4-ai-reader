@@ -54,6 +54,16 @@
         </span>
       </div>
     </div>
+    <!-- 三点菜单按钮 -->
+    <button
+      class="doc-menu-btn"
+      @click.stop="$emit('menu', $event)"
+      title="更多操作"
+    >
+      <svg width="3" height="13" viewBox="0 0 3 13" fill="currentColor">
+        <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6.5" r="1.5"/><circle cx="1.5" cy="11.5" r="1.5"/>
+      </svg>
+    </button>
     <div class="doc-hover-glow"></div>
   </article>
 </template>
@@ -65,7 +75,7 @@ const props = defineProps<{
   thumbnail?: string; completedAt?: string
 }>()
 
-defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent] }>()
+defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent]; menu: [e: MouseEvent] }>()
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
@@ -135,10 +145,41 @@ function formatDuration(seconds: number): string {
   opacity: 1;
 }
 .doc-card.completed {
-  opacity: 0.72;
+  opacity: 0.55;
+  filter: grayscale(0.3);
 }
 .doc-card.completed .doc-thumb {
-  filter: saturate(0.5);
+  filter: saturate(0.4) brightness(0.85);
+}
+.doc-card.completed .doc-title {
+  color: #8a877c;
+}
+
+/* ── 三点菜单按钮 ── */
+.doc-menu-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #8a877c;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.15s;
+}
+.doc-card:hover .doc-menu-btn {
+  opacity: 1;
+}
+.doc-menu-btn:hover {
+  background: #ffffff;
+  color: #3d3591;
 }
 
 /* subtle glow on hover */
@@ -154,7 +195,7 @@ function formatDuration(seconds: number): string {
 
 /* ── Thumbnail ── */
 .doc-thumb {
-  height: 108px;
+  aspect-ratio: 16 / 9;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -167,7 +208,7 @@ function formatDuration(seconds: number): string {
 .thumb-pdf .doc-thumb { background: #fdf2ed; color: #b85a3c; }
 .thumb-web .doc-thumb { background: #ebf7f1; color: #187a52; }
 .thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
-.thumb-video .doc-thumb { background: #e5efff; color: #2a4d8c; }
+.thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
 
 .thumb-label {
   font-size: 10.5px;
@@ -195,14 +236,18 @@ function formatDuration(seconds: number): string {
   flex-shrink: 0;
   opacity: 0.65;
 }
+/* 视频卡片兜底图标加大 */
+.thumb-video .thumb-fallback {
+  width: 36px;
+  height: 36px;
+}
 
 /* ── Body ── */
 .doc-body {
-  padding: 14px 16px 16px;
+  padding: 12px 16px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 1;
+  gap: 6px;
 }
 
 .doc-title {
@@ -211,10 +256,9 @@ function formatDuration(seconds: number): string {
   font-weight: 450;
   color: #1a1a18;
   line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .doc-meta {
@@ -224,7 +268,6 @@ function formatDuration(seconds: number): string {
   gap: 6px;
   font-size: 11px;
   color: #a09e97;
-  margin-top: auto;
 }
 .doc-meta-left {
   display: flex;
