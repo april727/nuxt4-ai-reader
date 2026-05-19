@@ -316,11 +316,14 @@ onUnmounted(() => {
 
 // ---- 导航 ----
 function goBack() {
-  router.push('/')
+  const folder = route.query.folder as string
+  router.push(folder ? `/?folder=${folder}` : '/')
 }
 
 function goToLearn() {
-  router.push(`/read/${id}?from=watch${currentTime.value > 0 ? `&time=${currentTime.value}` : ''}`)
+  const folder = route.query.folder as string
+  const folderParam = folder ? `&folder=${folder}` : ''
+  router.push(`/read/${id}?from=watch${currentTime.value > 0 ? `&time=${currentTime.value}` : ''}${folderParam}`)
 }
 
 // ---- 面板拖拽 ----

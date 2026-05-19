@@ -18,12 +18,12 @@
         class="fs-item"
         role="button"
         tabindex="0"
-        :class="{ active: activeFolder === f.id }"
+        :class="{ active: activeFolder === f.id, 'drag-over': dragTarget === f.id }"
         @click="$emit('select', f.id)"
         @dragover.prevent
-        @dragenter.prevent="dragTarget = f.id"
-        @dragleave.prevent="dragTarget = ''"
-        @drop.prevent="$emit('dropOnFolder', f.id)"
+        @dragenter.prevent="onDragEnter(f.id)"
+        @dragleave="onDragLeave($event, f.id)"
+        @drop.prevent="$emit('dropOnFolder', f.id); dragTarget = ''"
       >
         <svg class="fs-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -59,6 +59,14 @@ const newFolderInput = ref<HTMLInputElement | null>(null); const dragTarget = re
 const creatingSub = ref('')
 
 function startCreate() { creating.value = true; nextTick(() => newFolderInput.value?.focus()) }
+
+function onDragEnter(fid: string) { dragTarget.value = fid }
+function onDragLeave(e: DragEvent, fid: string) {
+  const el = e.currentTarget as HTMLElement
+  const related = e.relatedTarget as HTMLElement | null
+  if (related && el.contains(related)) return // 仍在文件夹内
+  dragTarget.value = ''
+}
 async function createFolder() {
   const name = newFolderName.value.trim()
   if (!name) { creating.value = false; return }
@@ -108,4 +116,14 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 .fs-new-input:hover { background: transparent; }
 .fs-input { width: 100%; padding: 8px 10px; border: 1px solid #3d3591; border-radius: 8px; font-size: 13px; outline: none; background: #ffffff; color: #1a1a18; font-family: 'DM Sans', sans-serif; }
 .fs-input::placeholder { color: #c0bdb4; }
+
+.fs-item.drag-over {
+  transform: scale(1.06);
+  background: rgba(61, 53, 145, 0.12) !important;
+  border-color: rgba(61, 53, 145, 0.35) !important;
+  color: #3d3591 !important;
+  font-weight: 600;
+  box-shadow: 0 0 0 3px rgba(61, 53, 145, 0.15), 0 2px 12px rgba(61, 53, 145, 0.1);
+  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
 </style>

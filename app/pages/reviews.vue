@@ -16,19 +16,20 @@
 
       <div class="rv-filters">
         <div class="rv-filter-group">
-          <button
-            v-for="tab in filterTabs"
-            :key="tab.key"
-            class="rv-filter-chip"
-            :class="{ active: activeTab === tab.key }"
-            @click="activeTab = tab.key"
-          >{{ tab.label }}</button>
+          <FilterChip v-model="activeTab" :options="filterTabs" />
         </div>
 
         <select v-model="bookFilter" class="rv-book-select">
-          <option value="all">全部书籍</option>
-          <option v-for="b in books" :key="b.id" :value="b.id">{{ b.title }}</option>
+          <option value="all">全部书籍 ({{ booksWithMarks.length }})</option>
+          <option v-for="b in booksWithMarks" :key="b.id" :value="b.id">{{ b.title }}</option>
         </select>
+
+        <button v-if="items.length" class="rv-export-btn" @click="showExport = true" title="导出标记">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          导出
+        </button>
       </div>
     </header>
 
@@ -108,6 +109,31 @@
         </article>
       </div>
     </div>
+
+    <!-- 导出标记弹窗 -->
+    <Transition name="modal-fade">
+      <div v-if="showExport" class="modal-overlay" @click.self="showExport = false">
+        <div class="modal-card" style="max-width: 400px">
+          <div class="modal-header">
+            <h3 class="modal-title">导出标记</h3>
+            <button class="modal-close" @click="showExport = false">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="export-summary">{{ filtered.length }} 个标记（{{ counts.word }} 生词 · {{ counts.phrase }} 短语 · {{ counts.sentence }} 好句）</p>
+            <div class="export-options">
+              <button class="export-option" @click="exportAs('csv')">
+                <span class="export-option-label">Anki CSV</span>
+                <span class="export-option-hint">导入 Anki 闪卡</span>
+              </button>
+              <button class="export-option" @click="exportAs('md')">
+                <span class="export-option-label">Markdown</span>
+                <span class="export-option-hint">纯文本笔记</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -182,6 +208,60 @@ function playWord(item: MarkItem) {
 
 function openSource(item: MarkItem) {
   navigateTo(`/read/${item.textId}?mark=${item.mark.paragraphId}`)
+}
+
+// 只显示有标记的书籍
+const booksWithMarks = computed(() => {
+  const ids = new Set(items.value.map(i => i.textId))
+  return books.value.filter(b => ids.has(b.id))
+})
+
+// ── 导出 ──
+const showExport = ref(false)
+
+function exportAs(format: 'csv' | 'md') {
+  const list = filtered.value.map(i => ({
+    text: i.mark.text,
+    type: i.mark.type,
+    detail: i.mark.detail || '',
+    note: i.mark.note || '',
+  }))
+
+  let content = ''
+  let filename = ''
+
+  if (format === 'csv') {
+    const rows = list.map(m => {
+      const back = [m.detail, m.note].filter(Boolean).join('; ')
+      return `"${m.text}","${back}","ai-reader ${m.type}"`
+    })
+    content = 'front,back,tags\n' + rows.join('\n')
+    filename = 'anki-cards.csv'
+  } else {
+    const groups: Record<string, typeof list> = { word: [], phrase: [], sentence: [] }
+    for (const m of list) groups[m.type].push(m)
+    const lines: string[] = [`# 标记导出`, '']
+    for (const [type, label] of [['word', '生词'], ['phrase', '短语'], ['sentence', '好句']] as const) {
+      if (groups[type].length) {
+        lines.push(`## ${label}`, '')
+        for (const m of groups[type]) {
+          const extra = [m.detail, m.note].filter(Boolean).join(' — ')
+          lines.push(`- **${m.text}**${extra ? ` · ${extra}` : ''}`)
+        }
+        lines.push('')
+      }
+    }
+    content = lines.join('\n')
+    filename = 'marks-export.md'
+  }
+
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+  showExport.value = false
 }
 
 onMounted(async () => {
@@ -279,28 +359,6 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.03);
   border-radius: 10px;
   padding: 3px;
-}
-
-.rv-filter-chip {
-  padding: 6px 14px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 450;
-  color: #8a877c;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: inherit;
-}
-.rv-filter-chip:hover {
-  color: #4a4640;
-}
-.rv-filter-chip.active {
-  background: #ffffff;
-  color: #3d3591;
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .rv-book-select {
@@ -569,4 +627,92 @@ onMounted(async () => {
   color: #c4c1ba;
   margin: 0;
 }
+/* ── 通用弹窗 ── */
+.modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.2s; }
+.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.2); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-card {
+  background: #ffffff; border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.1);
+  width: 90vw; overflow: hidden;
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 18px 24px; border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+.modal-title { font-family: 'Lora', Georgia, serif; font-size: 16px; font-weight: 500; color: #1a1a18; }
+.modal-close {
+  width: 28px; height: 28px; border: none; border-radius: 50%;
+  background: transparent; color: #a09e97; font-size: 18px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-close:hover { background: rgba(0,0,0,0.05); }
+.modal-body { padding: 24px; }
+
+/* ── 导出按钮 ── */
+.rv-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #6b6963;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+.rv-export-btn:hover {
+  color: #3d3591;
+  border-color: rgba(61,53,145,0.2);
+  background: #f8f7ff;
+}
+
+/* ── 导出弹窗 ── */
+.export-summary {
+  font-size: 13px;
+  color: #6b6963;
+  margin: 0 0 20px;
+  text-align: center;
+}
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.export-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+.export-option:hover {
+  border-color: rgba(61,53,145,0.2);
+  background: #f8f7ff;
+}
+.export-option-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a1a18;
+}
+.export-option-hint {
+  font-size: 12px;
+  color: #a09e97;
+}
+
 </style>
