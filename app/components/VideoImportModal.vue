@@ -16,17 +16,71 @@
         >{{ tab.label }}</button>
       </div>
 
-      <!-- Tab 1: URL 导入（跳过 yt-dlp，保存后播放页后台提取） -->
+      <!-- Tab 1: URL 导入（支持单视频 + 播放列表） -->
       <div v-if="activeTab === 'url'" class="vim-panel">
         <div class="vim-hint">支持 YouTube 和 Bilibili 链接，字幕将在播放页面后台自动加载</div>
-        <input
-          v-model="urlInput"
-          class="vim-input"
-          placeholder="https://www.youtube.com/watch?v=..."
-          :disabled="urlLoading"
-          @keydown.enter="quickSave"
-        />
-        <div v-if="urlLoading" class="processing"><div class="spinner"></div><p>添加到列表...</p></div>
+
+        <!-- 输入区域（非 playlist 模式） -->
+        <template v-if="!playlistData">
+          <input
+            v-model="urlInput"
+            class="vim-input"
+            placeholder="https://www.youtube.com/watch?v=... 或 playlist 链接"
+            :disabled="urlLoading"
+            @keydown.enter="handleUrlSubmit"
+          />
+          <div v-if="urlLoading" class="processing"><div class="spinner"></div><p>获取播放列表...</p></div>
+        </template>
+
+        <!-- Playlist 列表 -->
+        <div v-else class="vim-playlist">
+          <div class="vim-playlist-header">
+            <span class="vim-playlist-title">{{ playlistData.playlistTitle }}</span>
+            <span class="vim-playlist-count">{{ playlistData.totalCount }} 个视频</span>
+          </div>
+
+          <div class="vim-playlist-list">
+            <label class="vim-playlist-all">
+              <input type="checkbox" :checked="selectAll" @change="toggleSelectAll" />
+              <span>全选</span>
+            </label>
+            <div v-for="v in visibleVideos" :key="v.id" class="vim-playlist-item">
+              <label class="vim-playlist-label">
+                <input type="checkbox" :checked="selectedVideos.has(v.id)" @change="toggleVideo(v.id)" />
+                <span class="vim-playlist-title-text">{{ v.title }}</span>
+              </label>
+            </div>
+            <div v-if="playlistData.totalCount > visibleLimit" class="vim-playlist-more">
+              还有 {{ playlistData.totalCount - visibleLimit }} 个视频未显示，将全部导入
+            </div>
+          </div>
+
+          <!-- 批量导入进度 -->
+          <div v-if="importing" class="vim-progress">
+            <div class="processing"><div class="spinner"></div><p>正在批量导入…</p></div>
+          </div>
+          <div v-if="batchProgress" class="vim-progress">
+            <div class="vim-progress-track">
+              <div class="vim-progress-fill" :style="{ width: progressPercent + '%' }"></div>
+            </div>
+            <p class="vim-progress-text">正在获取元数据 {{ batchProgress.current }}/{{ batchProgress.total }}</p>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div v-if="!importing && !batchProgress && !importResult" class="vim-playlist-actions">
+            <button class="btn-ghost" @click="resetPlaylist">取消</button>
+            <button class="btn-primary" :disabled="selectedCount === 0" @click="confirmPlaylistImport">
+              导入 {{ selectedCount }} 个视频
+            </button>
+          </div>
+
+          <!-- 导入结果 -->
+          <div v-if="importResult" class="vim-playlist-result">
+            <p>✓ 导入 {{ importResult.imported }} 个视频（跳过 {{ importResult.skipped }} 个重复）</p>
+            <p class="vim-playlist-result-sub">已创建文件夹「{{ importResult.folderName }}」，元数据正在后台获取…</p>
+            <button class="btn-primary" style="margin-top: 12px" @click="finishImport">完成</button>
+          </div>
+        </div>
       </div>
 
       <!-- Tab 2: 上传字幕文件 -->
@@ -122,6 +176,16 @@ interface PreviewData {
   subtitles?: SubtitleCue[]
 }
 
+interface PlaylistVideo {
+  id: string; title: string; url: string
+}
+
+interface PlaylistData {
+  playlistTitle: string
+  totalCount: number
+  videos: PlaylistVideo[]
+}
+
 const emit = defineEmits<{
   imported: [result: { id: string; title: string }]
   close: []
@@ -134,13 +198,155 @@ const tabs = [
   { key: 'video', label: '上传视频' },
 ]
 
-// ---- Tab 1: URL 导入（零等待，保存后播放页后台提取） ----
+// ============================================================
+//  Tab 1: URL 导入（单视频 + 播放列表）
+// ============================================================
 const urlInput = ref('')
 const urlLoading = ref(false)
 
-async function quickSave() {
+// Playlist 状态
+const playlistData = ref<PlaylistData | null>(null)
+const selectedVideos = ref<Set<string>>(new Set())
+const selectAll = ref(true)
+const visibleLimit = 20
+const importing = ref(false)
+const importResult = ref<{ folderId: string; folderName: string; imported: number; skipped: number } | null>(null)
+const batchId = ref<string | null>(null)
+const batchProgress = ref<{ total: number; current: number; done: boolean } | null>(null)
+
+const visibleVideos = computed(() => playlistData.value?.videos.slice(0, visibleLimit) || [])
+const selectedCount = computed(() => selectedVideos.value.size)
+const progressPercent = computed(() => {
+  if (!batchProgress.value || batchProgress.value.total === 0) return 0
+  return Math.round((batchProgress.value.current / batchProgress.value.total) * 100)
+})
+
+function isPlaylistUrl(url: string): boolean {
+  return url.includes('list=') || url.includes('/playlist/')
+}
+
+async function handleUrlSubmit() {
   const url = urlInput.value.trim()
   if (!url) return
+  if (isPlaylistUrl(url)) {
+    await loadPlaylist(url)
+  } else {
+    await quickSave(url)
+  }
+}
+
+async function loadPlaylist(url: string) {
+  urlLoading.value = true
+  playlistData.value = null
+  try {
+    const data = await $fetch<PlaylistData>('/api/video/playlist-listing', {
+      method: 'POST',
+      body: { url },
+    })
+    playlistData.value = data
+    selectedVideos.value = new Set(data.videos.map(v => v.id))
+    selectAll.value = true
+  } catch (e: any) {
+    alert('获取播放列表失败: ' + (e?.message || e?.statusMessage || '未知错误'))
+  } finally {
+    urlLoading.value = false
+  }
+}
+
+function toggleSelectAll() {
+  if (!playlistData.value) return
+  if (selectAll.value) {
+    selectedVideos.value = new Set()
+    selectAll.value = false
+  } else {
+    selectedVideos.value = new Set(playlistData.value.videos.map(v => v.id))
+    selectAll.value = true
+  }
+}
+
+function toggleVideo(id: string) {
+  const next = new Set(selectedVideos.value)
+  if (next.has(id)) {
+    next.delete(id)
+    selectAll.value = false
+  } else {
+    next.add(id)
+    selectAll.value = next.size === playlistData.value?.videos.length
+  }
+  selectedVideos.value = next
+}
+
+async function confirmPlaylistImport() {
+  if (!playlistData.value || selectedCount.value === 0) return
+  importing.value = true
+  try {
+    const selected = playlistData.value.videos.filter(v => selectedVideos.value.has(v.id))
+    const result = await $fetch<{
+      folderId: string; folderName: string; imported: number; skipped: number; importedIds: string[]
+    }>('/api/video/playlist-import', {
+      method: 'POST',
+      body: {
+        playlistTitle: playlistData.value.playlistTitle,
+        videos: selected,
+      },
+    })
+    importResult.value = result
+    importing.value = false
+
+    // 启动后台元数据拉取
+    if (result.importedIds.length > 0) {
+      try {
+        const batchRes = await $fetch<{ batchId: string; total: number }>('/api/video/batch-metadata', {
+          method: 'POST',
+          body: { ids: result.importedIds },
+        })
+        batchId.value = batchRes.batchId
+        pollBatchProgress()
+      } catch {
+        // 元数据拉取不是必须的，静默失败
+      }
+    }
+  } catch (e: any) {
+    alert('批量导入失败: ' + (e?.message || e?.statusMessage || '未知错误'))
+    importing.value = false
+  }
+}
+
+function pollBatchProgress() {
+  if (!batchId.value) return
+  const timer = setInterval(async () => {
+    try {
+      const state = await $fetch<{ total: number; current: number; done: boolean }>(
+        `/api/video/batch-progress?batchId=${batchId.value}`
+      )
+      batchProgress.value = state
+      if (state.done) {
+        clearInterval(timer)
+      }
+    } catch {
+      clearInterval(timer)
+    }
+  }, 3000)
+}
+
+function resetPlaylist() {
+  playlistData.value = null
+  selectedVideos.value = new Set()
+  selectAll.value = true
+  importResult.value = null
+  batchId.value = null
+  batchProgress.value = null
+  importing.value = false
+  urlInput.value = ''
+  urlLoading.value = false
+}
+
+function finishImport() {
+  // playlist 导入后不跳转播放页，只刷新书架
+  emit('imported', { id: '', title: '' })
+}
+
+async function quickSave(url: string) {
   urlLoading.value = true
   try {
     const result = await $fetch<{ id: string; title: string }>('/api/video/quick-save', {
@@ -149,6 +355,9 @@ async function quickSave() {
     })
     emit('imported', result)
     urlInput.value = ''
+
+    // 后台立即提取字幕，不等用户打开播放页
+    $fetch(`/api/video/extract-subtitles/${result.id}`, { method: 'POST' }).catch(() => {})
   } catch (e: any) {
     alert('导入失败: ' + (e?.message || e?.statusMessage || '未知错误'))
   } finally {
@@ -156,13 +365,14 @@ async function quickSave() {
   }
 }
 
-// ---- Tab 2: 上传字幕文件 ----
+// ============================================================
+//  Tab 2: 上传字幕文件
+// ============================================================
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const videoFileInputRef = ref<HTMLInputElement | null>(null)
 const fileLoading = ref(false)
 const filePreview = ref<PreviewData | null>(null)
 const attachedVideo = ref<File | null>(null)
-let uploadedVideoPath = ''
 
 async function handleFileDrop(e: DragEvent) {
   const file = e.dataTransfer?.files?.[0]
@@ -206,7 +416,6 @@ function handleVideoSelect(e: Event) {
 async function confirmFileImport() {
   if (!filePreview.value) return
 
-  // If there's an attached video, upload it first
   let filePath = ''
   let videoUrl = ''
   if (attachedVideo.value) {
@@ -250,7 +459,9 @@ function resetFilePreview() {
   fileLoading.value = false
 }
 
-// ---- Tab 3: 上传视频文件 ----
+// ============================================================
+//  Tab 3: 上传视频文件
+// ============================================================
 const videoOnlyInputRef = ref<HTMLInputElement | null>(null)
 const subForVideoRef = ref<HTMLInputElement | null>(null)
 const videoUploading = ref(false)
@@ -294,7 +505,6 @@ async function confirmVideoImport() {
   if (!videoUploaded.value || !attachedSubFile.value) return
 
   try {
-    // Upload subtitle file first
     const subFormData = new FormData()
     subFormData.append('file', attachedSubFile.value)
     const subResult = await $fetch<{ subtitles: SubtitleCue[]; text: string; duration: number }>('/api/video/subtitle/upload', {
@@ -328,7 +538,9 @@ function resetVideoUpload() {
   videoUploading.value = false
 }
 
-// ---- 通用工具 ----
+// ============================================================
+//  通用工具
+// ============================================================
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
@@ -399,7 +611,133 @@ function formatTime(seconds: number): string {
 }
 .vim-input::placeholder { color: #c0bdb4; }
 
-/* 预览区域 */
+/* ── Playlist UI ── */
+.vim-playlist {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vim-playlist-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid rgba(0,0,0,0.08);
+}
+.vim-playlist-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 15px;
+  font-weight: 500;
+  color: #1a1a18;
+}
+.vim-playlist-count {
+  font-size: 11.5px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+}
+
+.vim-playlist-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vim-playlist-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #3d3591;
+  cursor: pointer;
+  border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  margin-bottom: 4px;
+}
+
+.vim-playlist-item {
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+.vim-playlist-item:hover {
+  background: rgba(0,0,0,0.03);
+}
+
+.vim-playlist-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: #4a4a46;
+}
+
+.vim-playlist-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.vim-playlist-more {
+  text-align: center;
+  font-size: 11px;
+  color: #a09e97;
+  padding: 10px 0;
+}
+
+.vim-playlist-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.vim-playlist-result {
+  padding: 14px;
+  background: #f0fdf4;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #166534;
+  line-height: 1.5;
+  text-align: center;
+}
+.vim-playlist-result-sub {
+  font-size: 11.5px;
+  color: #6b6963;
+  margin-top: 4px;
+}
+
+/* ── 批量进度 ── */
+.vim-progress {
+  padding: 8px 0;
+}
+.vim-progress-text {
+  font-size: 12px;
+  color: #a09e97;
+  text-align: center;
+  margin-top: 6px;
+  font-family: 'DM Mono', monospace;
+}
+.vim-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.vim-progress-fill {
+  height: 100%;
+  background: #3d3591;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+/* ── 预览区域 ── */
 .vim-preview {
   margin-top: 16px;
   border: 0.5px solid rgba(0,0,0,0.09);

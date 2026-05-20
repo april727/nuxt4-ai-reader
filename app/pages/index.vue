@@ -1,7 +1,7 @@
 <template>
   <div
     class="library-layout"
-    @dragover.prevent="dragOver = true"
+    @dragover.prevent="onGlobalDragOver($event)"
     @dragleave.prevent="dragOver = false"
     @drop.prevent="handleGlobalDrop"
   >
@@ -42,42 +42,45 @@
         <div class="lib-toolbar-row">
           <div class="lib-toolbar-left">
             <h1 class="lib-title">{{ activeFolderName }}</h1>
-            <span v-if="filteredBooks.length" class="lib-count">{{ filteredBooks.length }} 本</span>
-            <div class="lib-filter-bar">
-              <button
-                v-for="f in filterOptions"
-                :key="f.key"
-                class="lib-filter-chip"
-                :class="{ active: sourceFilter === f.key }"
-                @click="sourceFilter = f.key"
-              >{{ f.label }}</button>
-            </div>
+            <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
+          </div>
+          <div class="lib-filter-bar">
+            <FilterChip
+              v-model="sourceFilter"
+              :options="filterOptions"
+              :sort-model="sortBy"
+              :sort-label="sortLabel"
+              @cycle-sort="cycleSort"
+            />
           </div>
           <div class="lib-actions">
-            <button class="lib-action-btn" @click="showVideoImport = true" title="导入视频">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-              <span>导入视频</span>
-            </button>
-            <button class="lib-action-btn" @click="showUpload = true" title="上传文件">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-1.5-.5"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <span>上传文件</span>
-            </button>
-            <button class="lib-action-btn" @click="showUrl = true" title="提取网页">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <span>网址</span>
-            </button>
-            <button class="lib-action-btn accent" @click="navigateTo('/reviews')" title="复习本">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-              <span>复习本</span>
-            </button>
+            <ToolbarActions
+              @import-video="showVideoImport = true"
+              @upload="showUpload = true"
+              @url="showUrl = true"
+            />
           </div>
         </div>
       </header>
 
+      <!-- 搜索条 -->
+      <div class="lib-search-row" v-if="books.length > 0">
+        <svg class="lib-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input
+          v-model="searchQuery"
+          class="lib-search-input"
+          placeholder="搜索书名或来源..."
+          @input="onSearchInput"
+        />
+        <button v-if="searchQuery" class="lib-search-clear" @click="searchQuery = ''; searchDebounced = ''">×</button>
+      </div>
+
       <!-- 书本网格 -->
-      <div v-if="filteredBooks.length > 0" class="lib-grid">
+      <div v-if="searchedBooks.length > 0" class="lib-grid">
         <BookCard
-          v-for="(book, i) in filteredBooks"
+          v-for="(book, i) in searchedBooks"
           :key="book.id"
           :id="book.id"
           :title="book.title"
@@ -97,15 +100,37 @@
         />
       </div>
 
-      <!-- 空态 -->
+      <!-- 空态 / 搜索无结果 -->
       <div v-else class="lib-empty">
-        <div class="lib-empty-illustration">
-          <div class="empty-shelf">
-            <span class="empty-book" v-for="i in 3" :key="i" :style="{ '--i': i }"></span>
+        <template v-if="searchQuery">
+          <p class="lib-empty-title">没有找到「{{ searchQuery }}」</p>
+          <p class="lib-empty-hint">尝试其他关键词</p>
+        </template>
+        <template v-else>
+          <div class="lib-empty-illustration">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="lib-empty-icon">
+              <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
+              <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
+              <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
+            </svg>
           </div>
-        </div>
-        <p class="lib-empty-title">{{ sourceFilter === 'video' ? '还没有视频' : '书架是空的' }}</p>
-        <p class="lib-empty-hint">{{ sourceFilter === 'video' ? '点击「导入视频」添加 YouTube 或本地视频' : '拖拽 PDF / Markdown / TXT 文件到此处，或点击上方按钮' }}</p>
+          <p class="lib-empty-title">{{ sourceFilter === 'video' ? '还没有视频' : '书架是空的' }}</p>
+          <p class="lib-empty-hint">开始你的阅读之旅</p>
+          <div class="lib-empty-actions">
+            <button class="lib-empty-btn" @click="showVideoImport = true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+              导入视频
+            </button>
+            <button class="lib-empty-btn" @click="showUrl = true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              提取网页
+            </button>
+            <button class="lib-empty-btn" @click="showUpload = true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-1.5-.5"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              上传文件
+            </button>
+          </div>
+        </template>
       </div>
 
       <!-- 视频导入弹窗 -->
@@ -125,6 +150,7 @@
           @click="contextMenu.show = false"
         >
           <div
+            ref="contextMenuRef"
             class="context-menu"
             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
             @click.stop
@@ -229,7 +255,8 @@ interface BookItem { id: string; title: string; source: string; length: number; 
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
-const activeFolder = ref('default')
+const route = useRoute()
+const activeFolder = ref((route.query.folder as string) || 'default')
 
 const filterOptions = [
   { key: 'all', label: '全部' },
@@ -243,7 +270,7 @@ const { data: folders, refresh: refreshFolders } = await useAsyncData('folders',
 )
 
 const { data: books, refresh: refreshBooks } = await useAsyncData(
-  'books',
+  () => `books-${activeFolder.value}`,
   () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
   { watch: [activeFolder], default: () => [] as BookItem[] }
 )
@@ -259,7 +286,18 @@ const urlLoading = ref(false)
 const uploading = ref(false)
 const dragOver = ref(false)
 
+function onGlobalDragOver(e: DragEvent) {
+  // 仅外部文件拖放显示上传提示，卡片拖拽不显示
+  dragOver.value = e.dataTransfer?.types?.includes('Files') || false
+}
+
 const sourceFilter = ref<string>('all')
+const sortBy = ref<'newest' | 'title' | 'reads'>('newest')
+const sortOrders: Array<'newest' | 'title' | 'reads'> = ['newest', 'title', 'reads']
+const sortLabel = computed(() => ({ newest: '最新', title: '标题', reads: '阅读' }[sortBy.value]))
+const searchQuery = ref('')
+const searchDebounced = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const filteredBooks = computed(() => {
   if (sourceFilter.value === 'video') return books.value.filter(b => videoSources.includes(b.source))
@@ -267,7 +305,39 @@ const filteredBooks = computed(() => {
   return books.value
 })
 
+const searchedBooks = computed(() => {
+  const q = searchDebounced.value.trim().toLowerCase()
+  let list = filteredBooks.value
+  if (q) {
+    list = list.filter(b =>
+      b.title.toLowerCase().includes(q) ||
+      b.source.toLowerCase().includes(q)
+    )
+  }
+  // 排序
+  if (sortBy.value === 'title') {
+    list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'zh'))
+  } else if (sortBy.value === 'reads') {
+    list = [...list].sort((a, b) => (b.readCount || 0) - (a.readCount || 0))
+  }
+  // 'newest' 保持默认顺序（数据库已按 createdAt DESC 返回）
+  return list
+})
+
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchDebounced.value = searchQuery.value
+  }, 200)
+}
+
+function cycleSort() {
+  const idx = sortOrders.indexOf(sortBy.value)
+  sortBy.value = sortOrders[(idx + 1) % sortOrders.length]
+}
+
 const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '' })
+const contextMenuRef = ref<HTMLElement | null>(null)
 const showRename = ref(false)
 const renameText = ref('')
 const renameBookId = ref('')
@@ -283,18 +353,17 @@ async function loadBooks() {
   counts()
 }
 
-function handleVideoImported(result: { id: string; title: string }) {
+async function handleVideoImported(result: { id: string; title: string }) {
   showVideoImport.value = false
-  loadBooks()
+  await loadFolders()
+  await loadBooks()
   if (result.id) navigateTo(`/watch/${result.id}`)
 }
 
 async function counts() {
-  const m: Record<string, number> = {}
-  for (const f of folders.value) {
-    try { m[f.id] = (await $fetch<BookItem[]>(`/api/text/list?folder=${f.id}`)).length } catch { m[f.id] = 0 }
-  }
-  folderCounts.value = m
+  try {
+    folderCounts.value = await $fetch<Record<string, number>>('/api/folder/counts')
+  } catch {}
 }
 
 async function handleCreateFolder(name: string, parent?: string) {
@@ -310,15 +379,17 @@ async function handleDropOnFolder(folderId: string) {
   try {
     await $fetch('/api/text/move', { method: 'POST', body: { id: dragBookId, folder: folderId } })
     await loadBooks()
+    dragBookId = ''
   } catch (e: any) {}
 }
 
 function openBook(id: string) {
   const book = books.value.find(b => b.id === id)
+  const folder = encodeURIComponent(activeFolder.value)
   if (book && videoSources.includes(book.source)) {
-    navigateTo(`/watch/${id}`)
+    navigateTo(`/watch/${id}?folder=${folder}`)
   } else {
-    navigateTo(`/read/${id}`)
+    navigateTo(`/read/${id}?folder=${folder}`)
   }
 }
 
@@ -354,15 +425,36 @@ async function processDroppedFile(file: File) {
 let dragBookId = ''
 function handleBookDragStart(e: DragEvent, id: string) {
   dragBookId = id
-  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id) }
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+    // 透明幽灵图，彻底隐藏浏览器默认拖拽面板
+    const img = new Image()
+    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs='
+    e.dataTransfer.setDragImage(img, 0, 0)
+  }
 }
 
-function openContextMenu(e: MouseEvent, book: BookItem) {
+async function openContextMenu(e: MouseEvent, book: BookItem) {
   contextMenu.show = true
-  contextMenu.x = Math.min(e.clientX, window.innerWidth - 180)
-  contextMenu.y = Math.min(e.clientY, window.innerHeight - 160)
+  contextMenu.x = e.clientX
+  contextMenu.y = e.clientY
   contextMenu.bookId = book.id
   contextMenu.completedAt = book.completedAt || ''
+  // 等 DOM 渲染后根据实际菜单尺寸调整位置，避免溢出屏幕
+  await nextTick()
+  const el = contextMenuRef.value
+  if (el) {
+    const rect = el.getBoundingClientRect()
+    if (contextMenu.x + rect.width > window.innerWidth - 8) {
+      contextMenu.x = window.innerWidth - rect.width - 8
+    }
+    if (contextMenu.y + rect.height > window.innerHeight - 8) {
+      contextMenu.y = window.innerHeight - rect.height - 8
+    }
+    if (contextMenu.x < 8) contextMenu.x = 8
+    if (contextMenu.y < 8) contextMenu.y = 8
+  }
 }
 
 async function renameBook() {
@@ -439,6 +531,7 @@ onMounted(() => { counts() })
 .lib-sidebar {
   width: 220px;
   flex-shrink: 0;
+  overflow: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
   background: #f0efe9;
 }
@@ -457,19 +550,56 @@ onMounted(() => { counts() })
 }
 
 .lib-toolbar-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 260px 1fr auto;
   align-items: center;
   width: 100%;
   padding-bottom: 16px;
+  gap: 0 14px;
+}
+.lib-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 40px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
 }
+.lib-search-row .lib-search-input {
+  flex: 1;
+  max-width: 480px;
+}
+.lib-search-icon {
+  flex-shrink: 0;
+  color: #a09e97;
+}
+.lib-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  color: #1a1a18;
+  outline: none;
+}
+.lib-search-input::placeholder { color: #c0bdb4; }
+.lib-search-clear {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: none; border-radius: 50%;
+  background: rgba(0,0,0,0.06);
+  color: #8a877c;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+.lib-search-clear:hover { background: rgba(0,0,0,0.1); color: #4a4a46; }
 
 .lib-toolbar-left {
   display: flex;
   align-items: baseline;
   gap: 14px;
-  flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .lib-actions {
@@ -485,6 +615,9 @@ onMounted(() => { counts() })
   color: #1a1a18;
   letter-spacing: -0.01em;
   margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lib-count {
@@ -494,65 +627,63 @@ onMounted(() => { counts() })
   font-family: 'DM Sans', sans-serif;
 }
 
-.lib-action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
+/* ── 添加下拉菜单 ── */
+.lib-add-dropdown { position: relative; }
+.add-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.add-chevron.open { transform: rotate(180deg); }
+
+.add-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
   background: #ffffff;
-  color: #6b6963;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  padding: 6px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.add-dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #4a4a46;
   font-size: 13px;
-  font-weight: 450;
+  font-family: 'DM Sans', sans-serif;
   cursor: pointer;
-  transition: all 0.2s;
-  font-family: inherit;
-  white-space: nowrap;
+  transition: background 0.12s;
+  text-align: left;
 }
-.lib-action-btn:hover {
+.add-dropdown-menu button:hover {
+  background: rgba(0,0,0,0.04);
   color: #1a1a18;
-  border-color: rgba(0, 0, 0, 0.14);
-  background: #fafaf8;
 }
-.lib-action-btn.accent {
-  color: #3d3591;
-  border-color: rgba(61, 53, 145, 0.15);
-  background: #f9f7ff;
+
+.drop-enter-enter-active, .drop-enter-leave-active {
+  transition: opacity 0.15s, transform 0.15s;
 }
-.lib-action-btn.accent:hover {
-  background: #3d3591;
-  color: #ffffff;
-  border-color: #3d3591;
+.drop-enter-enter-from, .drop-enter-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 /* ── Filter Chips (inline next to title) ── */
 .lib-filter-bar {
   display: flex;
   gap: 4px;
-}
-
-.lib-filter-chip {
-  padding: 4px 12px;
-  border-radius: 8px;
-  border: none;
-  background: rgba(0, 0, 0, 0.03);
-  font-size: 12.5px;
-  font-weight: 450;
-  color: #8a877c;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: inherit;
-}
-.lib-filter-chip:hover {
-  color: #4a4640;
-  background: rgba(0, 0, 0, 0.06);
-}
-.lib-filter-chip.active {
-  background: #ffffff;
-  color: #3d3591;
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  justify-self: start;
 }
 
 /* ── Grid ── */
@@ -606,6 +737,7 @@ onMounted(() => { counts() })
   transform: rotate(calc((var(--i) - 2) * 3deg));
 }
 
+.lib-empty-icon { color: #d4d1c8; margin-bottom: 16px; }
 .lib-empty-title {
   font-family: 'Lora', Georgia, serif;
   font-size: 1.1em;
@@ -615,9 +747,34 @@ onMounted(() => { counts() })
 .lib-empty-hint {
   font-size: 13px;
   color: #c4c1ba;
-  margin: 0;
+  margin: 0 0 28px;
   max-width: 360px;
   line-height: 1.6;
+}
+.lib-empty-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.lib-empty-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #6b6963;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lib-empty-btn:hover {
+  color: #3d3591;
+  border-color: rgba(61,53,145,0.2);
+  background: #f8f7ff;
 }
 
 /* ── Drag Overlay ── */

@@ -45,6 +45,11 @@
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
         </button>
+        <button class="reader-icon-btn" @click="toggleSearch" title="搜索 (Ctrl+F)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+        </button>
         <button class="reader-icon-btn" @click="runManualAnalysis" title="AI 智能分析" :disabled="analyzing">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
@@ -56,6 +61,28 @@
         </button>
       </div>
     </header>
+
+    <!-- 书内搜索条 -->
+    <div v-if="searchVisible" class="search-bar">
+      <div class="search-bar-inner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="search-bar-icon">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input
+          ref="searchInputRef"
+          v-model="searchText"
+          class="search-bar-input"
+          placeholder="搜索文章内容…"
+          @input="doSearch"
+          @keydown.enter="nextMatch"
+          @keydown.escape="searchVisible = false"
+        />
+        <span v-if="searchText" class="search-bar-count">{{ searchMatches?.length ? `${currentMatchIdx + 1}/${searchMatches.length}` : '0' }}</span>
+        <button v-if="searchText" class="search-bar-nav" @click="prevMatch" :disabled="!searchMatches?.length">▲</button>
+        <button v-if="searchText" class="search-bar-nav" @click="nextMatch" :disabled="!searchMatches?.length">▼</button>
+        <button class="search-bar-close" @click="searchVisible = false">×</button>
+      </div>
+    </div>
 
     <div class="reader-body" ref="readerBodyEl">
       <!-- 正文区 -->
@@ -347,6 +374,7 @@
       :end-time="miniPlayerEnd"
       @close="miniPlayerVisible = false"
     />
+
   </div>
 </template>
 
@@ -1072,6 +1100,101 @@ ${inputText}
 }
 
 const analyzing = ref(false)
+
+// ── 书内搜索 ──
+const searchVisible = ref(false)
+const searchText = ref('')
+const searchInputRef = ref<HTMLInputElement | null>(null)
+const searchMatches = ref<Array<{ paraId: string; paraIdx: number; text: string }>>([])
+const currentMatchIdx = ref(0)
+
+function toggleSearch() {
+  searchVisible.value = !searchVisible.value
+  if (searchVisible.value) {
+    nextTick(() => searchInputRef.value?.focus())
+  } else {
+    searchText.value = ''
+    searchMatches.value = []
+    currentMatchIdx.value = 0
+    clearHighlights()
+  }
+}
+
+function doSearch() {
+  const q = searchText.value.trim().toLowerCase()
+  searchMatches.value = []
+  currentMatchIdx.value = 0
+  clearHighlights()
+  if (!q || q.length < 2) return
+
+  const results: typeof searchMatches.value = []
+  for (let i = 0; i < paragraphs.value.length; i++) {
+    const p = paragraphs.value[i]
+    if (p.text.toLowerCase().includes(q)) {
+      results.push({ paraId: p.id, paraIdx: i, text: p.text })
+    }
+  }
+  searchMatches.value = results
+  if (results.length > 0) {
+    currentMatchIdx.value = 0
+    scrollToMatch(0)
+  }
+}
+
+function nextMatch() {
+  if (!searchMatches.value.length) return
+  currentMatchIdx.value = (currentMatchIdx.value + 1) % searchMatches.value.length
+  scrollToMatch(currentMatchIdx.value)
+}
+
+function prevMatch() {
+  if (!searchMatches.value.length) return
+  currentMatchIdx.value = (currentMatchIdx.value - 1 + searchMatches.value.length) % searchMatches.value.length
+  scrollToMatch(currentMatchIdx.value)
+}
+
+function scrollToMatch(idx: number) {
+  const m = searchMatches.value[idx]
+  if (!m) return
+  const el = document.querySelector(`[data-id="${m.paraId}"]`)
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    highlightMatch(m.paraId)
+  }
+}
+
+function highlightMatch(paraId: string) {
+  clearHighlights()
+  const el = document.querySelector(`[data-id="${paraId}"]`)
+  if (el) el.classList.add('search-highlight')
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.search-highlight').forEach(el => el.classList.remove('search-highlight'))
+}
+
+// Ctrl+F 快捷键
+function onKeyDown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault()
+    searchVisible.value = true
+    nextTick(() => searchInputRef.value?.focus())
+  }
+  if (e.key === 'Escape' && searchVisible.value) {
+    searchVisible.value = false
+    searchText.value = ''
+    searchMatches.value = []
+    clearHighlights()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeyDown)
+})
+
 const progressError = ref(false)
 
 function dismissProgress() {
@@ -1490,4 +1613,59 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   transform: translateY(100%);
   opacity: 0;
 }
+/* ── 书内搜索条 ── */
+.search-bar {
+  flex-shrink: 0;
+  padding: 0 32px 8px;
+}
+.search-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #f8f9fb;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+}
+.search-bar-icon { color: #a09e97; flex-shrink: 0; }
+.search-bar-input {
+  flex: 1;
+  border: none; background: transparent;
+  font-size: 13px; font-family: 'DM Sans', sans-serif;
+  color: #1a1a18; outline: none;
+}
+.search-bar-input::placeholder { color: #c0bdb4; }
+.search-bar-count {
+  font-size: 11px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+  min-width: 32px;
+  text-align: center;
+}
+.search-bar-nav {
+  width: 24px; height: 24px;
+  border: none; border-radius: 6px;
+  background: rgba(0,0,0,0.04);
+  color: #6b6963;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.search-bar-nav:hover { background: rgba(0,0,0,0.08); }
+.search-bar-nav:disabled { opacity: 0.3; cursor: default; }
+.search-bar-close {
+  width: 24px; height: 24px;
+  border: none; border-radius: 50%;
+  background: transparent;
+  color: #a09e97;
+  font-size: 16px;
+  cursor: pointer;
+}
+.search-bar-close:hover { background: rgba(0,0,0,0.06); }
+.search-highlight {
+  background: rgba(245, 158, 11, 0.15) !important;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
 </style>

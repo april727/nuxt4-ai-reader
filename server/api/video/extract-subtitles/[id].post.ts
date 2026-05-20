@@ -85,7 +85,7 @@ function downloadThumbnail(imageUrl: string, destName: string): Promise<string |
     const ext = extMatch?.[1] || 'jpg'
     const filename = `thumb_${destName}.${ext}`
     const filePath = path.join(UPLOADS_DIR, filename)
-    if (existsSync(filePath)) return resolve(filename) // 已存在
+    if (existsSync(filePath)) return resolve(filename)
 
     if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true })
 
