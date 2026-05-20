@@ -467,6 +467,8 @@ const subForVideoRef = ref<HTMLInputElement | null>(null)
 const videoUploading = ref(false)
 const videoUploaded = ref<{ filePath: string; url: string; originalName: string } | null>(null)
 const attachedSubFile = ref<File | null>(null)
+const videoThumbnailUrl = ref('')
+let videoRawFile: File | null = null
 
 async function handleVideoDrop(e: DragEvent) {
   const file = e.dataTransfer?.files?.[0]
@@ -479,21 +481,60 @@ function handleVideoOnlySelect(e: Event) {
 }
 
 async function uploadVideoOnly(file: File) {
-  videoUploading.value = true
-  videoUploaded.value = null
+  videoUploading.value = true; videoUploaded.value = null; videoThumbnailUrl.value = ''
+  videoRawFile = file
   try {
-    const formData = new FormData()
-    formData.append('file', file)
-    const result = await $fetch<{ filePath: string; url: string; originalName: string }>('/api/file/upload-video', {
-      method: 'POST',
-      body: formData,
-    })
+    // 并行：上传视频 + 捕获缩略图
+    const formData = new FormData(); formData.append('file', file)
+    const [result, thumbUrl] = await Promise.all([
+      $fetch<{ filePath: string; url: string; originalName: string }>('/api/file/upload-video', { method: 'POST', body: formData }),
+      captureVideoThumbnail(file),
+    ])
     videoUploaded.value = result
+    if (thumbUrl) videoThumbnailUrl.value = thumbUrl
   } catch (e: any) {
     alert('上传失败: ' + (e?.message || ''))
   } finally {
     videoUploading.value = false
   }
+}
+
+/** 用 <video> + <canvas> 截取视频第 10% 处的一帧作为封面 */
+async function captureVideoThumbnail(file: File): Promise<string> {
+  const vid = document.createElement('video')
+  vid.preload = 'metadata'; vid.muted = true; vid.playsInline = true
+  const blobUrl = URL.createObjectURL(file)
+  vid.src = blobUrl
+
+  return new Promise((resolve) => {
+    let cleaned = false
+    const clean = () => { if (!cleaned) { cleaned = true; URL.revokeObjectURL(blobUrl); vid.remove() } }
+
+    const capture = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 320; canvas.height = Math.round(320 / (vid.videoWidth / vid.videoHeight) || 180)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { clean(); return resolve('') }
+      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height)
+      canvas.toBlob(async (blob) => {
+        clean()
+        if (!blob) return resolve('')
+        try {
+          const fd = new FormData(); fd.append('file', blob, 'thumb.jpg')
+          const res = await $fetch<{ url: string; path: string; size: number }>('/api/file/upload-thumbnail', { method: 'POST', body: fd })
+          resolve(res.path)
+        } catch { resolve('') }
+      }, 'image/jpeg', 0.8)
+    }
+
+    vid.onloadedmetadata = () => {
+      vid.currentTime = Math.min(15, vid.duration * 0.1)
+    }
+    vid.onseeked = () => { capture() }
+    vid.onerror = () => { clean(); resolve('') }
+    // 超时兜底
+    setTimeout(() => { if (!cleaned) { clean(); resolve('') } }, 15000)
+  })
 }
 
 function handleSubForVideoSelect(e: Event) {
@@ -523,6 +564,7 @@ async function confirmVideoImport() {
         subtitles: subResult.subtitles,
         duration: subResult.duration,
         filePath: videoUploaded.value.filePath,
+        thumbnail: videoThumbnailUrl.value,
       },
     })
     emit('imported', result)

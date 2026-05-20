@@ -50,13 +50,15 @@
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
         </button>
-        <button class="reader-icon-btn" @click="runManualAnalysis" title="AI 智能分析" :disabled="analyzing">
+        <button class="reader-icon-btn" @click="runManualAnalysis()" title="AI 分析" :disabled="analyzing">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
-            <path d="M8 12a4 4 0 1 1 8 0"/>
-            <circle cx="12" cy="12" r="2.5"/>
-            <line x1="12" y1="2" x2="12" y2="5"/>
-            <line x1="12" y1="19" x2="12" y2="22"/>
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M8 12a4 4 0 1 1 8 0"/>
+            <circle cx="12" cy="12" r="2.5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+        <button class="reader-icon-btn" @click="runManualSegment" title="重新分段" :disabled="analyzing">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
           </svg>
         </button>
       </div>
@@ -107,15 +109,16 @@
             <template v-if="isVideo && (para as any).start !== undefined">{{ formatCueTime((para as any).start) }}</template>
             <template v-else>{{ index + 1 }}</template>
           </div>
-          <p v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></p>
-          <textarea
-            v-else
-            class="para-edit-area"
-            v-model="editText"
-            @keydown.escape="cancelEdit"
-            @keydown.ctrl.enter="saveEdit(para.id)"
-            rows="4"
-          ></textarea>
+          <div class="para-body">
+            <p v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></p>
+            <textarea
+              v-else
+              class="para-edit-area"
+              v-model="editText"
+              @keydown.escape="cancelEdit"
+              @keydown.ctrl.enter="saveEdit(para.id)"
+              rows="4"
+            ></textarea>
           <div class="para-actions" v-if="para.id === activeParagraphId" @click.stop>
             <button
               v-if="isVideo && (para as any).start !== undefined"
@@ -185,6 +188,33 @@
                 <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
             </button>
+            <button class="para-action-btn" @click.stop="insertImageForParagraph(para.id)" title="插入图片">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </button>
+          </div>
+          <!-- 段落关联图片 -->
+          <div v-if="(para as any).images?.length" class="para-images" :class="`para-images--${paraImageSize(para.id)}`">
+            <div class="para-images-bar">
+              <button class="para-images-toggle" @click.stop="toggleParaImages(para.id)" :title="isParaImagesCollapsed(para.id) ? '展开图片' : '收起图片'">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  :style="{ transform: isParaImagesCollapsed(para.id) ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+                {{ (para as any).images.length }} 张
+              </button>
+              <div class="para-images-size">
+                <button :class="{ active: paraImageSize(para.id) === 'sm' }" @click.stop="setParaImageSize(para.id, 'sm')" title="小">◉</button>
+                <button :class="{ active: paraImageSize(para.id) === 'md' }" @click.stop="setParaImageSize(para.id, 'md')" title="中">◉</button>
+                <button :class="{ active: paraImageSize(para.id) === 'lg' }" @click.stop="setParaImageSize(para.id, 'lg')" title="大">◉</button>
+              </div>
+            </div>
+            <div v-if="!isParaImagesCollapsed(para.id)" v-for="(img, i) in (para as any).images" :key="i" class="para-image-wrap">
+              <img :src="`/api/file/${img}`" :alt="`段落图片 ${i + 1}`" @click.stop="viewImage(`/api/file/${img}`)" />
+              <button class="para-image-del" @click.stop="removeParaImage(para.id, img)" title="删除图片">×</button>
+            </div>
+          </div>
           </div>
         </div>
       </article>
@@ -373,6 +403,13 @@
       :start-time="miniPlayerStart"
       :end-time="miniPlayerEnd"
       @close="miniPlayerVisible = false"
+    />
+
+    <FloatingImage
+      v-if="floatingImage"
+      :src="floatingImage.src"
+      :title="floatingImage.title"
+      @close="floatingImage = null"
     />
 
   </div>
@@ -595,6 +632,7 @@ let resizing = false
 function startResize(e: MouseEvent) {
   resizing = true; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
   const onMove = (ev: MouseEvent) => {
+    if (!(ev.buttons & 1)) { onUp(); return }  // 鼠标已松开（如 iframe 吞掉事件）→ 强制清理
     if (!resizing) return; const t = window.innerWidth
     let l = ev.clientX; if (l < 320) l = 320; if (l > t - 340) l = t - 340
     leftWidth.value = l; rightWidth.value = t - l - 6
@@ -867,29 +905,33 @@ onMounted(async () => {
     if (data.videoMeta) {
       videoMeta.value = data.videoMeta as { url: string; type: string; duration: number }
     }
-    if (!data.analysis || !data.segments) {
-      try { await runAnalysis(data.text) } catch {
-        // runAnalysis 内部已处理兜底和错误提示，此处静默
-      }
-    }
+    // ⚠️ 不再自动触发 AI 分析 — 保留原文段落结构，用户手动点「AI 智能分析」才分段
     const markPid = route.query.mark as string
     if (markPid) { await nextTick(); const el = document.querySelector(`[data-id="${markPid}"]`); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
     $fetch('/api/text/stats', { method: 'POST', body: { id, marks: marks.value.length } }).catch(() => {})
   } catch (e: any) { alert('加载失败'); navigateTo('/') }
 })
 
-function goBack() { stopStreaming(); article.reset(); navigateTo('/') }
+function goBack() {
+  stopStreaming(); article.reset()
+  const folder = route.query.folder as string
+  navigateTo(folder ? `/?folder=${folder}` : '/')
+}
 
 function goToWatch() {
-  navigateTo(`/watch/${id}?from=read${currentTimeForWatch.value > 0 ? `&time=${currentTimeForWatch.value}` : ''}`)
+  const folder = route.query.folder as string
+  const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : ''
+  navigateTo(`/watch/${id}?from=read${currentTimeForWatch.value > 0 ? `&time=${currentTimeForWatch.value}` : ''}${folderParam}`)
 }
 
 function jumpToWatch(para: any) {
   const time = para?.start
+  const folder = route.query.folder as string
+  const folderParam = folder ? `&folder=${encodeURIComponent(folder)}` : ''
   if (time !== undefined) {
-    navigateTo(`/watch/${id}?time=${time}`)
+    navigateTo(`/watch/${id}?time=${time}${folderParam}`)
   } else {
-    navigateTo(`/watch/${id}`)
+    navigateTo(`/watch/${id}${folderParam ? `?folder=${encodeURIComponent(folder)}` : ''}`)
   }
 }
 
@@ -905,9 +947,14 @@ function formatCueTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/** 保留原文段落结构：有自然段则逐段保留，没有则按句切分 */
 function quickSegment(text: string): Paragraph[] {
   const blocks = text.split(/\n\s*\n/).filter(b => b.trim())
-  if (blocks.length > 1) return splitIntoParagraphs(blocks.join('\n\n'))
+  if (blocks.length > 1) {
+    // 原文有自然段落 → 保留原样，不拆不合并
+    return blocks.map((b, i) => ({ id: `q-${i}`, index: i, text: b.trim() }))
+  }
+  // 原文无段落结构 → 按句切分兜底
   return splitIntoParagraphs(text)
 }
 
@@ -1010,7 +1057,7 @@ function mapSegmentsToCues(
  * - 分段走 segment 端点：短文全文送入、长文截断 + 本地兜底，精度远高于正则挖断点
  * - 两步分开后不互相污染，各自失败有独立兜底
  */
-async function runAnalysis(text: string) {
+async function runAnalysis(text: string, skipSegmentation = false) {
   // ---- 第一步：AI 分析（流式，只出元信息 + 右面板展示） ----
   const maxInput = 15000
   const inputText = text.length > maxInput
@@ -1061,7 +1108,8 @@ ${inputText}
         .split('\n').filter((s: string) => s.trim().startsWith('-')).map((s: string) => s.replace(/^-\s*/, '')),
     }
     article.setAnalysis(a)
-    $fetch('/api/text/update', { method: 'POST', body: { id, analysis: a } }).catch(() => {})
+    // 同步标题到数据库，卡片显示 AI 生成的标题
+    $fetch('/api/text/update', { method: 'POST', body: { id, title: a.title, analysis: a } }).catch(() => {})
   } catch (err: any) {
     stopStreaming()
     const reason = err?.message || '未知错误'
@@ -1070,6 +1118,7 @@ ${inputText}
   }
 
   // ---- 第二步：AI 分段（按来源类型走不同策略） ----
+  if (skipSegmentation) return
   try {
     const segType = isVideo.value ? 'subtitle' : 'document'
     let segs = await $fetch<Paragraph[]>('/api/deepseek/segment', {
@@ -1202,24 +1251,35 @@ function dismissProgress() {
   progressError.value = false
 }
 
+// AI 分析（仅分析，不分段）
 async function runManualAnalysis() {
   if (analyzing.value || !article.rawText.value) return
   analyzing.value = true
   article.isProcessingWritable.value = true
-  progressError.value = false
   progressMsg.value = 'AI 正在分析文章…'
   try {
-    await runAnalysis(article.rawText.value)
+    await runAnalysis(article.rawText.value, true)
     progressMsg.value = '分析完成'
-    progressError.value = false
-  } catch {
-    // runAnalysis 内部已设置错误信息
-  } finally {
-    analyzing.value = false
-    article.isProcessingWritable.value = false
-    if (!progressError.value) {
-      setTimeout(() => { progressMsg.value = '' }, 3000)
-    }
+  } catch { /* runAnalysis 内部已设置错误信息 */ }
+  finally {
+    analyzing.value = false; article.isProcessingWritable.value = false
+    setTimeout(() => { if (!progressError.value) progressMsg.value = '' }, 3000)
+  }
+}
+
+// 重新分段（分段 + 分析）
+async function runManualSegment() {
+  if (analyzing.value || !article.rawText.value) return
+  analyzing.value = true
+  article.isProcessingWritable.value = true
+  progressMsg.value = 'AI 正在重新分段…'
+  try {
+    await runAnalysis(article.rawText.value, false)
+    progressMsg.value = '分段完成'
+  } catch { /* runAnalysis 内部已设置错误信息 */ }
+  finally {
+    analyzing.value = false; article.isProcessingWritable.value = false
+    setTimeout(() => { if (!progressError.value) progressMsg.value = '' }, 3000)
   }
 }
 
@@ -1287,6 +1347,91 @@ function reAnalyzeParagraph(pid: string, ptext: string) {
   article.setCachedExplanation(pid, 'translate', '')
   handleParagraphAction('explain', pid, ptext)
 }
+
+// ── 段落图片：上传 + 粘贴 + 尺寸调节 ──
+const paraImageSizes = ref<Record<string, 'sm' | 'md' | 'lg'>>({})
+
+function paraImageSize(paraId: string): 'sm' | 'md' | 'lg' {
+  return paraImageSizes.value[paraId] || 'md'
+}
+function setParaImageSize(paraId: string, size: 'sm' | 'md' | 'lg') {
+  paraImageSizes.value = { ...paraImageSizes.value, [paraId]: size }
+}
+
+const collapsedImages = ref<Record<string, boolean>>({})
+function isParaImagesCollapsed(paraId: string): boolean {
+  return !!collapsedImages.value[paraId]
+}
+function toggleParaImages(paraId: string) {
+  collapsedImages.value = { ...collapsedImages.value, [paraId]: !collapsedImages.value[paraId] }
+}
+
+async function refreshParagraphs() {
+  try {
+    const data = await $fetch<any>(`/api/text/${id}`)
+    if (data?.segments?.length) article.setParagraphs(data.segments)
+  } catch {}
+}
+
+const imageFileInput = ref<HTMLInputElement | null>(null)
+
+function insertImageForParagraph(paraId: string) {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = 'image/*'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) uploadParaImage(paraId, file)
+  }
+  input.click()
+}
+
+async function uploadParaImage(paraId: string, file: File | Blob, filename = 'image.png') {
+  try {
+    const form = new FormData()
+    form.append('file', file, filename)
+    form.append('id', id)
+    form.append('paragraphId', paraId)
+
+    await $fetch<{ url: string; name: string }>('/api/paragraph/image', { method: 'POST', body: form })
+    // 刷新段落数据
+    await refreshParagraphs()
+  } catch (e: any) {
+    alert('图片上传失败: ' + (e?.message || ''))
+  }
+}
+
+async function removeParaImage(paraId: string, imageName: string) {
+  try {
+    await $fetch('/api/paragraph/image', { method: 'DELETE', body: { id, paragraphId: paraId, imageName } })
+    await refreshParagraphs()
+  } catch (e: any) {
+    alert('删除失败: ' + (e?.message || ''))
+  }
+}
+
+const floatingImage = ref<{ src: string; title: string } | null>(null)
+
+function viewImage(url: string) {
+  floatingImage.value = { src: url, title: '图片预览' }
+}
+
+// ── 全局粘贴图片 ──
+function onDocumentPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const blob = item.getAsFile()
+      const targetId = activeParagraphId.value || 'p-0'
+      if (blob) uploadParaImage(targetId, blob, 'paste.png')
+      return
+    }
+  }
+}
+
+onMounted(() => { document.addEventListener('paste', onDocumentPaste) })
+onUnmounted(() => { document.removeEventListener('paste', onDocumentPaste) })
 
 async function handleParagraphAction(action: ParagraphAction, pid: string, ptext: string) {
   article.setActiveParagraph(pid)
@@ -1464,6 +1609,63 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 }
 
 /* 段落编辑区 */
+/* ── 段落主体（文字 + 图片竖排）── */
+.para-body {
+  flex: 1; min-width: 0;
+}
+
+/* ── 段落图片 ── */
+.para-images {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed #e8e6e0;
+}
+
+.para-images-bar {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+}
+.para-images-toggle {
+  display: flex; align-items: center; gap: 3px;
+  border: none; background: none; cursor: pointer;
+  font-size: 0.7rem; color: #aaa; font-family: 'DM Sans', system-ui, sans-serif;
+  padding: 2px 4px; border-radius: 3px;
+}
+.para-images-toggle:hover { color: #555; background: #f0efe9; }
+.para-images-size {
+  display: flex; gap: 2px;
+}
+.para-images-size button {
+  width: 20px; height: 20px; border: none; background: none; cursor: pointer;
+  color: #ccc; font-size: 8px; border-radius: 50%; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.para-images-size button:hover { background: #f0efe9; }
+.para-images-size button.active { color: #3d3591; background: rgba(61,53,145,0.08); }
+
+.para-image-wrap {
+  position: relative; border-radius: 6px; overflow: hidden;
+  cursor: pointer; flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.para-image-wrap img { width: 100%; height: 100%; object-fit: cover; }
+
+/* 小 */
+.para-images--sm .para-image-wrap { width: 100px; height: 75px; }
+/* 中（默认） */
+.para-images--md .para-image-wrap { width: 160px; height: 120px; }
+/* 大 */
+.para-images--lg .para-image-wrap { width: 240px; height: 180px; }
+.para-image-del {
+  position: absolute; top: 4px; right: 4px;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: none; background: rgba(0,0,0,0.55); color: #fff;
+  font-size: 14px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.15s;
+}
+.para-image-wrap:hover .para-image-del { opacity: 1; }
+.para-image-del:hover { background: rgba(220,38,38,0.85); }
+
 .para-edit-area {
   font-family: 'Lora', Georgia, serif;
   font-size: 15px; line-height: 1.82;

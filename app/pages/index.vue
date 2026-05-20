@@ -357,7 +357,7 @@ async function handleVideoImported(result: { id: string; title: string }) {
   showVideoImport.value = false
   await loadFolders()
   await loadBooks()
-  if (result.id) navigateTo(`/watch/${result.id}`)
+  if (result.id) navigateTo(`/watch/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`)
 }
 
 async function counts() {
@@ -497,7 +497,7 @@ async function handleModalText(text: string, filePath?: string) {
       body: { text, source: showPaste.value ? 'paste' : 'upload', folder: activeFolder.value, filePath },
     })
     closeModal(); await loadBooks()
-    if (result.id) navigateTo(`/read/${result.id}`)
+    if (result.id) navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`)
   } catch (e: any) { alert('保存失败: ' + (e?.message || '')) }
   finally { uploading.value = false }
 }
@@ -510,7 +510,7 @@ async function fetchUrl() {
   try {
     const result = await $fetch<{ id: string }>('/api/fetch-url', { method: 'POST', body: { url: u } })
     showUrl.value = false; urlInput.value = ''
-    if (result.id) { await loadBooks(); navigateTo(`/read/${result.id}`) }
+    if (result.id) { await loadBooks(); navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`) }
   } catch (e: any) { alert('提取失败: ' + (e?.message || '请检查网址或稍后重试')) }
   finally { urlLoading.value = false }
 }

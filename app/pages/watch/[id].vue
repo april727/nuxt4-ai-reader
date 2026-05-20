@@ -14,6 +14,17 @@
       </div>
 
       <div class="watch-topbar-right">
+        <div class="mode-switcher">
+          <button :class="{ active: viewMode === 'video' }" @click="viewMode = 'video'" title="视频模式">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+          </button>
+          <button :class="{ active: viewMode === 'audio' }" @click="viewMode = 'audio'" title="纯听模式">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          </button>
+          <button :class="{ active: viewMode === 'notes' }" @click="viewMode = 'notes'" title="听写模式">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+        </div>
         <button class="watch-learn-btn" :class="{ disabled: subtitlesLoading }" :disabled="subtitlesLoading" @click="goToLearn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
@@ -25,8 +36,8 @@
 
     <!-- 主体 -->
     <div class="watch-body">
-      <!-- 左侧：播放器 -->
-      <div class="watch-player-col">
+      <!-- 播放器：始终挂载，视频模式可见，音频/笔记模式隐藏 -->
+      <div v-show="viewMode === 'video'" class="watch-player-col">
         <VideoPlayer
           ref="playerRef"
           :src="videoUrl"
@@ -34,42 +45,70 @@
           :initial-time="initialTime"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
-          @play="isPlaying = true"
-          @pause="isPlaying = false"
+          @play="isPlaying = true; audioPlaying = true"
+          @pause="isPlaying = false; audioPlaying = false"
           @ended="onEnded"
         />
       </div>
 
-      <!-- 分隔线 -->
-      <div class="panel-divider" @mousedown="startResize"></div>
-
-      <!-- 右侧：字幕 + 精听 -->
-      <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
-        <div v-if="subtitlesLoading" class="subs-loading">
-          <div class="mini-spinner"></div>
-          <p>正在后台加载字幕...</p>
+      <!-- ── 默认：视频 + 字幕 ── -->
+      <template v-if="viewMode === 'video'">
+        <div class="panel-divider" @mousedown="startResize"></div>
+        <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
+          <WatchSubtitles
+            :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
+            :loop-cue-id="loopCueId" :loading="subtitlesLoading"
+            @cue-click="handleCueClick" @toggle-save="handleToggleSave"
+            @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
+            @remove-practice="handleRemovePractice"
+          />
         </div>
-        <template v-else>
-          <SubtitleList
-            :cues="subtitles"
-            :active-cue-id="activeCueId"
-            :practice="practice"
-            :loop-cue-id="loopCueId"
-            @cue-click="handleCueClick"
-            @toggle-save="handleToggleSave"
-            @toggle-loop="handleToggleLoop"
+      </template>
+
+      <!-- ── A：纯听 — 音频条 + 全宽字幕 ── -->
+      <div v-else-if="viewMode === 'audio'" class="audio-mode-wrap">
+        <AudioControlBar
+          :current="currentTime" :duration="totalDuration"
+          :playing="audioPlaying" :volume="audioVolume"
+          @toggle="toggleAudioPlay" @seek="seekAudio" @set-volume="setAudioVolume"
+        />
+        <div class="audio-subtitles-full">
+          <WatchSubtitles
+            :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
+            :loop-cue-id="loopCueId" :loading="subtitlesLoading"
+            @cue-click="handleCueClick" @toggle-save="handleToggleSave"
+            @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
+            @remove-practice="handleRemovePractice"
           />
-          <PracticeList
-            :cues="subtitles"
-            :practice="practice"
-            :active-cue-id="activeCueId"
-            :loop-cue-id="loopCueId"
-            @cue-click="handleCueClick"
-            @toggle-loop="handleToggleLoop"
-            @mark-mastered="handleMarkMastered"
-            @remove="handleRemovePractice"
-          />
-        </template>
+        </div>
+      </div>
+
+      <!-- ── B：听写 — 音频条 + 笔记 + 字幕 ── -->
+      <div v-else class="notes-mode-wrap">
+        <AudioControlBar
+          :current="currentTime" :duration="totalDuration"
+          :playing="audioPlaying" :volume="audioVolume"
+          @toggle="toggleAudioPlay" @seek="seekAudio" @set-volume="setAudioVolume"
+        />
+        <div class="notes-layout">
+          <div class="notes-panel">
+            <div class="notes-header">
+              <span class="notes-label">笔记</span>
+              <button class="notes-save-btn" @click="saveNotes">保存</button>
+            </div>
+            <textarea v-model="notes" class="notes-textarea" placeholder="边听边记…"></textarea>
+          </div>
+          <div class="panel-divider" @mousedown="startNotesResize"></div>
+          <div class="notes-subtitles" :style="{ width: notesSidebarWidth + 'px' }">
+            <WatchSubtitles
+              :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
+              :loop-cue-id="loopCueId" :loading="subtitlesLoading"
+              @cue-click="handleCueClick" @toggle-save="handleToggleSave"
+              @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
+              @remove-practice="handleRemovePractice"
+            />
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -103,6 +142,42 @@ const loopCueId = ref<string | null>(null)
 const initialTime = ref(0)
 const sidebarWidth = ref(380)
 const playerRef = ref<any>(null)
+
+// ── 显示模式 ──
+const viewMode = ref<'video' | 'audio' | 'notes'>('video')
+const audioPlaying = ref(false)
+const audioVolume = ref(80)
+const notes = ref('')
+const notesSidebarWidth = ref(340)
+
+// ── 音频控制 ──
+function toggleAudioPlay() {
+  audioPlaying.value = !audioPlaying.value
+  if (audioPlaying.value) {
+    playerRef.value?.togglePlay()
+  } else {
+    playerRef.value?.pause?.()
+  }
+}
+function seekAudio(time: number) { playerRef.value?.seek(time) }
+function setAudioVolume(v: number) {
+  audioVolume.value = v
+  // 通过 VideoPlayer 设置音量（如果支持）
+  try { playerRef.value?.setVolume?.(v / 100) } catch {}
+}
+
+// ── 笔记 ──
+async function saveNotes() {
+  try {
+    await $fetch('/api/text/notes', { method: 'POST', body: { id, notes: notes.value } })
+  } catch { /* 静默 */ }
+}
+async function loadNotes() {
+  try {
+    const data = await $fetch<any>(`/api/text/${id}`)
+    if (data.notes) notes.value = data.notes
+  } catch {}
+}
 
 // 保存进度定时器
 let progressTimer: ReturnType<typeof setInterval> | null = null
@@ -150,6 +225,7 @@ onMounted(async () => {
     }
 
     loaded.value = true
+    loadNotes()
 
     // 字幕为空 → 自动后台拉取
     if (!subtitles.value || subtitles.value.length === 0) {
@@ -333,6 +409,8 @@ function startResize(e: MouseEvent) {
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
   const onMove = (ev: MouseEvent) => {
+    // 鼠标左键已松开（如被 iframe 吞掉 mouseup）→ 强制清理
+    if (!(ev.buttons & 1)) { onUp(); return }
     if (!resizing) return
     const ww = window.innerWidth
     let rw = ww - ev.clientX
@@ -342,6 +420,32 @@ function startResize(e: MouseEvent) {
   }
   const onUp = () => {
     resizing = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
+
+// 笔记面板拖拽
+let notesResizing = false
+function startNotesResize(e: MouseEvent) {
+  notesResizing = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  const onMove = (ev: MouseEvent) => {
+    if (!(ev.buttons & 1)) { onUp(); return }
+    if (!notesResizing) return
+    const ww = window.innerWidth
+    let rw = ww - ev.clientX
+    if (rw < 260) rw = 260
+    if (rw > 500) rw = 500
+    notesSidebarWidth.value = rw
+  }
+  const onUp = () => {
+    notesResizing = false
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
     document.removeEventListener('mousemove', onMove)
@@ -428,5 +532,69 @@ function startResize(e: MouseEvent) {
   height: 100vh;
   color: #a09e97;
   font-size: 14px;
+}
+
+/* ── 模式切换器 ── */
+.mode-switcher {
+  display: flex; gap: 0;
+  border: 0.5px solid rgba(0,0,0,0.12); border-radius: 8px;
+  overflow: hidden; margin-right: 4px;
+}
+.mode-switcher button {
+  width: 34px; height: 28px; border: none; background: #fff; cursor: pointer;
+  color: #999; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.mode-switcher button + button { border-left: 0.5px solid rgba(0,0,0,0.08); }
+.mode-switcher button:hover { background: #f5f4f2; }
+.mode-switcher button.active { background: #3d3591; color: #fff; }
+
+/* ── 音频/笔记模式包装 ── */
+.audio-mode-wrap,
+.notes-mode-wrap {
+  flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+}
+
+/* ── 模式 A：全宽字幕 ── */
+.audio-subtitles-full {
+  flex: 1; overflow-y: auto; background: #fff; min-height: 0;
+}
+
+/* ── 模式 B：笔记 + 字幕 ── */
+.notes-layout {
+  flex: 1; display: flex; overflow: hidden; min-height: 0;
+}
+.notes-panel {
+  flex: 1; display: flex; flex-direction: column;
+  background: #faf9f7; min-width: 0;
+}
+.notes-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  flex-shrink: 0;
+}
+.notes-label {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.72rem; font-weight: 600; color: #888;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.notes-save-btn {
+  padding: 3px 10px; border-radius: 4px; border: none;
+  font-size: 0.72rem; font-family: 'DM Sans', system-ui, sans-serif;
+  cursor: pointer; background: #e8e6e0; color: #666;
+  transition: background 0.12s;
+}
+.notes-save-btn:hover { background: #3d3591; color: #fff; }
+.notes-textarea {
+  flex: 1; border: none; outline: none; resize: none;
+  padding: 14px 16px; font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.85rem; line-height: 1.7; color: #333;
+  background: transparent;
+}
+.notes-textarea::placeholder { color: #ccc; }
+.notes-subtitles {
+  flex-shrink: 0; overflow: hidden; background: #fff;
+  display: flex; flex-direction: column;
+  border-left: 0.5px solid rgba(0,0,0,0.08);
 }
 </style>

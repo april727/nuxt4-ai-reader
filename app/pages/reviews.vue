@@ -142,7 +142,7 @@ import type { Mark } from '#shared/types'
 
 useHead({ title: '复习本' })
 
-interface MarkItem { mark: Mark; title: string; textId: string; phonetic: string; brief: string }
+interface MarkItem { mark: Mark; title: string; textId: string; phonetic: string; brief: string; textFolder: string }
 interface Book { id: string; title: string }
 
 const activeTab = ref('all')
@@ -207,7 +207,8 @@ function playWord(item: MarkItem) {
 }
 
 function openSource(item: MarkItem) {
-  navigateTo(`/read/${item.textId}?mark=${item.mark.paragraphId}`)
+  const folderParam = item.textFolder ? `&folder=${encodeURIComponent(item.textFolder)}` : ''
+  navigateTo(`/read/${item.textId}?mark=${item.mark.paragraphId}${folderParam}`)
 }
 
 // 只显示有标记的书籍
@@ -278,7 +279,7 @@ onMounted(async () => {
             const phonetic = m.detail
               ? (m.detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/) || [])[1] || ''
               : ''
-            all.push({ mark: m, title: full.title || e.title, textId: e.id, phonetic, brief: extractBrief(m.detail) })
+            all.push({ mark: m, title: full.title || e.title, textId: e.id, phonetic, brief: extractBrief(m.detail), textFolder: e.folder || 'default' })
           }
         }
       } catch {}

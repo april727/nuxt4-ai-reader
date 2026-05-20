@@ -2,7 +2,7 @@ import { getDb, saveDb } from '../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
-    id: string; analysis?: any; segments?: any[]; explanations?: Record<string,string>
+    id: string; title?: string; analysis?: any; segments?: any[]; explanations?: Record<string,string>
     marks?: any[]; readingPosition?: any; paragraphChats?: Record<string, any[]>
   }>(event)
   if (!body?.id) throw createError({ statusCode: 400 })
@@ -16,6 +16,7 @@ export default defineEventHandler(async (event) => {
   stmt.free()
 
   // 合并
+  const title = body.title || existing.title
   const analysis = body.analysis ? JSON.stringify(body.analysis) : existing.analysis
   const segments = body.segments ? JSON.stringify(body.segments) : existing.segments
   let explanations = existing.explanations || '{}'
@@ -30,8 +31,8 @@ export default defineEventHandler(async (event) => {
     paragraphChats = JSON.stringify(body.paragraphChats)
   }
 
-  db.run(`UPDATE texts SET analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,updatedAt=? WHERE id=?`,
-    [analysis, segments, explanations, marks, readingPosition, paragraphChats, new Date().toISOString(), body.id])
+  db.run(`UPDATE texts SET title=?,analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,updatedAt=? WHERE id=?`,
+    [title, analysis, segments, explanations, marks, readingPosition, paragraphChats, new Date().toISOString(), body.id])
   await saveDb()
   return { ok: true }
 })

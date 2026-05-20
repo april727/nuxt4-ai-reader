@@ -1,5 +1,7 @@
 export interface Paragraph {
   id: string; index: number; text: string
+  images?: string[]  // 段落关联图片的文件名列表
+  start?: number; end?: number  // 视频字幕时间戳
 }
 
 export interface ArticleAnalysis {
