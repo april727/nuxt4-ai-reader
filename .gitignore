@@ -5,6 +5,8 @@ dist
 .env
 *.log
 .DS_Store
+server/data/reader.db
+server/data/uploads/
 server/data/backups/
 server/data/youtube_cookies.txt
 server/data/youtube-cookies.txt
