@@ -60,6 +60,58 @@ function createTables() {
   try { db.run('ALTER TABLE texts ADD COLUMN videoSubtitles TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN subtitlePractice TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN completedAt TEXT DEFAULT NULL') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN notes TEXT DEFAULT \'\'') } catch {}
+
+  // migration: pos column for words
+  try { db.run('ALTER TABLE words ADD COLUMN pos TEXT DEFAULT \'\'') } catch {}
+
+  // ── 单词本系统 ──
+  db.run(`CREATE TABLE IF NOT EXISTS wordbooks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    isDefault INTEGER DEFAULT 0,
+    sortOrder INTEGER DEFAULT 0,
+    createdAt TEXT
+  )`)
+  db.run(`CREATE TABLE IF NOT EXISTS words (
+    id TEXT PRIMARY KEY,
+    bookId TEXT NOT NULL,
+    word TEXT NOT NULL,
+    phonetic TEXT DEFAULT '',
+    meaning TEXT DEFAULT '',
+    example TEXT DEFAULT '',
+    note TEXT DEFAULT '',
+    phase TEXT DEFAULT 'learn',
+    learnCorrect INTEGER DEFAULT 0,
+    learnTotal INTEGER DEFAULT 0,
+    learnWrong INTEGER DEFAULT 0,
+    ease REAL DEFAULT 2.5,
+    interval INTEGER DEFAULT 0,
+    repetitions INTEGER DEFAULT 0,
+    nextReview TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    pos TEXT DEFAULT '',
+    createdAt TEXT,
+    updatedAt TEXT
+  )`)
+  // 自动创建三个默认单词本（单词 / 短语 / 句子，关联复习本标记）
+  const stmt = db.prepare('SELECT id FROM wordbooks WHERE isDefault=1')
+  const existingIds = new Set<string>()
+  while (stmt.step()) existingIds.add(stmt.getAsObject().id as string)
+  stmt.free()
+  const now = new Date().toISOString()
+  if (!existingIds.has('wb_default')) {
+    db.run(`INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,0,?)`,
+      ['wb_default', '默认单词本', now])
+  }
+  if (!existingIds.has('wb_phrases')) {
+    db.run(`INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,1,?)`,
+      ['wb_phrases', '默认短语本', now])
+  }
+  if (!existingIds.has('wb_sentences')) {
+    db.run(`INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,2,?)`,
+      ['wb_sentences', '默认句子本', now])
+  }
 }
 
 function migrateFromJson() {

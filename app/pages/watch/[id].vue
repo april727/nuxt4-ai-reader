@@ -56,11 +56,28 @@
         <div class="panel-divider" @mousedown="startResize"></div>
         <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
           <WatchSubtitles
+            v-if="subtitles.length || subtitlesLoading"
             :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
             :loop-cue-id="loopCueId" :loading="subtitlesLoading"
             @cue-click="handleCueClick" @toggle-save="handleToggleSave"
             @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
             @remove-practice="handleRemovePractice"
+          />
+          <div v-else class="sub-upload-area">
+            <p class="sub-upload-hint">暂无字幕</p>
+            <label class="sub-upload-btn">
+              <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              上传字幕
+            </label>
+            <div v-if="subUploading" class="sub-upload-loading">
+              <div class="mini-spinner"></div>
+              <span>处理中…</span>
+            </div>
+          </div>
+          <SubtitleChat
+            v-if="subtitles.length"
+            :cues="subtitles" :active-cue-id="activeCueId" :title="title"
           />
         </div>
       </template>
@@ -74,11 +91,28 @@
         />
         <div class="audio-subtitles-full">
           <WatchSubtitles
+            v-if="subtitles.length || subtitlesLoading"
             :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
             :loop-cue-id="loopCueId" :loading="subtitlesLoading"
             @cue-click="handleCueClick" @toggle-save="handleToggleSave"
             @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
             @remove-practice="handleRemovePractice"
+          />
+          <div v-else class="sub-upload-area">
+            <p class="sub-upload-hint">暂无字幕</p>
+            <label class="sub-upload-btn">
+              <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              上传字幕
+            </label>
+            <div v-if="subUploading" class="sub-upload-loading">
+              <div class="mini-spinner"></div>
+              <span>处理中…</span>
+            </div>
+          </div>
+          <SubtitleChat
+            v-if="subtitles.length"
+            :cues="subtitles" :active-cue-id="activeCueId" :title="title"
           />
         </div>
       </div>
@@ -94,18 +128,57 @@
           <div class="notes-panel">
             <div class="notes-header">
               <span class="notes-label">笔记</span>
-              <button class="notes-save-btn" @click="saveNotes">保存</button>
+              <div class="notes-header-right">
+                <button
+                  class="notes-mode-btn"
+                  :class="{ active: notesMode === 'edit' }"
+                  @click="notesMode = 'edit'"
+                >编辑</button>
+                <button
+                  class="notes-mode-btn"
+                  :class="{ active: notesMode === 'preview' }"
+                  @click="notesMode = 'preview'"
+                >预览</button>
+                <button class="notes-save-btn" @click="notesDirty = true; saveNotes()">保存</button>
+              </div>
             </div>
-            <textarea v-model="notes" class="notes-textarea" placeholder="边听边记…"></textarea>
+            <textarea
+              v-if="notesMode === 'edit'"
+              v-model="notes"
+              class="notes-textarea"
+              placeholder="边听边记…（支持 Markdown）"
+              @input="markNotesDirty"
+            ></textarea>
+            <div v-else class="notes-preview">
+              <MarkdownRenderer v-if="notes.trim()" :content="notes" />
+              <p v-else class="notes-preview-empty">暂无笔记</p>
+            </div>
           </div>
           <div class="panel-divider" @mousedown="startNotesResize"></div>
           <div class="notes-subtitles" :style="{ width: notesSidebarWidth + 'px' }">
             <WatchSubtitles
+              v-if="subtitles.length || subtitlesLoading"
               :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
               :loop-cue-id="loopCueId" :loading="subtitlesLoading"
               @cue-click="handleCueClick" @toggle-save="handleToggleSave"
               @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
               @remove-practice="handleRemovePractice"
+            />
+            <div v-else class="sub-upload-area">
+              <p class="sub-upload-hint">暂无字幕</p>
+              <label class="sub-upload-btn">
+                <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                上传字幕
+              </label>
+              <div v-if="subUploading" class="sub-upload-loading">
+                <div class="mini-spinner"></div>
+                <span>处理中…</span>
+              </div>
+            </div>
+            <SubtitleChat
+              v-if="subtitles.length"
+              :cues="subtitles" :active-cue-id="activeCueId" :title="title"
             />
           </div>
         </div>
@@ -122,6 +195,7 @@
 
 <script setup lang="ts">
 import type { SubtitleCue, SubtitlePractice } from '#shared/types'
+import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,6 +207,7 @@ const source = ref('')
 const videoUrl = ref('')
 const subtitles = ref<SubtitleCue[]>([])
 const subtitlesLoading = ref(false)
+const subUploading = ref(false)
 const practice = ref<Record<string, SubtitlePractice>>({})
 const isPlaying = ref(false)
 const currentTime = ref(0)
@@ -148,16 +223,13 @@ const viewMode = ref<'video' | 'audio' | 'notes'>('video')
 const audioPlaying = ref(false)
 const audioVolume = ref(80)
 const notes = ref('')
+const notesMode = ref<'edit' | 'preview'>('edit')
 const notesSidebarWidth = ref(340)
 
 // ── 音频控制 ──
 function toggleAudioPlay() {
   audioPlaying.value = !audioPlaying.value
-  if (audioPlaying.value) {
-    playerRef.value?.togglePlay()
-  } else {
-    playerRef.value?.pause?.()
-  }
+  playerRef.value?.togglePlay()
 }
 function seekAudio(time: number) { playerRef.value?.seek(time) }
 function setAudioVolume(v: number) {
@@ -167,11 +239,23 @@ function setAudioVolume(v: number) {
 }
 
 // ── 笔记 ──
+let notesDirty = false
+let notesSaveTimer: ReturnType<typeof setTimeout> | null = null
+
 async function saveNotes() {
+  if (!notesDirty) return
   try {
     await $fetch('/api/text/notes', { method: 'POST', body: { id, notes: notes.value } })
+    notesDirty = false
   } catch { /* 静默 */ }
 }
+
+function markNotesDirty() {
+  notesDirty = true
+  if (notesSaveTimer) clearTimeout(notesSaveTimer)
+  notesSaveTimer = setTimeout(() => saveNotes(), 3000)
+}
+
 async function loadNotes() {
   try {
     const data = await $fetch<any>(`/api/text/${id}`)
@@ -227,8 +311,8 @@ onMounted(async () => {
     loaded.value = true
     loadNotes()
 
-    // 字幕为空 → 自动后台拉取
-    if (!subtitles.value || subtitles.value.length === 0) {
+    // 字幕为空 → 仅对 youtube/bilibili 自动后台拉取（本地文件需手动上传）
+    if ((!subtitles.value || subtitles.value.length === 0) && (source.value === 'youtube' || source.value === 'bilibili')) {
       extractSubtitlesInBackground()
     }
   } catch (e: any) {
@@ -258,6 +342,30 @@ async function extractSubtitlesInBackground() {
   } catch (e: any) {
     console.warn('[watch] 后台字幕提取失败:', e?.message || '')
     subtitlesLoading.value = false
+  }
+}
+
+// ---- 手动上传字幕 ----
+async function handleSubUpload(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  subUploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const parsed = await $fetch<{ subtitles: SubtitleCue[], text: string, duration: number }>('/api/video/subtitle/upload', {
+      method: 'POST', body: fd,
+    })
+    await $fetch(`/api/video/${id}/attach-subtitles`, {
+      method: 'POST', body: { subtitles: parsed.subtitles },
+    })
+    subtitles.value = parsed.subtitles
+    title.value = file.name.replace(/\.(srt|vtt)$/i, '')
+  } catch (e: any) {
+    alert('字幕上传失败: ' + (e?.message || ''))
+  } finally {
+    subUploading.value = false
+    ;(e.target as HTMLInputElement).value = ''
   }
 }
 
@@ -386,8 +494,10 @@ watch(isPlaying, (playing) => {
 onUnmounted(() => {
   if (progressTimer) clearInterval(progressTimer)
   if (loopRaf) cancelAnimationFrame(loopRaf)
-  // 最后保存一次进度
+  if (notesSaveTimer) clearTimeout(notesSaveTimer)
+  // 最后保存一次进度和笔记
   if (currentTime.value > 0) saveProgress(currentTime.value)
+  saveNotes()
 })
 
 // ---- 导航 ----
@@ -499,6 +609,29 @@ function startNotesResize(e: MouseEvent) {
   overflow: hidden;
 }
 
+/* ── 无字幕上传（侧栏内） ── */
+.sub-upload-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 20px;
+  flex: 1;
+}
+.sub-upload-hint { font-size: 14px; color: #a09e97; margin: 0; }
+.sub-upload-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 8px 16px; border: 1px solid rgba(61,53,145,0.3); border-radius: 8px;
+  background: #fff; color: #3d3591; font-size: 13px; font-weight: 450;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.sub-upload-btn:hover { background: #f8f7ff; border-color: #3d3591; }
+.sub-upload-loading {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: #a09e97;
+}
+
 .watch-player-col {
   flex: 1;
   display: flex;
@@ -516,8 +649,7 @@ function startNotesResize(e: MouseEvent) {
   overflow: hidden;
 }
 
-.watch-sidebar .subtitle-list { flex: 1; min-height: 0; }
-.watch-sidebar .practice-list { flex-shrink: 0; }
+.watch-sidebar :deep(.subtitle-list) { flex: 1; min-height: 0; }
 
 .subs-loading {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -558,7 +690,9 @@ function startNotesResize(e: MouseEvent) {
 /* ── 模式 A：全宽字幕 ── */
 .audio-subtitles-full {
   flex: 1; overflow-y: auto; background: #fff; min-height: 0;
+  display: flex; flex-direction: column;
 }
+.audio-subtitles-full :deep(.subtitle-list) { flex: 1; min-height: 0; }
 
 /* ── 模式 B：笔记 + 字幕 ── */
 .notes-layout {
@@ -578,6 +712,19 @@ function startNotesResize(e: MouseEvent) {
   font-size: 0.72rem; font-weight: 600; color: #888;
   text-transform: uppercase; letter-spacing: 0.04em;
 }
+.notes-header-right {
+  display: flex; align-items: center; gap: 4px;
+}
+.notes-mode-btn {
+  padding: 2px 8px; border-radius: 4px; border: 1px solid transparent;
+  font-size: 0.68rem; font-family: 'DM Sans', system-ui, sans-serif;
+  cursor: pointer; background: transparent; color: #aaa;
+  transition: all 0.12s;
+}
+.notes-mode-btn:hover { color: #666; }
+.notes-mode-btn.active {
+  background: #3d3591; color: #fff; border-color: #3d3591;
+}
 .notes-save-btn {
   padding: 3px 10px; border-radius: 4px; border: none;
   font-size: 0.72rem; font-family: 'DM Sans', system-ui, sans-serif;
@@ -585,6 +732,22 @@ function startNotesResize(e: MouseEvent) {
   transition: background 0.12s;
 }
 .notes-save-btn:hover { background: #3d3591; color: #fff; }
+.notes-preview {
+  flex: 1; overflow-y: auto; padding: 14px 16px;
+  font-size: 0.85rem; line-height: 1.7; color: #333;
+}
+.notes-preview-empty { color: #ccc; font-size: 0.82rem; text-align: center; margin-top: 40px; }
+.notes-preview :deep(h1), .notes-preview :deep(h2), .notes-preview :deep(h3) {
+  font-size: 1em; margin: 10px 0 4px; color: #1a1a18;
+}
+.notes-preview :deep(p) { margin: 0 0 6px; }
+.notes-preview :deep(ul), .notes-preview :deep(ol) { padding-left: 18px; margin: 4px 0; }
+.notes-preview :deep(code) {
+  background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
+}
+.notes-preview :deep(blockquote) {
+  border-left: 3px solid #3d3591; padding-left: 10px; color: #6b6963; margin: 6px 0;
+}
 .notes-textarea {
   flex: 1; border: none; outline: none; resize: none;
   padding: 14px 16px; font-family: 'DM Sans', system-ui, sans-serif;
@@ -597,4 +760,5 @@ function startNotesResize(e: MouseEvent) {
   display: flex; flex-direction: column;
   border-left: 0.5px solid rgba(0,0,0,0.08);
 }
+.notes-subtitles :deep(.subtitle-list) { flex: 1; min-height: 0; }
 </style>

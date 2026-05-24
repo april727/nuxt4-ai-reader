@@ -56,11 +56,26 @@
             <circle cx="12" cy="12" r="2.5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
           </svg>
         </button>
-        <button class="reader-icon-btn" @click="runManualSegment" title="重新分段" :disabled="analyzing">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
-          </svg>
-        </button>
+        <div class="segment-size-wrap" ref="segSizeWrapRef">
+          <button class="reader-icon-btn" @click="toggleSegSizeMenu" title="重新分段" :disabled="analyzing">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
+            </svg>
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor" class="seg-chevron"><path d="M0 0l4 5 4-5z"/></svg>
+          </button>
+          <Transition name="seg-drop">
+            <div v-if="showSegSizeMenu" class="seg-size-menu">
+              <button
+                v-for="opt in segSizeOptions" :key="opt.key"
+                class="seg-size-opt" :class="{ active: segSizeKey === opt.key }"
+                @click="selectSegSize(opt)"
+              >
+                <span class="seg-size-label">{{ opt.label }}</span>
+                <span class="seg-size-hint">{{ opt.hint }}</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
       </div>
     </header>
 
@@ -304,15 +319,23 @@
         <!-- 笔记 Tab -->
         <div v-if="activeTab === 'notes'" class="panel-content">
           <div class="panel-scroll">
-            <div v-if="notes.length === 0" class="empty-state">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-              </svg>
-              <p>选中文字后点「记」可添加笔记</p>
+            <!-- 全局笔记（播客摘要等） -->
+            <div v-if="textNotes" class="text-notes-section">
+              <MarkdownRenderer :content="textNotes" />
+            </div>
+            <!-- 段落标注笔记 -->
+            <div v-if="notes.length" class="notes-divider">
+              <span>段落笔记</span>
             </div>
             <div v-for="note in notes" :key="note.id" class="note-card">
               <div class="note-para">第 {{ note.paraIdx }} 段</div>
               <p class="note-content">{{ note.content }}</p>
+            </div>
+            <div v-if="!textNotes && notes.length === 0" class="empty-state">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+              <p>选中文字后点「记」可添加笔记</p>
             </div>
           </div>
         </div>
@@ -467,6 +490,29 @@ const pdfViewerUrl = computed(() => {
   return pdfUrl.value
 })
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
+const textNotes = ref('')
+
+// ── Prompt 模板缓存（客户端从 API 加载一次） ──
+const promptTemplates = reactive<Record<string, string>>({
+  explain: '', markWord: '', markPhrase: '', markSentence: '',
+})
+async function loadPromptTemplates() {
+  const names = ['explain', 'mark-word', 'mark-phrase', 'mark-sentence']
+  for (const name of names) {
+    try {
+      const { content } = await $fetch<{ content: string }>(`/api/prompt/${name}`)
+      const key = name === 'mark-word' ? 'markWord' : name === 'mark-phrase' ? 'markPhrase' : name === 'mark-sentence' ? 'markSentence' : name
+      promptTemplates[key] = content
+    } catch {}
+  }
+}
+function fillPrompt(name: string, vars: Record<string, string>): { system: string; user: string } {
+  const template = promptTemplates[name] || ''
+  const parts = template.split('===USER===')
+  const system = (parts[0]?.replace('===SYSTEM===', '').trim() || '').replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+  const user = (parts[1]?.trim() || '').replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+  return { system, user }
+}
 const readerBodyEl = ref<HTMLElement | null>(null)
 const articlePane = ref<HTMLElement | null>(null)
 const paraRefs = ref<HTMLElement[]>([])
@@ -534,8 +580,10 @@ const savedVocab = computed(() => {
     .map(m => {
       const phoneticMatch = m.detail?.match(/\[PHONETIC\]\/(.+?)\/\[\/PHONETIC\]/)
       const meaningMatch = m.detail?.match(/### 基本释义\n(.+)/)
+      const lemmaMatch = m.detail?.match(/\[LEMMA\]\/(.+?)\/\[\/LEMMA\]/)
       return {
         text: m.text,
+        lemma: m.lemma || lemmaMatch?.[1]?.trim() || '',
         phonetic: phoneticMatch?.[1] || '',
         meaning: meaningMatch?.[1]?.trim() || '',
       }
@@ -883,6 +931,7 @@ onMounted(() => {
   rightWidth.value = Math.floor(window.innerWidth * 0.4 - 6)
 })
 onMounted(async () => {
+  loadPromptTemplates()
   try {
     const data = await $fetch<any>(`/api/text/${id}`)
     if (!data?.text) throw new Error('No text')
@@ -895,6 +944,7 @@ onMounted(async () => {
     if (data.explanations) for (const [k, v] of Object.entries(data.explanations)) { const [pid, act] = k.split(':'); article.setCachedExplanation(pid, act as any, v as string) }
     if (data.marks) marks.value = data.marks
     if (data.readingPosition) readingPosition.value = data.readingPosition
+    if (data.notes) textNotes.value = data.notes
     if (data.paragraphChats) {
       article.loadParagraphChats(data.paragraphChats)
       for (const pid of Object.keys(data.paragraphChats)) paragraphsWithChats.add(pid)
@@ -1018,7 +1068,7 @@ function mapSegmentsToCues(
     offset = end + 1
   }
 
-  return segments.map((seg) => {
+  return segments.map((seg, segIdx) => {
     // AI 输出文本也做归一化，消除大小写/标点差异
     const segClean = seg.text.replace(/\s+/g, ' ').trim()
     const normSeg = normalizeText(segClean)
@@ -1027,7 +1077,13 @@ function mapSegmentsToCues(
     if (startPos < 0) {
       startPos = normFull.indexOf(normSeg.slice(0, 40))
     }
-    if (startPos < 0) return seg // 无法定位
+    if (startPos < 0) {
+      // 兜底：AI 可能添加了原文不存在的标点/修正/合并，文本匹配失败时按位置比例估算
+      const ratio = segIdx / Math.max(1, segments.length)
+      const cueIdx = Math.min(Math.floor(ratio * cues.length), cues.length - 1)
+      const nextIdx = Math.min(cueIdx + Math.max(1, Math.ceil(cues.length / segments.length)), cues.length - 1)
+      return { ...seg, start: cues[cueIdx]?.start, end: cues[nextIdx]?.end }
+    }
 
     const endPos = startPos + normSeg.length
 
@@ -1121,9 +1177,12 @@ ${inputText}
   if (skipSegmentation) return
   try {
     const segType = isVideo.value ? 'subtitle' : 'document'
+    const sizeOverride = segSizeMap[segSizeKey.value]
     let segs = await $fetch<Paragraph[]>('/api/deepseek/segment', {
       method: 'POST',
-      body: { text, type: segType },
+      body: sizeOverride
+        ? { text, type: segType, size: sizeOverride }
+        : { text, type: segType },
     })
 
     // 视频字幕：将 AI 分段映射回原始字幕时间轴
@@ -1149,6 +1208,43 @@ ${inputText}
 }
 
 const analyzing = ref(false)
+
+// ── 分段粒度控制 ──
+const segSizeOptions = [
+  { key: 'auto', label: '自动', hint: '按内容类型' },
+  { key: 'academic', label: '学术', hint: '4–5 句/段' },
+  { key: 'writing', label: '写作', hint: '5–6 句/段' },
+  { key: 'news', label: '新闻', hint: '6–8 句/段' },
+  { key: 'video', label: '视频', hint: '8–10 句/段' },
+  { key: 'podcast', label: 'Podcast', hint: '10–12 句/段' },
+]
+const segSizeMap: Record<string, { minSentences: number; maxSentences: number } | null> = {
+  auto: null,
+  academic: { minSentences: 4, maxSentences: 5 },
+  writing: { minSentences: 5, maxSentences: 6 },
+  news: { minSentences: 6, maxSentences: 8 },
+  video: { minSentences: 8, maxSentences: 10 },
+  podcast: { minSentences: 10, maxSentences: 12 },
+}
+const segSizeKey = ref('auto')
+const showSegSizeMenu = ref(false)
+const segSizeWrapRef = ref<HTMLElement | null>(null)
+
+function toggleSegSizeMenu() {
+  showSegSizeMenu.value = !showSegSizeMenu.value
+}
+function selectSegSize(opt: { key: string; label: string }) {
+  segSizeKey.value = opt.key
+  showSegSizeMenu.value = false
+  runManualSegment()
+}
+function closeSegMenu(e: MouseEvent) {
+  if (segSizeWrapRef.value && !segSizeWrapRef.value.contains(e.target as Node)) {
+    showSegSizeMenu.value = false
+  }
+}
+onMounted(() => document.addEventListener('click', closeSegMenu))
+onUnmounted(() => document.removeEventListener('click', closeSegMenu))
 
 // ── 书内搜索 ──
 const searchVisible = ref(false)
@@ -1272,6 +1368,66 @@ async function runManualSegment() {
   if (analyzing.value || !article.rawText.value) return
   analyzing.value = true
   article.isProcessingWritable.value = true
+
+  // Podcast 模式：一次调用完成分段+分析+笔记
+  if (segSizeKey.value === 'podcast') {
+    progressMsg.value = 'AI 正在整理播客内容…'
+    try {
+      const result = await $fetch<{
+        segments: Array<{ index: number; label: string; text: string }>
+        analysis: string
+        notes: string
+      }>('/api/deepseek/podcast-full', {
+        method: 'POST',
+        body: { text: article.rawText.value },
+      })
+
+      // 分段
+      const segs = result.segments.map((s, i) => ({
+        id: `p-${i}`, index: i, text: s.text,
+      }))
+      // 视频字幕：映射回原始 cue 时间轴
+      const finalSegs = isVideo.value && originalSubtitles.value?.length
+        ? mapSegmentsToCues(segs, originalSubtitles.value)
+        : segs
+      article.setParagraphs(finalSegs)
+      article.clearParagraphCaches()
+
+      // 分析面板
+      showAll(result.analysis)
+      article.setRightContent(result.analysis, 'analyze')
+
+      // 笔记
+      textNotes.value = result.notes
+      await $fetch('/api/text/notes', {
+        method: 'POST',
+        body: { id, notes: result.notes },
+      })
+
+      // 持久化分段
+      $fetch('/api/text/update', {
+        method: 'POST',
+        body: { id, segments: finalSegs, explanations: {}, paragraphChats: {} },
+      }).catch(() => {})
+
+      progressMsg.value = '播客内容整理完成'
+    } catch (e: any) {
+      // 失败时回退到标准分段
+      progressMsg.value = '播客整理失败，回退标准分段…'
+      try {
+        await runAnalysis(article.rawText.value, false)
+        progressMsg.value = '分段完成（标准模式）'
+      } catch {
+        progressError.value = true
+      }
+    } finally {
+      analyzing.value = false; article.isProcessingWritable.value = false
+      setTimeout(() => { if (!progressError.value) progressMsg.value = '' }, 4000)
+    }
+    return
+  }
+
+  // 非 Podcast：标准分段流程
   progressMsg.value = 'AI 正在重新分段…'
   try {
     await runAnalysis(article.rawText.value, false)
@@ -1451,14 +1607,18 @@ async function handleParagraphAction(action: ParagraphAction, pid: string, ptext
 用表格输出，列名为：| 词汇 | 释义 | 语境理解 |
 其中"语境理解"为该词在当前段落语境中的具体含义和用法。
 
-### 三、段落精讲
+### 三、段落精讲`
 
-文章背景：${article.getArticleContext()}
-
-段落：${ptext}`
+  const vars = {
+    typeLabel,
+    requirements,
+    paragraphText: ptext,
+    articleContext: article.getArticleContext(),
+  }
+  const filled = fillPrompt('explain', vars)
   const messages = [
-    { role: 'system' as const, content: `你是一位${typeLabel}。禁止开场白和自我介绍。` },
-    { role: 'user' as const, content: requirements }
+    { role: 'system' as const, content: filled.system },
+    { role: 'user' as const, content: filled.user || requirements },
   ]
   let fullResult = ''; startStreaming('')
   try {
@@ -1485,30 +1645,33 @@ function handleCreateNote(pid: string, text: string, startOffset: number, endOff
   const idx = paragraphs.value.findIndex(p => p.id === pid)
   notes.value.push({ id: `n_${Date.now()}`, paraIdx: idx + 1, content: text, createdAt: new Date().toISOString() })
   const m: Mark = { id: `n_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type: 'note' as any, color: '#fbcfe8', detail: '', note: '', createdAt: new Date().toISOString() }
-  marks.value.push(m)
+  marks.value.push(m); saveMarks()
 }
 
 async function handleCreateMark(pid: string, text: string, type: MarkType, startOffset: number, endOffset: number) {
   const dup = marks.value.find(m => m.paragraphId === pid && m.startOffset === startOffset && m.endOffset === endOffset)
   if (dup) return
   const m: Mark = { id: `m_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type, color: MARK_COLORS[type], detail: '', note: '', createdAt: new Date().toISOString() }
-  marks.value.push(m); saveMarks()
-  markPopup.mark = m; markPopup.visible = true; markPopup.loading = true; markPopup.typing = true; markPopup.typingContent = ''
+  marks.value.push(m); markPopup.mark = m; markPopup.visible = true; markPopup.loading = true; markPopup.typing = true; markPopup.typingContent = ''
   markPopup.position = { x: Math.min(window.innerWidth - 420, 400), y: 120 }
   const para = paragraphs.value.find(p => p.id === pid)
-  const requirements = type === 'word'
-    ? `### 基本释义\n列出该词的核心含义（1~2个）。\n\n### 其他常用用法\n列出该词在不同语境下的常见用法（简短说明+例句）。\n\n### 当前语境用法\n分析该词在当前段落中的具体含义和语用功能。\n\n输出结尾单独一行：[PHONETIC]/音标/[/PHONETIC]`
-    : type === 'phrase'
-    ? `### 短语含义\n解释该短语/搭配的意思。\n\n### 用法说明\n说明该短语的语法结构、语域和使用场景。\n\n### 语境分析\n分析该短语在当前段落中的作用和表达效果。\n\n### 可替换表达\n提供 1~2 个近义表达。`
-    : `### 句子解析\n分析句子语法结构和逻辑关系。\n\n### 含义阐述\n用中文解释句子含义。\n\n### 修辞/表达分析\n分析句子中的修辞手法或表达技巧。\n\n### 在段落中的作用\n说明该句在段落中的功能。`
+  const promptKey = type === 'word' ? 'markWord' : type === 'phrase' ? 'markPhrase' : 'markSentence'
+  const filled = fillPrompt(promptKey, {
+    articleContext: article.getArticleContext(),
+    paragraphText: para?.text || '',
+    selectedText: text,
+  })
   const msgs = [
-    { role: 'system' as const, content: '你是专业的双语阅读导师。禁止开场白、自我介绍、重复待解释内容。直接从第一个 ### 标题开始输出。' },
-    { role: 'user' as const, content: `文章背景：${article.getArticleContext()}\n\n所在段落：${para?.text || ''}\n\n待解释：${text}\n\n## 要求\n${requirements}` }
+    { role: 'system' as const, content: filled.system },
+    { role: 'user' as const, content: filled.user },
   ]
   let full = ''
   try {
     await deepseek.streamExplain(msgs, (chunk: string) => { full += chunk; markPopup.typingContent = full })
     m.detail = full; markPopup.typing = false; markPopup.loading = false
+    // 提取原词
+    const lemmaMatch = full.match(/\[LEMMA\]\/(.+?)\/\[\/LEMMA\]/)
+    if (lemmaMatch && lemmaMatch[1].trim()) m.lemma = lemmaMatch[1].trim()
     // savedVocab 已改为 computed 自动从 marks 提取，无需手动插入
   } catch { markPopup.typing = false; markPopup.loading = false }
   saveMarks()
@@ -1670,7 +1833,9 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   font-family: 'Lora', Georgia, serif;
   font-size: 15px; line-height: 1.82;
   color: #1a1a18;
-  flex: 1;
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
   border: 1.5px solid #3d3591;
   border-radius: 8px;
   padding: 8px 12px;
@@ -1868,6 +2033,131 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   background: rgba(245, 158, 11, 0.15) !important;
   border-radius: 4px;
   transition: background 0.2s;
+}
+
+/* ── 分段粒度下拉 ── */
+.segment-size-wrap {
+  position: relative;
+}
+.seg-chevron {
+  margin-left: 1px;
+  opacity: 0.5;
+  transition: transform 0.15s;
+}
+.seg-size-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 170px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.seg-size-opt {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+.seg-size-opt:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.seg-size-opt.active {
+  background: #f3f0fd;
+}
+.seg-size-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a18;
+}
+.seg-size-hint {
+  font-size: 11px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+}
+.seg-drop-enter-active {
+  transition: opacity 0.15s, transform 0.15s;
+}
+.seg-drop-leave-active {
+  transition: opacity 0.1s, transform 0.1s;
+}
+.seg-drop-enter-from,
+.seg-drop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* ── 全局笔记（播客摘要等）── */
+.text-notes-section {
+  padding: 14px 0 8px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: #3d3535;
+}
+.text-notes-section :deep(h1),
+.text-notes-section :deep(h2),
+.text-notes-section :deep(h3),
+.text-notes-section :deep(h4) {
+  font-size: 1.05em;
+  margin: 12px 0 6px;
+  color: #1a1a18;
+}
+.text-notes-section :deep(p) { margin: 0 0 6px; }
+.text-notes-section :deep(ul), .text-notes-section :deep(ol) { padding-left: 18px; margin: 4px 0; }
+.text-notes-section :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.text-notes-section :deep(th) {
+  background: #f0efe9;
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 600;
+  border: 1px solid #e0ddd5;
+}
+.text-notes-section :deep(td) {
+  padding: 5px 8px;
+  border: 1px solid #e8e6e0;
+  vertical-align: top;
+}
+.text-notes-section :deep(code) {
+  background: rgba(0,0,0,0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.notes-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 8px;
+  color: #a09e97;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.notes-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(0,0,0,0.06);
 }
 
 </style>

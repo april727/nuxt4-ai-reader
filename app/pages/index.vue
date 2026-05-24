@@ -45,15 +45,26 @@
             <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
           </div>
           <div class="lib-filter-bar">
-            <FilterChip
-              v-model="sourceFilter"
-              :options="filterOptions"
-              :sort-model="sortBy"
-              :sort-label="sortLabel"
-              @cycle-sort="cycleSort"
-            />
+            <button
+              v-for="opt in filterOptions" :key="opt.key"
+              class="lf-chip" :class="{ active: sourceFilter === opt.key }"
+              @click="sourceFilter = opt.key"
+            >{{ opt.label }}</button>
+            <span class="lf-sep"></span>
+            <button class="lf-chip lf-sort" @click="cycleSort" :title="sortLabel">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path v-if="sortBy === 'newest'" d="M3 4h13M3 8h9M3 12h5M17 8v10M17 18l-3-3M17 18l3-3"/>
+                <path v-else-if="sortBy === 'title'" d="M3 7h18M3 14h14M3 21h10"/>
+                <path v-else d="M16 21v-14M11 4l-5 5M11 4l5 5"/>
+              </svg>
+              {{ sortLabel }}
+            </button>
           </div>
           <div class="lib-actions">
+            <NuxtLink to="/wordbooks" class="lib-wordbook-btn" title="单词本">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              <span>单词本</span>
+            </NuxtLink>
             <ToolbarActions
               @import-video="showVideoImport = true"
               @upload="showUpload = true"
@@ -458,7 +469,10 @@ async function openContextMenu(e: MouseEvent, book: BookItem) {
 }
 
 async function renameBook() {
-  renameBookId.value = contextMenu.bookId; renameText.value = ''; showRename.value = true; contextMenu.show = false
+  renameBookId.value = contextMenu.bookId
+  const book = books.value.find(b => b.id === contextMenu.bookId)
+  renameText.value = book?.title || ''
+  showRename.value = true; contextMenu.show = false
 }
 
 async function doRename() {
@@ -607,6 +621,15 @@ onMounted(() => { counts() })
   gap: 6px;
   flex-shrink: 0;
 }
+.lib-wordbook-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px; background: #fff; color: #6b6963;
+  font-size: 13px; font-weight: 450; cursor: pointer;
+  transition: all 0.2s; font-family: inherit; white-space: nowrap;
+  text-decoration: none;
+}
+.lib-wordbook-btn:hover { background: #f5f4f2; color: #3d3591; }
 
 .lib-title {
   font-family: 'Lora', Georgia, serif;
@@ -682,8 +705,40 @@ onMounted(() => { counts() })
 /* ── Filter Chips (inline next to title) ── */
 .lib-filter-bar {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 0;
   justify-self: start;
+}
+.lib-filter-bar .lf-chip {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 450;
+  color: #8a877c;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.lib-filter-bar .lf-chip:hover { color: #4a4640; }
+.lib-filter-bar .lf-chip.active {
+  background: #ffffff;
+  color: #4a4640;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.lib-filter-bar .lf-sep {
+  width: 1px;
+  height: 18px;
+  background: rgba(92, 92, 92, 0.08);
+  margin: 0 6px;
+}
+.lib-filter-bar .lf-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ── Grid ── */

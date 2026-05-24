@@ -43,11 +43,14 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 0;
+  background: rgba(0,0,0,0.05);
+  border-radius: 9px;
+  padding: 3px;
 }
 
 .fc-chip {
   padding: 6px 14px;
-  border-radius: 8px;
+  border-radius: 7px;
   border: none;
   background: transparent;
   font-size: 13px;
@@ -57,14 +60,11 @@ defineEmits<{
   transition: all 0.2s;
   font-family: inherit;
 }
-.fc-chip:hover {
-  color: #4a4640;
-}
 .fc-chip.active {
   background: #ffffff;
-  color: #6f6f71;
   font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  color: #3d3591;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .fc-sep {

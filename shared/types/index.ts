@@ -28,6 +28,7 @@ export interface Mark {
   startOffset: number
   endOffset: number
   text: string
+  lemma: string        // 原词（仅 word 类型，AI 返回的未变形基本形式）
   type: MarkType
   color: string
   detail: string

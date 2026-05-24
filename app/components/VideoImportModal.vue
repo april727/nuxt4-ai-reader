@@ -127,7 +127,7 @@
 
       <!-- Tab 3: 上传视频文件 -->
       <div v-if="activeTab === 'video'" class="vim-panel">
-        <div class="vim-hint">上传视频或音频文件，需单独准备字幕文件</div>
+        <div class="vim-hint">上传视频或音频文件，可稍后在播放页面上传字幕</div>
         <div class="upload-area" @dragover.prevent @drop.prevent="handleVideoDrop">
           <div class="upload-icon">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -145,15 +145,15 @@
             <p>已上传: {{ videoUploaded.originalName }}</p>
           </div>
           <div class="vim-file-row">
-            <label class="vim-file-label">上传字幕文件（SRT/VTT）</label>
+            <label class="vim-file-label">字幕文件（可选）</label>
             <button class="btn-outline" @click="subForVideoRef?.click()">
-              {{ attachedSubFile ? attachedSubFile.name : '选择字幕' }}
+              {{ attachedSubFile ? attachedSubFile.name : '选择字幕 (SRT/VTT)' }}
             </button>
             <input ref="subForVideoRef" type="file" accept=".srt,.vtt" class="file-input-hidden" @change="handleSubForVideoSelect" />
           </div>
           <div class="paste-actions">
             <button class="btn-ghost" @click="resetVideoUpload">取消</button>
-            <button class="btn-primary" :disabled="!attachedSubFile" @click="confirmVideoImport">确认导入</button>
+            <button class="btn-primary" @click="confirmVideoImport">确认导入</button>
           </div>
         </div>
       </div>
@@ -543,17 +543,24 @@ function handleSubForVideoSelect(e: Event) {
 }
 
 async function confirmVideoImport() {
-  if (!videoUploaded.value || !attachedSubFile.value) return
+  if (!videoUploaded.value) return
+
+  let subtitles: SubtitleCue[] = []
+  let duration = 0
+  let title = videoUploaded.value.originalName.replace(/\.[^.]+$/, '')
 
   try {
-    const subFormData = new FormData()
-    subFormData.append('file', attachedSubFile.value)
-    const subResult = await $fetch<{ subtitles: SubtitleCue[]; text: string; duration: number }>('/api/video/subtitle/upload', {
-      method: 'POST',
-      body: subFormData,
-    })
-
-    const title = attachedSubFile.value.name.replace(/\.(srt|vtt)$/i, '')
+    if (attachedSubFile.value) {
+      const subFormData = new FormData()
+      subFormData.append('file', attachedSubFile.value)
+      const subResult = await $fetch<{ subtitles: SubtitleCue[]; text: string; duration: number }>('/api/video/subtitle/upload', {
+        method: 'POST',
+        body: subFormData,
+      })
+      subtitles = subResult.subtitles
+      duration = subResult.duration
+      title = attachedSubFile.value.name.replace(/\.(srt|vtt)$/i, '')
+    }
 
     const result = await $fetch<{ id: string; title: string }>('/api/video/save', {
       method: 'POST',
@@ -561,8 +568,8 @@ async function confirmVideoImport() {
         title,
         url: videoUploaded.value.url,
         type: 'video_file',
-        subtitles: subResult.subtitles,
-        duration: subResult.duration,
+        subtitles,
+        duration: duration || 0,
         filePath: videoUploaded.value.filePath,
         thumbnail: videoThumbnailUrl.value,
       },

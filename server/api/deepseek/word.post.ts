@@ -22,7 +22,8 @@ export default defineEventHandler(async (event) => {
   "word": "单词本身",
   "phonetic": "英式音标，如 /ˈfæntəsi/",
   "definition": "中文释义（包含词性和主要含义，50字以内）",
-  "example": "一个例句（英文），展示该词的使用方式"
+  "example": "一个例句（英文），展示该词的使用方式",
+  "pos": "词性缩写如 n./v./adj./adv."
 }
 
 请严格按照 JSON 格式输出，不要包含其他内容。`

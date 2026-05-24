@@ -31,6 +31,22 @@
           导出
         </button>
       </div>
+
+      <!-- 默认单词本快捷入口 -->
+      <div class="rv-wordbook-links" v-if="items.length">
+        <NuxtLink to="/wordbooks/wb_default" class="rv-wb-link" v-if="counts.word">
+          <span class="rv-wb-icon">📖</span> 单词本 · {{ counts.word }} 词
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </NuxtLink>
+        <NuxtLink to="/wordbooks/wb_phrases" class="rv-wb-link" v-if="counts.phrase">
+          <span class="rv-wb-icon">📝</span> 短语本 · {{ counts.phrase }} 条
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </NuxtLink>
+        <NuxtLink to="/wordbooks/wb_sentences" class="rv-wb-link" v-if="counts.sentence">
+          <span class="rv-wb-icon">💬</span> 句子本 · {{ counts.sentence }} 句
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+        </NuxtLink>
+      </div>
     </header>
 
     <!-- 卡片区 -->
@@ -175,14 +191,6 @@ const filtered = computed(() => {
   return list
 })
 
-function extractBrief(detail: string): string {
-  if (!detail) return ''
-  const clean = detail.replace(/\[PHONETIC\].*?\[\/PHONETIC\]/g, '').replace(/[#*|`]/g, '')
-  const m = clean.match(/基本释义[^\n]*\n(.+)/)
-  if (!m) return clean.split('\n').filter((s: string) => s.trim().length > 5)[0]?.trim().slice(0, 60) || ''
-  return m[1].replace(/^\d+[\.\、\)]\s*/, '').trim().slice(0, 60)
-}
-
 function plainExcerpt(detail: string): string {
   if (!detail) return ''
   return detail.replace(/\[PHONETIC\].*?\[\/PHONETIC\]/g, '').replace(/[#*|`]/g, '').replace(/\n+/g, ' ').trim().slice(0, 180)
@@ -195,11 +203,12 @@ function toggleCard(item: MarkItem) {
 function playWord(item: MarkItem) {
   if (playingId.value === item.mark.id) return
   playingId.value = item.mark.id
+  const word = (item.mark.lemma || item.mark.text).replace(/[^a-zA-Z]/g, '').toLowerCase()
   const audio = new Audio(
-    `https://audio.beingfine.cn/speeches/UK/UK-speech/${item.mark.text.replace(/[^a-zA-Z]/g, '').toLowerCase()}.mp3`
+    `https://audio.beingfine.cn/speeches/UK/UK-speech/${word}.mp3`
   )
   audio.play().catch(() => {
-    const u = new SpeechSynthesisUtterance(item.mark.text)
+    const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'
     speechSynthesis.speak(u)
   })
@@ -267,24 +276,22 @@ function exportAs(format: 'csv' | 'md') {
 
 onMounted(async () => {
   try {
-    const entries = await $fetch<any[]>('/api/text/list?folder=all')
-    const all: MarkItem[] = []
-    for (const e of entries) {
-      books.value.push({ id: e.id, title: e.title || e.id })
-      if (!e.id) continue
-      try {
-        const full = await $fetch<any>(`/api/text/${e.id}`)
-        if (full.marks) {
-          for (const m of full.marks) {
-            const phonetic = m.detail
-              ? (m.detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/) || [])[1] || ''
-              : ''
-            all.push({ mark: m, title: full.title || e.title, textId: e.id, phonetic, brief: extractBrief(m.detail), textFolder: e.folder || 'default' })
-          }
-        }
-      } catch {}
+    const data = await $fetch<{ items: MarkItem[] }>('/api/reviews/list')
+    items.value = data.items
+
+    // 收集有标记的书
+    const bookMap = new Map<string, string>()
+    for (const item of data.items) {
+      if (!bookMap.has(item.textId)) {
+        bookMap.set(item.textId, item.title)
+      }
     }
-    items.value = all.sort((a, b) => (b.mark.createdAt || '').localeCompare(a.mark.createdAt || ''))
+    books.value = Array.from(bookMap.entries()).map(([id, title]) => ({ id, title }))
+
+    // 自动同步已有标记到对应默认单词本（去重、幂等）
+    if (data.items.length) {
+      $fetch('/api/wordbooks/sync-marks', { method: 'POST' }).catch(() => {})
+    }
   } catch {}
 })
 </script>
@@ -674,6 +681,35 @@ onMounted(async () => {
   color: #3d3591;
   border-color: rgba(61,53,145,0.2);
   background: #f8f7ff;
+}
+
+/* ── 单词本快捷入口 ── */
+.rv-wordbook-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.rv-wb-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid rgba(61,53,145,0.1);
+  border-radius: 8px;
+  background: #faf9fe;
+  color: #3d3591;
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.rv-wb-link:hover {
+  background: #edeafd;
+  border-color: rgba(61,53,145,0.2);
+}
+.rv-wb-icon {
+  font-size: 13px;
 }
 
 /* ── 导出弹窗 ── */
