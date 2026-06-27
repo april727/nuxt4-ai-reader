@@ -1,7 +1,7 @@
-import { getDb, saveDb } from '../../utils/db'
-import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
-import { join, extname } from 'node:path'
+import { queryOne, runQuery } from '../../utils/db'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { getImagesDir, ensureDir } from '../../utils/storage'
 
 export default defineEventHandler(async (event) => {
   const form = await readMultipartFormData(event)
@@ -15,31 +15,30 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '缺少 file/id/paragraphId' })
   }
 
-  const ext = extname(file.filename || '.png') || '.png'
-  const name = `img_${randomUUID().slice(0, 8)}${ext}`
+  // 获取该内容所属的 folder
+  let folderId = 'default'
+  const folderRow = await queryOne('SELECT folder FROM texts WHERE id=?', [textId])
+  if (folderRow) folderId = folderRow.folder || 'default'
 
-  const dir = join(process.cwd(), 'server', 'data', 'uploads')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, name), file.data)
+  const ext = file.filename ? (file.filename.includes('.') ? '.' + file.filename.split('.').pop() : '.png') : '.png'
+  const hash = randomUUID().slice(0, 8)
+  const dir = getImagesDir(folderId, textId)
+  ensureDir(dir)
+
+  const filename = `img_${hash}${ext}`
+  const filePath = `${folderId}/${textId}/images/${filename}`
+  writeFileSync(dir + '/' + filename, file.data)
 
   // 更新 segments JSON
-  const db = await getDb()
-  const stmt = db.prepare('SELECT segments FROM texts WHERE id=?')
-  stmt.bind([textId])
-  if (!stmt.step()) { stmt.free(); throw createError({ statusCode: 404 }) }
-  const row = stmt.getAsObject()
-  stmt.free()
+  const segRow = await queryOne('SELECT segments FROM texts WHERE id=?', [textId])
+  if (!segRow) throw createError({ statusCode: 404 })
 
   let segments: any[] = []
-  try { segments = JSON.parse(row.segments || '[]') } catch {}
+  try { segments = JSON.parse(segRow.segments || '[]') } catch {}
 
-  // 如果 DB 中没有 segments，从文本字段生成基本段落
   if (!segments.length) {
-    const textRows = db.prepare('SELECT text FROM texts WHERE id=?')
-    textRows.bind([textId])
-    if (textRows.step()) {
-      const textRow = textRows.getAsObject()
-      textRows.free()
+    const textRow = await queryOne('SELECT text FROM texts WHERE id=?', [textId])
+    if (textRow) {
       const text = textRow.text || ''
       const blocks = text.split(/\n\s*\n/).filter((b: string) => b.trim())
       if (blocks.length) {
@@ -47,20 +46,17 @@ export default defineEventHandler(async (event) => {
           id: `q-${i}`, index: i, text: b.trim(),
         }))
       }
-    } else {
-      textRows.free()
     }
   }
 
   const para = segments.find((s: any) => s.id === paraId)
   if (para) {
     if (!para.images) para.images = []
-    para.images.push(name)
+    para.images.push(filePath)
   }
 
-  db.run('UPDATE texts SET segments=?,updatedAt=? WHERE id=?',
+  await runQuery('UPDATE texts SET segments=?,updatedAt=? WHERE id=?',
     [JSON.stringify(segments), new Date().toISOString(), textId])
-  await saveDb()
 
-  return { url: `/api/file/${name}`, name, paragraphId: paraId }
+  return { url: `/api/file/${encodeURIComponent(filePath)}`, name: filePath, paragraphId: paraId }
 })

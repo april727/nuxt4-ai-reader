@@ -1,6 +1,8 @@
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { LEGACY_UPLOADS, ensureDir } from '../../utils/storage'
+import { useR2, r2Put } from '../../utils/r2'
 
 export default defineEventHandler(async (event) => {
   const form = await readMultipartFormData(event)
@@ -10,10 +12,17 @@ export default defineEventHandler(async (event) => {
   const ext = extname(file.filename || '.jpg') || '.jpg'
   const name = `thumb_${randomUUID().slice(0, 8)}${ext}`
 
-  const dir = join(process.cwd(), 'server', 'data', 'uploads')
-  mkdirSync(dir, { recursive: true })
+  // ── R2 模式 ──
+  if (useR2()) {
+    const key = `uploads/${name}`
+    const ct = ext === '.png' ? 'image/png' : 'image/jpeg'
+    await r2Put(key, file.data, ct)
+    return { url: `/api/file/${key}`, path: key, size: file.data?.length || 0 }
+  }
 
-  const filePath = join(dir, name)
+  // ── 本地模式 ──
+  ensureDir(LEGACY_UPLOADS)
+  const filePath = join(LEGACY_UPLOADS, name)
   writeFileSync(filePath, file.data)
 
   return { url: `/api/file/${name}`, path: name, size: file.data?.length || 0 }

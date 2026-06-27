@@ -5,9 +5,19 @@
     @dragleave.prevent="dragOver = false"
     @drop.prevent="handleGlobalDrop"
   >
+    <!-- 隐藏的文件夹选择器 -->
+    <input
+      ref="batchFolderInput"
+      type="file"
+      webkitdirectory
+      multiple
+      class="file-input-hidden"
+      @change="onFolderSelected"
+    />
+
     <!-- 全局拖拽提示 -->
     <Transition name="drag-fade">
-      <div v-if="dragOver" class="drag-overlay">
+      <div v-if="dragOver && !batchActive" class="drag-overlay">
         <div class="drag-hint">
           <div class="drag-hint-ring">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
@@ -16,7 +26,46 @@
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
           </div>
-          <p>释放以上传文件</p>
+          <p>释放以上传文件（支持 PDF / 视频 / 批量拖放）</p>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 批量上传进度面板 -->
+    <Transition name="drag-fade">
+      <div v-if="batchActive" class="batch-overlay">
+        <div class="batch-card">
+          <div class="batch-header">
+            <span class="batch-title">批量导入</span>
+            <button class="batch-close" @click="batchActive = false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+
+          <!-- 进行中 -->
+          <template v-if="batchDone < batchTotal">
+            <div class="batch-progress-track">
+              <div class="batch-progress-fill" :style="{ width: (batchTotal > 0 ? (batchDone / batchTotal) * 100 : 0) + '%' }"></div>
+            </div>
+            <p class="batch-progress-text">{{ batchDone }}/{{ batchTotal }}</p>
+            <p class="batch-current">{{ batchCurrentName }}</p>
+          </template>
+
+          <!-- 完成 -->
+          <template v-else>
+            <div class="batch-done-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"/><polyline points="16 10 11 15 8 12"/>
+              </svg>
+            </div>
+            <p class="batch-result-text">
+              成功导入 {{ batchDone - batchErrors.length }} 个
+              <template v-if="batchErrors.length">，{{ batchErrors.length }} 个失败</template>
+            </p>
+            <div v-if="batchErrors.length" class="batch-errors">
+              <div v-for="(err, i) in batchErrors" :key="i" class="batch-error-item">{{ err }}</div>
+            </div>
+          </template>
         </div>
       </div>
     </Transition>
@@ -33,7 +82,15 @@
         @drop-on-folder="handleDropOnFolder"
         @delete-folder="handleDeleteFolder"
         @add-sub="(pid: string) => sidebarRef?.startSubCreate(pid)"
+        @rename-folder="handleRenameFolder"
+        @refresh="loadFolders"
       />
+      <div class="lib-sidebar-footer">
+        <button class="lib-nav-btn" @click="navigateTo('/knowledge')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          知识要点
+        </button>
+      </div>
     </aside>
 
     <!-- 右侧内容区 -->
@@ -61,14 +118,15 @@
             </button>
           </div>
           <div class="lib-actions">
-            <NuxtLink to="/wordbooks" class="lib-wordbook-btn" title="单词本">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              <span>单词本</span>
-            </NuxtLink>
+            <button v-if="thumbFixCount > 0" class="lib-wordbook-btn" style="color:#b84b2e;border-color:rgba(184,75,46,0.2)" @click="downloadAllThumbs" :disabled="thumbFixing">
+              {{ thumbFixing ? `${thumbFixDone}/${thumbFixCount}` : `修复封面(${thumbFixCount})` }}
+            </button>
             <ToolbarActions
               @import-video="showVideoImport = true"
               @upload="showUpload = true"
               @url="showUrl = true"
+              @batch-upload="openBatchPicker"
+              @folder-upload="openFolderPicker"
             />
           </div>
         </div>
@@ -83,6 +141,7 @@
           v-model="searchQuery"
           class="lib-search-input"
           placeholder="搜索书名或来源..."
+          autocomplete="off"
           @input="onSearchInput"
         />
         <button v-if="searchQuery" class="lib-search-clear" @click="searchQuery = ''; searchDebounced = ''">×</button>
@@ -102,6 +161,7 @@
           :duration="book.duration"
           :thumbnail="(book as any).thumbnail"
           :completed-at="(book as any).completedAt"
+          :ai-segmented="(book as any).aiSegmented"
           :draggable="true"
           :style="{ '--enter-delay': Math.min(i * 0.03, 0.6) + 's' }"
           @dragstart="handleBookDragStart($event, book.id)"
@@ -128,6 +188,10 @@
           <p class="lib-empty-title">{{ sourceFilter === 'video' ? '还没有视频' : '书架是空的' }}</p>
           <p class="lib-empty-hint">开始你的阅读之旅</p>
           <div class="lib-empty-actions">
+            <button class="lib-empty-btn" @click="openBatchPicker">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><polyline points="9 14 12 11 15 14"/></svg>
+              批量上传
+            </button>
             <button class="lib-empty-btn" @click="showVideoImport = true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
               导入视频
@@ -168,6 +232,7 @@
           >
             <button @click="renameBook">重命名</button>
             <button @click="toggleComplete">{{ contextMenu.completedAt ? '取消完成' : '标记完成' }}</button>
+            <button v-if="isVideoSource(contextMenu.source)" @click="fixThumbnail">修复缩略图</button>
             <hr class="ctx-divider" />
             <button class="ctx-danger" @click="deleteBook">删除</button>
           </div>
@@ -177,7 +242,7 @@
 
     <!-- 网址输入弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showUrl" class="modal-overlay" @click.self="showUrl = false">
+      <div v-if="showUrl" class="modal-overlay" @click.self="safeClose(() => { showUrl = false })">
         <div class="modal-card">
           <div class="modal-header">
             <h3 class="modal-title">提取网页文章</h3>
@@ -208,7 +273,7 @@
 
     <!-- 上传弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showUpload || showPaste" class="modal-overlay" @click.self="closeModal">
+      <div v-if="showUpload || showPaste" class="modal-overlay" @click.self="safeClose(closeModal)">
         <div class="modal-card" style="max-width: 520px">
           <div class="modal-header">
             <h3 class="modal-title">{{ showUpload ? '上传文件' : '粘贴文本' }}</h3>
@@ -223,6 +288,7 @@
               @submit-text="handleModalText"
               @analyze="() => {}"
               @clear="closeModal"
+              @batch-done="closeModal(); loadBooks()"
             />
           </div>
         </div>
@@ -231,7 +297,7 @@
 
     <!-- 重命名弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showRename" class="modal-overlay" @click.self="showRename = false">
+      <div v-if="showRename" class="modal-overlay" @click.self="safeClose(() => { showRename = false })">
         <div class="modal-card" style="max-width: 400px">
           <div class="modal-header">
             <h3 class="modal-title">重命名</h3>
@@ -259,10 +325,12 @@
 </template>
 
 <script setup lang="ts">
+import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
+
 useHead({ title: 'AI 阅读分析 - 书架' })
 
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean }
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
@@ -275,12 +343,12 @@ const filterOptions = [
   { key: 'video', label: '视频' },
 ]
 
-// SSR 预取
-const { data: folders, refresh: refreshFolders } = await useAsyncData('folders', () =>
+// SSR 预取（不使用顶层 await 避免 Suspense 阻塞渲染）
+const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', () =>
   $fetch<Folder[]>('/api/folder/list'), { default: () => [] as Folder[] }
 )
 
-const { data: books, refresh: refreshBooks } = await useAsyncData(
+const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncData(
   () => `books-${activeFolder.value}`,
   () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
   { watch: [activeFolder], default: () => [] as BookItem[] }
@@ -297,8 +365,15 @@ const urlLoading = ref(false)
 const uploading = ref(false)
 const dragOver = ref(false)
 
+// ── 批量上传状态 ──
+const batchActive = ref(false)
+const batchTotal = ref(0)
+const batchDone = ref(0)
+const batchErrors = ref<string[]>([])
+const batchCurrentName = ref('')
+const batchFolderInput = ref<HTMLInputElement | null>(null)
+
 function onGlobalDragOver(e: DragEvent) {
-  // 仅外部文件拖放显示上传提示，卡片拖拽不显示
   dragOver.value = e.dataTransfer?.types?.includes('Files') || false
 }
 
@@ -347,13 +422,20 @@ function cycleSort() {
   sortBy.value = sortOrders[(idx + 1) % sortOrders.length]
 }
 
-const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '' })
+const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '', source: '' })
 const contextMenuRef = ref<HTMLElement | null>(null)
 const showRename = ref(false)
 const renameText = ref('')
 const renameBookId = ref('')
 
 const activeFolderName = computed(() => folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹')
+
+// 防止框选文字时误关闭弹窗
+function safeClose(closeFn: () => void) {
+  const selection = window.getSelection()
+  if (selection && selection.toString().trim().length > 0) return
+  closeFn()
+}
 
 async function loadFolders() {
   try { await refreshFolders() } catch {}
@@ -385,6 +467,10 @@ async function handleDeleteFolder(id: string) {
   try { await $fetch('/api/folder/delete', { method: 'POST', body: { id } }); await loadFolders() } catch (e: any) { alert(e?.message || '删除失败') }
 }
 
+async function handleRenameFolder(id: string, name: string) {
+  try { await $fetch('/api/folder/rename', { method: 'POST', body: { id, name } }); await loadFolders() } catch (e: any) { alert(e?.message || '重命名失败') }
+}
+
 async function handleDropOnFolder(folderId: string) {
   if (!dragBookId || folderId === activeFolder.value) return
   try {
@@ -406,31 +492,114 @@ function openBook(id: string) {
 
 async function handleGlobalDrop(e: DragEvent) {
   dragOver.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (!file) return
-  await processDroppedFile(file)
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (!files.length) return
+  await processBatchFiles(files)
 }
 
-async function processDroppedFile(file: File) {
-  uploading.value = true
-  try {
-    const ext = file.name.split('.').pop()?.toLowerCase()
+// 支持的文件扩展名分类
+const TEXT_EXTS = ['pdf', 'md', 'markdown', 'txt']
+const VIDEO_EXTS = ['mp4', 'webm', 'ogg', 'mov']
+const AUDIO_EXTS = ['mp3', 'wav', 'm4a']
+
+/** 批量处理文件（拖放 / 文件夹 / 多选） */
+async function processBatchFiles(files: File[]) {
+  // 过滤出支持的文件
+  const supported = files.filter(f => {
+    const ext = f.name.split('.').pop()?.toLowerCase()
+    if (!ext) return false
+    return [...TEXT_EXTS, ...VIDEO_EXTS, ...AUDIO_EXTS].includes(ext)
+  })
+  if (!supported.length) {
+    alert('未找到支持的文件格式（PDF / Markdown / TXT / MP4 / MP3 等）')
+    return
+  }
+
+  batchActive.value = true
+  batchTotal.value = supported.length
+  batchDone.value = 0
+  batchErrors.value = []
+
+  for (let i = 0; i < supported.length; i++) {
+    const file = supported[i]
+    batchCurrentName.value = file.name
+    try {
+      await processSingleFile(file)
+      batchDone.value++
+    } catch (e: any) {
+      batchErrors.value.push(`${file.name}: ${e?.message || '未知错误'}`)
+    }
+  }
+
+  // 刷新书架
+  await loadBooks()
+  batchCurrentName.value = ''
+
+  // 保持结果面板展示几秒后自动关闭
+  setTimeout(() => {
+    if (batchActive.value) batchActive.value = false
+  }, 4000)
+}
+
+/** 处理单个文件（文本 or 视频） */
+async function processSingleFile(file: File) {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+
+  if (TEXT_EXTS.includes(ext!)) {
     if (ext === 'pdf') {
       const fd = new FormData(); fd.append('file', file)
       const result = await $fetch<{ text: string; filePath: string }>('/api/parse-pdf', { method: 'POST', body: fd })
       if (result?.text) {
         await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, folder: activeFolder.value, filePath: result.filePath } })
-        await loadBooks()
       }
-    } else if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
+    } else {
       const text = await file.text()
       if (text.trim()) {
         await $fetch('/api/text/save', { method: 'POST', body: { text, source: file.name, folder: activeFolder.value } })
-        await loadBooks()
       }
     }
-  } catch (e: any) { alert('上传失败: ' + (e?.message || '')) }
-  finally { uploading.value = false }
+  } else {
+    // 视频/音频文件：上传 → 捕获缩略图 → 保存
+    const fd = new FormData(); fd.append('file', file)
+    const uploadResult = await $fetch<{ filePath: string; url: string; originalName: string }>('/api/file/upload-video', { method: 'POST', body: fd })
+    const fileType = AUDIO_EXTS.includes(ext!) ? 'audio_file' : 'video_file'
+
+    // 视频文件尝试捕获缩略图
+    let thumbPath = ''
+    if (fileType === 'video_file') {
+      try { thumbPath = await captureVideoThumbnail(file) } catch {}
+    }
+
+    await $fetch('/api/video/save', {
+      method: 'POST',
+      body: { title: file.name.replace(/\.[^.]+$/, ''), url: uploadResult.url, type: fileType, folder: activeFolder.value, filePath: uploadResult.filePath, thumbnail: thumbPath },
+    })
+  }
+}
+
+/** 打开批量文件选择器 */
+function openBatchPicker() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.accept = '.pdf,.md,.txt,.markdown,.mp4,.webm,.mp3,.wav,.m4a,.ogg,.mov'
+  input.onchange = async () => {
+    const files = Array.from(input.files || [])
+    if (files.length) await processBatchFiles(files)
+  }
+  input.click()
+}
+
+/** 打开文件夹选择器 */
+function openFolderPicker() {
+  batchFolderInput.value?.click()
+}
+
+async function onFolderSelected(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (files.length) await processBatchFiles(files)
+  input.value = '' // 重置以允许重复选择同一文件夹
 }
 
 let dragBookId = ''
@@ -452,6 +621,7 @@ async function openContextMenu(e: MouseEvent, book: BookItem) {
   contextMenu.y = e.clientY
   contextMenu.bookId = book.id
   contextMenu.completedAt = book.completedAt || ''
+  contextMenu.source = book.source || ''
   // 等 DOM 渲染后根据实际菜单尺寸调整位置，避免溢出屏幕
   await nextTick()
   const el = contextMenuRef.value
@@ -489,6 +659,22 @@ async function deleteBook() {
     await $fetch('/api/text/delete', { method: 'POST', body: { id: contextMenu.bookId } })
     contextMenu.show = false; await loadBooks()
   } catch (e: any) {}
+}
+
+function isVideoSource(source: string) {
+  return videoSources.includes(source)
+}
+
+async function fixThumbnail() {
+  const id = contextMenu.bookId
+  if (!id) return
+  contextMenu.show = false
+  try {
+    await $fetch(`/api/video/${id}/fix-thumbnail`, { method: 'POST' })
+    await refreshBooks()
+  } catch (e: any) {
+    alert('缩略图修复失败: ' + (e?.message || '请确认 yt-dlp 或 ffmpeg 已安装'))
+  }
 }
 
 async function toggleComplete() {
@@ -529,7 +715,57 @@ async function fetchUrl() {
   finally { urlLoading.value = false }
 }
 
-onMounted(() => { counts() })
+// ── 临时：浏览器端下载远程缩略图 ──
+const thumbFixCount = ref(0)
+const thumbFixDone = ref(0)
+const thumbFixing = ref(false)
+
+async function checkRemoteThumbs() {
+  try {
+    const list = await $fetch<any[]>('/api/video/remote-thumbs-list')
+    thumbFixCount.value = list.length
+  } catch {}
+}
+
+async function downloadAllThumbs() {
+  thumbFixing.value = true
+  thumbFixDone.value = 0
+  try {
+    const list = await $fetch<any[]>('/api/video/remote-thumbs-list')
+    thumbFixCount.value = list.length
+    for (const item of list) {
+      try {
+        const blob = await fetch(item.thumbUrl).then(r => r.ok ? r.blob() : Promise.reject('fail'))
+        const fd = new FormData()
+        fd.append('id', item.id)
+        fd.append('file', blob, 'thumb.jpg')
+        await $fetch('/api/video/save-thumb-from-client', { method: 'POST', body: fd })
+        thumbFixDone.value++
+      } catch {}
+    }
+    await refreshBooks()
+    thumbFixCount.value = 0
+  } finally { thumbFixing.value = false }
+}
+
+onMounted(() => { counts(); startAutoRefresh(); checkRemoteThumbs() })
+onUnmounted(() => { stopAutoRefresh() })
+
+// 书架静默刷新：检测后台分段完成后自动更新标题颜色
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function startAutoRefresh() {
+  if (refreshTimer) return
+  refreshTimer = setInterval(async () => {
+    const hasPending = books.value.some(b => !(b as any).aiSegmented)
+    if (!hasPending) { stopAutoRefresh(); return }
+    await refreshBooks()
+  }, 5000)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+}
 </script>
 
 <style scoped>
@@ -545,10 +781,21 @@ onMounted(() => { counts() })
 .lib-sidebar {
   width: 220px;
   flex-shrink: 0;
+  display: flex; flex-direction: column;
   overflow: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
   background: #f0efe9;
 }
+.lib-sidebar-footer {
+  padding: 10px 14px; border-top: 0.5px solid rgba(0,0,0,0.06); margin-top: auto;
+}
+.lib-nav-btn {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px; border-radius: 8px; border: none;
+  background: transparent; color: #6b6963; font-size: 13px;
+  cursor: pointer; transition: all 0.15s; font-family: 'DM Sans', sans-serif;
+}
+.lib-nav-btn:hover { background: rgba(61,53,145,0.06); color: #3d3591; }
 
 .lib-main {
   flex: 1;
@@ -1048,4 +1295,102 @@ onMounted(() => { counts() })
 .modal-fade-leave-active { transition: opacity 0.15s; }
 .modal-fade-enter-from,
 .modal-fade-leave-to { opacity: 0; }
+
+/* ── 批量上传进度 ── */
+.batch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(247, 246, 243, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+.batch-card {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.1);
+  width: 380px;
+  max-width: 92vw;
+  padding: 20px;
+}
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.batch-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 1em;
+  font-weight: 500;
+  color: #1a1a18;
+}
+.batch-close {
+  width: 26px; height: 26px;
+  border: none; border-radius: 50%;
+  background: transparent;
+  color: #a09e97;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.batch-close:hover { background: rgba(0,0,0,0.05); color: #4a4640; }
+.batch-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.batch-progress-fill {
+  height: 100%;
+  background: #3d3591;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.batch-progress-text {
+  font-size: 12px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+  margin: 0 0 4px;
+}
+.batch-current {
+  font-size: 12.5px;
+  color: #6b6963;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.batch-done-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.batch-result-text {
+  font-size: 13.5px;
+  color: #4a4640;
+  text-align: center;
+  margin: 0 0 10px;
+}
+.batch-errors {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.batch-error-item {
+  font-size: 11.5px;
+  color: #b84b2e;
+  padding: 6px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  line-height: 1.4;
+}
 </style>

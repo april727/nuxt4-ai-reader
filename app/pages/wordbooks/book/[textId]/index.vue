@@ -1,12 +1,7 @@
 <template>
   <div class="wbk-page">
-    <header class="wbk-header">
-      <NuxtLink to="/wordbooks" class="wbk-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        单词本
-      </NuxtLink>
-      <h1 class="wbk-title">{{ bookTitle }}</h1>
-      <div class="wbk-header-right">
+    <PageHeader :title="bookTitle" active="wordbooks" back-to="/wordbooks" back-label="单词本">
+      <template #actions>
         <button class="wbk-hdr-btn" @click="goCards">学习</button>
         <button class="wbk-hdr-btn wbk-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
           <template v-if="batchRunning"><span class="wbk-spin"></span></template>
@@ -19,8 +14,9 @@
           <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
         </button>
         <button class="wbk-hdr-btn wbk-btn-add" @click="showAdd = true">+</button>
-      </div>
-    </header>
+        <button class="wbk-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+      </template>
+    </PageHeader>
 
     <!-- Tab 栏 -->
     <div class="wbk-body">
@@ -137,18 +133,23 @@ const posTabs = [
   { key: 'v.', label: 'v.动词' },
   { key: 'adj.', label: 'adj.形容词' },
   { key: 'adv.', label: 'adv.副词' },
+  { key: 'prep.', label: 'prep.介词' },
+  { key: 'pron.', label: 'pron.代词' },
+  { key: 'conj.', label: 'conj.连词' },
+  { key: 'phr.', label: 'phr.短语' },
+  { key: 'sent.', label: 'sent.句子' },
 ]
 const activePos = ref('')
 
+const marksPosCounts = ref<Record<string, number>>({})
+
 const posCounts = computed(() => {
-  const total = words.value.length
-  const counts: Record<string, number> = {}
-  for (const w of words.value) {
-    const p = w.pos || ''
-    counts[p] = (counts[p] || 0) + 1
-  }
+  const counts = marksPosCounts.value
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
   const labelMap: Record<string, string> = {
     '': '全部', 'n.': '名词', 'v.': '动词', 'adj.': '形容词', 'adv.': '副词',
+    'prep.': '介词', 'pron.': '代词', 'conj.': '连词',
+    'phr.': '短语', 'sent.': '句子',
   }
   const items: Array<{ key: string; label: string; count: number }> = []
   for (const t of posTabs) {
@@ -189,11 +190,12 @@ watch(activePos, updateIndicator)
 async function loadWords() {
   loading.value = true
   try {
-    const [wList, info] = await Promise.all([
-      $fetch<WordItem[]>(`/api/wordbooks/book/${textId}/words?type=${activeType.value}`),
+    const [wData, info] = await Promise.all([
+      $fetch<{ words: WordItem[]; posCounts: Record<string, number> }>(`/api/wordbooks/book/${textId}/words?type=${activeType.value}`),
       textId === '__orphan__' ? Promise.resolve({ title: '其他' }) : $fetch<any>(`/api/text/${textId}`).catch(() => null),
     ])
-    words.value = wList
+    words.value = wData.words
+    marksPosCounts.value = wData.posCounts
     bookTitle.value = info?.title || '加载中…'
   } catch { bookTitle.value = '加载失败' }
   loading.value = false
@@ -253,7 +255,18 @@ async function handleAdd() {
   } catch { alert('添加失败') }
 }
 
-function goCards() { /* could link to cards for this type */ }
+function goCards() { navigateTo(`/wordbooks/${currentBookId.value}/cards?source=${textId}&type=${activeType.value}`) }
+
+function exportTxt() {
+  const text = displayWords.value.map(w => w.word).join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${bookTitle.value}-words.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 const batchRunning = ref(false)
 async function enrichAll() {
@@ -317,7 +330,15 @@ onMounted(async () => {
 }
 .wbk-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #666; text-decoration: none; font-family: 'DM Sans', sans-serif; white-space: nowrap; flex-shrink: 0; }
 .wbk-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; color: #1a1a18; font-family: 'Lora', serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 12px; }
-.wbk-header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.wbk-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.wbk-nav-link {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: #6b6963; text-decoration: none;
+  padding: 5px 10px; border-radius: 7px;
+  border: 0.5px solid rgba(0,0,0,0.1);
+  transition: all 0.12s;
+}
+.wbk-nav-link:hover { background: #f0efe9; color: #3d3591; }
 .wbk-hdr-btn { padding: 4px 10px; border: 1px solid #e0ddd5; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; color: #666; white-space: nowrap; display: flex; align-items: center; line-height: 1; }
 .wbk-hdr-btn:hover { border-color: #3d3591; color: #3d3591; }
 .wbk-btn-add { font-size: 18px; font-weight: 500; padding: 3px 10px; }

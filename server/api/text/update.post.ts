@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../utils/db'
+import { queryOne, runQuery } from '../../utils/db'
 
 // 标记类型 → 默认单词本 ID 映射
 const MARK_TO_BOOK: Record<string, string> = {
@@ -7,11 +7,18 @@ const MARK_TO_BOOK: Record<string, string> = {
   sentence: 'wb_sentences',
 }
 
-// 从 mark detail 中提取音标和释义
+// 从 mark detail 中提取音标、释义、词性
 function extractPhonetic(detail: string): string {
   if (!detail) return ''
   const m = detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/)
   return m?.[1] || ''
+}
+
+function extractPos(detail: string): string {
+  if (!detail) return ''
+  const m = detail.match(/\[POS\]\s*(n\.|v\.|adj\.|adv\.|pron\.|prep\.|conj\.|interj\.|art\.|num\.|det\.|modal\.|aux\.|phr\.)\s*\[\/POS\]/i)
+  if (m) return m[1].toLowerCase()
+  return ''
 }
 
 function extractMeaning(detail: string): string {
@@ -35,7 +42,7 @@ function extractLemma(mark: any): string {
 }
 
 // 同步新增标记到对应的默认单词本
-async function syncMarksToWordbooks(db: any, textId: string, oldMarksJson: string, newMarksJson: string) {
+async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMarksJson: string) {
   let oldMarks: any[] = []
   let newMarks: any[] = []
   try { oldMarks = oldMarksJson ? JSON.parse(oldMarksJson) : [] } catch {}
@@ -54,30 +61,29 @@ async function syncMarksToWordbooks(db: any, textId: string, oldMarksJson: strin
     if (!bookId || !mark.text?.trim()) continue
 
     // 确认目标单词本存在
-    const wb = db.prepare('SELECT id FROM wordbooks WHERE id=?')
-    wb.bind([bookId])
-    if (!wb.step()) { wb.free(); continue }
-    wb.free()
+    const wb = await queryOne('SELECT id FROM wordbooks WHERE id=?', [bookId])
+    if (!wb) continue
 
-    // 去重：同一单词本中不重复添加相同文本
-    const dup = db.prepare('SELECT id FROM words WHERE bookId=? AND word=?')
-    dup.bind([bookId, mark.text.trim()])
-    if (dup.step()) { dup.free(); continue }
-    dup.free()
-
-    const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    // 去重：先用 lemma + 原文兜底确定 wordText，再以此去重
+    const lemma = extractLemma(mark)
+    const wordText = lemma || mark.text.trim()
     const phonetic = extractPhonetic(mark.detail || '')
     const meaning = extractMeaning(mark.detail || '')
-    const lemma = extractLemma(mark)
+    const pos = extractPos(mark.detail || '')
     // 有原词时以原词为主词条，原文作为笔记
-    const wordText = lemma || mark.text.trim()
     const note = lemma && lemma !== mark.text.trim()
       ? `原文: ${mark.text.trim()}${mark.note ? '\n' + mark.note : ''}`
       : mark.note || ''
 
-    db.run(
-      `INSERT INTO words (id,bookId,word,phonetic,meaning,note,source,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?)`,
-      [wordId, bookId, wordText, phonetic, meaning, note, textId, now, now]
+    // 大小写不敏感去重，用实际存储的 wordText
+    const dup = await queryOne('SELECT id FROM words WHERE bookId=? AND LOWER(word)=LOWER(?)', [bookId, wordText])
+    if (dup) continue
+
+    const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+    await runQuery(
+      `INSERT INTO words (id,bookId,word,phonetic,meaning,pos,note,source,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [wordId, bookId, wordText, phonetic, meaning, pos, note, textId, now, now]
     )
   }
 }
@@ -86,16 +92,13 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{
     id: string; title?: string; analysis?: any; segments?: any[]; explanations?: Record<string,string>
     marks?: any[]; readingPosition?: any; paragraphChats?: Record<string, any[]>
+    paragraphNotes?: any[]
   }>(event)
   if (!body?.id) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
   // 先读现有数据
-  const stmt = db.prepare('SELECT * FROM texts WHERE id=?')
-  stmt.bind([body.id])
-  if (!stmt.step()) { stmt.free(); throw createError({ statusCode: 404 }) }
-  const existing = stmt.getAsObject()
-  stmt.free()
+  const existing = await queryOne('SELECT * FROM texts WHERE id=?', [body.id])
+  if (!existing) throw createError({ statusCode: 404 })
 
   // 合并
   const title = body.title || existing.title
@@ -113,15 +116,15 @@ export default defineEventHandler(async (event) => {
   if (body.paragraphChats) {
     paragraphChats = JSON.stringify(body.paragraphChats)
   }
+  const paragraphNotes = body.paragraphNotes !== undefined ? JSON.stringify(body.paragraphNotes) : existing.paragraphNotes
 
-  db.run(`UPDATE texts SET title=?,analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,updatedAt=? WHERE id=?`,
-    [title, analysis, segments, explanations, marks, readingPosition, paragraphChats, new Date().toISOString(), body.id])
+  await runQuery(`UPDATE texts SET title=?,analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,paragraphNotes=?,updatedAt=? WHERE id=?`,
+    [title, analysis, segments, explanations, marks, readingPosition, paragraphChats, paragraphNotes, new Date().toISOString(), body.id])
 
   // markers 变更时，自动同步新增标记到对应单词本
   if (marksChanged) {
-    await syncMarksToWordbooks(db, body.id, existing.marks || '[]', marks)
+    await syncMarksToWordbooks(body.id, existing.marks || '[]', marks)
   }
 
-  await saveDb()
   return { ok: true }
 })

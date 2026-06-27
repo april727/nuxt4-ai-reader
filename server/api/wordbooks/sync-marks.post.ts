@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../utils/db'
+import { queryAll, queryOne, runQuery } from '../../utils/db'
 
 // 标记类型 → 默认单词本 ID 映射
 const MARK_TO_BOOK: Record<string, string> = {
@@ -32,32 +32,28 @@ function extractLemma(mark: any): string {
 
 function extractPos(detail: string): string {
   if (!detail) return ''
-  const m = detail.match(/\[POS\]\s*(n\.|v\.|adj\.|adv\.|pron\.|prep\.|conj\.|interj\.|art\.|num\.|det\.|modal\.|aux\.)\s*\[\/POS\]/i)
+  const m = detail.match(/\[POS\]\s*(n\.|v\.|adj\.|adv\.|pron\.|prep\.|conj\.|interj\.|art\.|num\.|det\.|modal\.|aux\.|phr\.)\s*\[\/POS\]/i)
   if (m) return m[1].toLowerCase()
   return ''
 }
 
 // 批量同步所有已有标记到对应单词本（去重、幂等）
 export default defineEventHandler(async () => {
-  const db = await getDb()
-
   // 确保三个默认单词本存在
   for (const [bookId, name] of [
     ['wb_default', '默认单词本'],
     ['wb_phrases', '默认短语本'],
     ['wb_sentences', '默认句子本'],
   ] as const) {
-    const check = db.prepare('SELECT id FROM wordbooks WHERE id=?')
-    check.bind([bookId])
-    if (!check.step()) {
-      db.run('INSERT INTO wordbooks (id,name,isDefault,createdAt) VALUES (?,?,1,?)',
+    const check = await queryOne('SELECT id FROM wordbooks WHERE id=?', [bookId])
+    if (!check) {
+      await runQuery('INSERT INTO wordbooks (id,name,isDefault,createdAt) VALUES (?,?,1,?)',
         [bookId, name, new Date().toISOString()])
     }
-    check.free()
   }
 
   // 读取所有有标记的文本
-  const stmt = db.prepare(
+  const rows = await queryAll(
     `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
   )
 
@@ -65,8 +61,7 @@ export default defineEventHandler(async () => {
   let synced = 0
   let skipped = 0
 
-  while (stmt.step()) {
-    const row = stmt.getAsObject()
+  for (const row of rows) {
     let marks: any[] = []
     try { marks = JSON.parse(row.marks) } catch { continue }
     if (!marks.length) continue
@@ -75,32 +70,28 @@ export default defineEventHandler(async () => {
       const bookId = MARK_TO_BOOK[mark.type]
       if (!bookId || !mark.text?.trim()) continue
 
-      // 去重
-      const dup = db.prepare('SELECT id FROM words WHERE bookId=? AND word=?')
-      dup.bind([bookId, mark.text.trim()])
-      if (dup.step()) { dup.free(); skipped++; continue }
-      dup.free()
-
-      const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+      const lemma = extractLemma(mark)
+      const wordText = lemma || mark.text.trim()
       const phonetic = extractPhonetic(mark.detail || '')
       const meaning = extractMeaning(mark.detail || '')
-      const lemma = extractLemma(mark)
       const pos = extractPos(mark.detail || '')
-      const wordText = lemma || mark.text.trim()
       const note = lemma && lemma !== mark.text.trim()
         ? `原文: ${mark.text.trim()}${mark.note ? '\n' + mark.note : ''}`
         : mark.note || ''
 
-      db.run(
+      // 去重：大小写不敏感，用实际存储的 wordText
+      const dup = await queryOne('SELECT id FROM words WHERE bookId=? AND LOWER(word)=LOWER(?)', [bookId, wordText])
+      if (dup) { skipped++; continue }
+
+      const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+      await runQuery(
         `INSERT INTO words (id,bookId,word,phonetic,meaning,pos,note,source,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [wordId, bookId, wordText, phonetic, meaning, pos, note, row.id, now, now]
       )
       synced++
     }
   }
-  stmt.free()
-
-  if (synced > 0) await saveDb()
 
   return { synced, skipped }
 })

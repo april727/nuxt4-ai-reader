@@ -1,15 +1,14 @@
-import { getDb } from '../../utils/db'
+import { queryAll } from '../../utils/db'
 
 export default defineEventHandler(async () => {
-  const db = await getDb()
-  const rows = db.exec('SELECT id,title,marks FROM texts WHERE marks IS NOT NULL AND marks != \'\' AND marks != \'[]\'')
-  if (!rows[0]) return ''
+  const rows = await queryAll('SELECT id,title,marks FROM texts WHERE marks IS NOT NULL AND marks != \'\' AND marks != \'[]\'')
+  if (!rows.length) return ''
 
   let csv = 'Word,Type,Phonetic,Meaning,Source\n'
-  for (const row of rows[0].values) {
-    const title = String(row[1] || '')
+  for (const row of rows) {
+    const title = String(row.title || '')
     let marks = []
-    try { marks = JSON.parse(String(row[2])) } catch {}
+    try { marks = JSON.parse(String(row.marks)) } catch {}
     for (const m of marks) {
       const phonetic = (m.detail || '').match(/\[PHONETIC\]\s*(\/[^/]+\/)/)?.[1] || ''
       const brief = (m.detail || '').replace(/\[PHONETIC\].*?\[\/PHONETIC\]/g, '').replace(/[#*]/g, '').split('\n').filter((s: string) => s.trim().length > 5)[0]?.trim().slice(0, 60) || ''

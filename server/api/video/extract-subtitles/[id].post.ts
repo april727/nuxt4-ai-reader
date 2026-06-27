@@ -4,10 +4,11 @@ import { get } from 'node:https'
 import { get as httpGet } from 'node:http'
 import path from 'node:path'
 import os from 'node:os'
-import { getDb, saveDb } from '../../../utils/db'
+import { queryOne, runQuery } from '../../../utils/db'
 import { safeParse } from '../../../utils/subtitle'
 import { parseSubtitles, secondsToTimeStr } from '../../../utils/srt'
 import { subtitlesToText } from '../../../utils/subtitle'
+import { getThumbsDir, ensureDir } from '../../../utils/storage'
 import type { SubtitleCue, VideoMeta } from '#shared/types'
 
 /** 非阻塞执行 shell 命令 */
@@ -28,12 +29,7 @@ export default defineEventHandler(async (event) => {
   if (!id) throw createError({ statusCode: 400, message: '缺少视频 ID' })
 
   // 从 DB 获取视频记录
-  const db = await getDb()
-  const stmt = db.prepare('SELECT title,videoMeta,videoSubtitles FROM texts WHERE id=?')
-  stmt.bind([id])
-  let row: any = null
-  if (stmt.step()) row = stmt.getAsObject()
-  stmt.free()
+  const row = await queryOne('SELECT title,videoMeta,videoSubtitles,folder FROM texts WHERE id=?', [id])
   if (!row) throw createError({ statusCode: 404, message: '视频不存在' })
 
   // 已有字幕则跳过
@@ -76,30 +72,31 @@ export default defineEventHandler(async (event) => {
 // ============================================================
 //  下载缩略图到本地（避免每次书架打开都从 YouTube CDN 加载）
 // ============================================================
-const UPLOADS_DIR = path.resolve('server/data/uploads')
-
-function downloadThumbnail(imageUrl: string, destName: string): Promise<string | null> {
+/** 下载缩略图到指定内容的 thumbs/ 目录，返回相对路径 */
+function downloadThumbnail(imageUrl: string, folderId: string, contentId: string): Promise<string | null> {
   return new Promise((resolve) => {
     if (!imageUrl || !imageUrl.startsWith('http')) return resolve(null)
     const extMatch = imageUrl.match(/\.(jpg|jpeg|webp|png)(\?|$)/i)
     const ext = extMatch?.[1] || 'jpg'
-    const filename = `thumb_${destName}.${ext}`
-    const filePath = path.join(UPLOADS_DIR, filename)
-    if (existsSync(filePath)) return resolve(filename)
+    const dir = getThumbsDir(folderId, contentId)
+    ensureDir(dir)
+    const filename = `cover.${ext}`
+    const filePath = path.join(dir, filename)
+    const relative = `${folderId}/${contentId}/thumbs/${filename}`
 
-    if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true })
+    if (existsSync(filePath)) return resolve(relative)
 
     const fetcher = imageUrl.startsWith('https') ? get : httpGet
     fetcher(imageUrl, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
         const redirectUrl = res.headers.location
-        if (redirectUrl) return resolve(downloadThumbnail(redirectUrl, destName))
+        if (redirectUrl) return resolve(downloadThumbnail(redirectUrl, folderId, contentId))
         return resolve(null)
       }
       if (res.statusCode !== 200) return resolve(null)
       const file = createWriteStream(filePath)
       res.pipe(file)
-      file.on('finish', () => resolve(filename))
+      file.on('finish', () => resolve(relative))
       file.on('error', () => resolve(null))
     }).on('error', () => resolve(null))
   })
@@ -107,6 +104,7 @@ function downloadThumbnail(imageUrl: string, destName: string): Promise<string |
 
 // ============================================================
 //  后台提取逻辑（异步非阻塞）
+//  元数据和字幕独立获取：字幕失败不影响标题和封面
 // ============================================================
 async function runExtraction(id: string, url: string, isBilibili: boolean, row: any) {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'yt-subs-'))
@@ -130,7 +128,22 @@ async function runExtraction(id: string, url: string, isBilibili: boolean, row: 
     }
     cookieAttempts.push({ name: 'none', cmdFlag: '' })
 
-    // 下载字幕
+    // ── 元数据获取（独立于字幕，始终执行） ──
+    try {
+      const metaResult = await runCmd(
+        `yt-dlp --dump-json --no-warnings --ignore-no-formats-error ${existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : ''} "${url}"`,
+        30000
+      )
+      const meta = JSON.parse(metaResult.stdout.trim().split('\n')[0])
+      fetchedTitle = meta.title || ''
+      fetchedDuration = meta.duration || 0
+      fetchedThumbnail = meta.thumbnail || ''
+      console.log(`[extract] ${id} 元数据获取成功: "${fetchedTitle}"`)
+    } catch (e: any) {
+      console.warn(`[extract] ${id} 元数据获取失败:`, e?.message || '')
+    }
+
+    // ── 字幕下载（可能失败，不影响元数据） ──
     for (const cookies of cookieAttempts) {
       if (subtitles.length > 0) break
 
@@ -167,58 +180,62 @@ async function runExtraction(id: string, url: string, isBilibili: boolean, row: 
     }
 
     if (subtitles.length === 0) {
-      throw new Error('该视频没有可用字幕（自动字幕也未开启）')
+      console.warn(`[extract] ${id} 字幕获取失败（视频可能未开启自动字幕），但元数据已获取`)
     }
 
-    // 获取元数据
-    try {
-      const metaResult = await runCmd(
-        `yt-dlp --dump-json --no-warnings --ignore-no-formats-error --cookies "${cookiesPath}" "${url}"`,
-        30000
-      )
-      const meta = JSON.parse(metaResult.stdout.trim().split('\n')[0])
-      fetchedTitle = meta.title || ''
-      fetchedDuration = meta.duration || 0
-      fetchedThumbnail = meta.thumbnail || ''
-    } catch { /* 元数据不是必须的 */ }
-
-    // 下载缩略图到本地（避免每次书架打开都从 YouTube CDN 重新加载）
+    // 下载缩略图到本地
     let localThumbnail = ''
     if (fetchedThumbnail) {
-      localThumbnail = await downloadThumbnail(fetchedThumbnail, id) || ''
+      localThumbnail = await downloadThumbnail(fetchedThumbnail, row.folder || 'default', id) || ''
     }
 
-    // 更新 DB
-    const db = await getDb()
-    const text = subtitlesToText(subtitles)
-    const segments = subtitles.map((c, idx) => ({
-      id: `p-${idx}`, index: idx, text: c.text, start: c.start, end: c.end,
-    }))
-    const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 150)
-    const videoMeta = safeParse<VideoMeta | null>(row.videoMeta, null)
+    // ── 更新 DB ──
+    // 写入前重新检查：此期间用户可能已手动上传字幕，不应覆盖
+    const checkRow = await queryOne('SELECT videoSubtitles FROM texts WHERE id=?', [id])
+    let currentSubs: SubtitleCue[] = []
+    if (checkRow) {
+      currentSubs = safeParse<SubtitleCue[]>(checkRow.videoSubtitles, [])
+    }
+
+    const oldMeta = safeParse<VideoMeta | null>(row.videoMeta, null)
     const updatedMeta: VideoMeta = {
-      url: videoMeta?.url || '',
-      type: videoMeta?.type || 'youtube',
-      duration: fetchedDuration || videoMeta?.duration || 0,
-      thumbnail: localThumbnail || fetchedThumbnail || videoMeta?.thumbnail || '',
-      originalFileName: videoMeta?.originalFileName || '',
+      url: oldMeta?.url || '',
+      type: oldMeta?.type || 'youtube',
+      duration: fetchedDuration || oldMeta?.duration || 0,
+      thumbnail: localThumbnail || fetchedThumbnail || oldMeta?.thumbnail || '',
+      originalFileName: oldMeta?.originalFileName || '',
     }
 
-    db.run(
-      `UPDATE texts SET text=?, title=?, videoSubtitles=?, segments=?, excerpt=?, videoMeta=?, filePath=? WHERE id=?`,
-      [
-        text.slice(0, 100000),
-        fetchedTitle || row.title,
-        JSON.stringify(subtitles),
-        JSON.stringify(segments),
-        excerpt,
-        JSON.stringify(updatedMeta),
-        '',
-        id,
-      ]
-    )
-    await saveDb()
-    console.log(`[extract] ${id} 完成: ${subtitles.length} 条字幕`)
+    if (currentSubs.length > 0) {
+      // 已有字幕（手动上传或之前的提取），只更新元数据，保护现有字幕不被覆盖
+      await runQuery(
+        `UPDATE texts SET title=?, videoMeta=? WHERE id=?`,
+        [fetchedTitle || row.title, JSON.stringify(updatedMeta), id]
+      )
+      console.log(`[extract] ${id} 字幕已存在（${currentSubs.length} 条），仅更新元数据，标题="${fetchedTitle || row.title}"`)
+    } else {
+      // 没有字幕，正常写入
+      const text = subtitles.length > 0 ? subtitlesToText(subtitles) : ''
+      const segments = subtitles.map((c, idx) => ({
+        id: `p-${idx}`, index: idx, text: c.text, start: c.start, end: c.end,
+      }))
+      const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 150)
+
+      await runQuery(
+        `UPDATE texts SET text=?, title=?, videoSubtitles=?, segments=?, excerpt=?, videoMeta=?, filePath=? WHERE id=?`,
+        [
+          text.slice(0, 100000),
+          fetchedTitle || row.title,
+          JSON.stringify(subtitles),
+          JSON.stringify(segments),
+          excerpt,
+          JSON.stringify(updatedMeta),
+          '',
+          id,
+        ]
+      )
+      console.log(`[extract] ${id} 完成: ${subtitles.length} 条字幕, 标题="${fetchedTitle || row.title}"`)
+    }
   } finally {
     try { rmSync(tmpDir, { recursive: true, force: true }) } catch {}
   }

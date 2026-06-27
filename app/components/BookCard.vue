@@ -42,7 +42,7 @@
       <span v-if="!isVideo || !thumbnail" class="thumb-label">{{ sourceLabel }}</span>
     </div>
     <div class="doc-body">
-      <h3 class="doc-title">{{ title }}</h3>
+      <h3 class="doc-title" :class="{ 'ai-segmented': aiSegmented }">{{ title }}</h3>
       <div class="doc-meta">
         <span class="doc-meta-left">
           <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
@@ -74,7 +74,7 @@
 const props = defineProps<{
   id: string; title: string; length: number; source: string; draggable?: boolean
   readCount?: number; lastReadAt?: string; markCount?: number; duration?: number
-  thumbnail?: string; completedAt?: string
+  thumbnail?: string; completedAt?: string; aiSegmented?: boolean
 }>()
 
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent]; menu: [e: MouseEvent] }>()
@@ -159,6 +159,9 @@ function formatDuration(seconds: number): string {
 }
 .doc-card.completed .doc-title {
   color: #8a877c;
+}
+.doc-title.ai-segmented {
+  color: #3d3591;
 }
 
 /* ── 三点菜单按钮 ── */

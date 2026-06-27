@@ -4,13 +4,12 @@ import { get } from 'node:https'
 import { get as httpGet } from 'node:http'
 import path from 'node:path'
 import os from 'node:os'
-import { getDb, saveDb } from '../../utils/db'
+import { queryOne, runQuery } from '../../utils/db'
 import { batchProgress } from '../../utils/batch-state'
 import { parseSubtitles, secondsToTimeStr } from '../../utils/srt'
 import { subtitlesToText } from '../../utils/subtitle'
+import { getThumbsDir, ensureDir } from '../../utils/storage'
 import type { SubtitleCue, VideoMeta } from '#shared/types'
-
-const UPLOADS_DIR = path.resolve('server/data/uploads')
 
 /** 非阻塞执行 shell 命令 */
 function runCmd(cmd: string, timeout = 90000): Promise<{ stdout: string; stderr: string }> {
@@ -22,29 +21,31 @@ function runCmd(cmd: string, timeout = 90000): Promise<{ stdout: string; stderr:
   })
 }
 
-/** 下载缩略图到本地 */
-function downloadThumbnail(imageUrl: string, destName: string): Promise<string | null> {
+/** 下载缩略图到指定内容的 thumbs/ 目录，返回相对路径 */
+function downloadThumbnail(imageUrl: string, folderId: string, contentId: string): Promise<string | null> {
   return new Promise((resolve) => {
     if (!imageUrl || !imageUrl.startsWith('http')) return resolve(null)
     const extMatch = imageUrl.match(/\.(jpg|jpeg|webp|png)(\?|$)/i)
     const ext = extMatch?.[1] || 'jpg'
-    const filename = `thumb_${destName}.${ext}`
-    const filePath = path.join(UPLOADS_DIR, filename)
-    if (existsSync(filePath)) return resolve(filename)
+    const dir = getThumbsDir(folderId, contentId)
+    ensureDir(dir)
+    const filename = `cover.${ext}`
+    const filePath = path.join(dir, filename)
+    const relative = `${folderId}/${contentId}/thumbs/${filename}`
 
-    if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true })
+    if (existsSync(filePath)) return resolve(relative)
 
     const fetcher = imageUrl.startsWith('https') ? get : httpGet
     fetcher(imageUrl, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
         const redirectUrl = res.headers.location
-        if (redirectUrl) return resolve(downloadThumbnail(redirectUrl, destName))
+        if (redirectUrl) return resolve(downloadThumbnail(redirectUrl, folderId, contentId))
         return resolve(null)
       }
       if (res.statusCode !== 200) return resolve(null)
       const file = createWriteStream(filePath)
       res.pipe(file)
-      file.on('finish', () => resolve(filename))
+      file.on('finish', () => resolve(relative))
       file.on('error', () => resolve(null))
     }).on('error', () => resolve(null))
   })
@@ -69,15 +70,9 @@ export default defineEventHandler(async (event) => {
 //  后台批量处理：元数据 + 字幕提取
 // ============================================================
 async function runBatch(batchId: string, ids: string[]) {
-  const db = await getDb()
-  const getMetaStmt = db.prepare('SELECT videoMeta,source,title,videoSubtitles FROM texts WHERE id=?')
-
   for (const videoId of ids) {
     try {
-      getMetaStmt.bind([videoId])
-      let row: any = null
-      if (getMetaStmt.step()) row = getMetaStmt.getAsObject()
-      getMetaStmt.reset()
+      const row = await queryOne('SELECT videoMeta,source,title,videoSubtitles,folder FROM texts WHERE id=?', [videoId])
 
       if (!row) {
         incProgress(batchId, '记录不存在')
@@ -116,7 +111,25 @@ async function runBatch(batchId: string, ids: string[]) {
       let fetchedDuration = videoMeta.duration || 0
       let fetchedThumbnail = videoMeta.thumbnail || ''
 
-      // ── 1. 获取元数据 ──
+      // YouTube：先尝试直接下载封面（不依赖 yt-dlp，快速可靠）
+      let localThumbnail = ''
+      if (videoMeta.type === 'youtube') {
+        const ytIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/)
+        const ytId = ytIdMatch?.[1]
+        if (ytId) {
+          const qualities = ['maxresdefault', 'sddefault', 'hqdefault', 'mqdefault', 'default']
+          for (const quality of qualities) {
+            if (localThumbnail) break
+            try {
+              const directUrl = `https://i.ytimg.com/vi/${ytId}/${quality}.jpg`
+              const result = await downloadThumbnail(directUrl, row.folder || 'default', videoId)
+              if (result) localThumbnail = result
+            } catch { /* 静默 */ }
+          }
+        }
+      }
+
+      // ── 1. 获取元数据（yt-dlp fallback）──
       let metaResult = ''
       const cookieAttempts: string[] = []
       if (existsSync(cookiesPath)) {
@@ -144,10 +157,10 @@ async function runBatch(batchId: string, ids: string[]) {
         } catch {}
       }
 
-      // 下载缩略图
-      let localThumbnail = ''
+      // 下载缩略图（yt-dlp 返回的封面优先，覆盖直连下载的结果）
       if (fetchedThumbnail) {
-        localThumbnail = await downloadThumbnail(fetchedThumbnail, videoId) || ''
+        const ytdlThumb = await downloadThumbnail(fetchedThumbnail, row.folder || 'default', videoId)
+        if (ytdlThumb) localThumbnail = ytdlThumb
       }
 
       // ── 2. 提取字幕（如尚未有） ──
@@ -198,7 +211,7 @@ async function runBatch(batchId: string, ids: string[]) {
         }))
         const excerpt = text.replace(/\s+/g, ' ').trim().slice(0, 150)
 
-        db.run(
+        await runQuery(
           `UPDATE texts SET title=?, videoMeta=?, videoSubtitles=?, text=?, segments=?, excerpt=? WHERE id=?`,
           [
             fetchedTitle,
@@ -211,11 +224,10 @@ async function runBatch(batchId: string, ids: string[]) {
           ]
         )
       } else {
-        db.run('UPDATE texts SET title=?, videoMeta=? WHERE id=?', [
+        await runQuery('UPDATE texts SET title=?, videoMeta=? WHERE id=?', [
           fetchedTitle, JSON.stringify(updatedMeta), videoId,
         ])
       }
-      await saveDb()
     } catch (e: any) {
       incProgress(batchId, e.message?.slice(0, 120) || '未知错误')
     }

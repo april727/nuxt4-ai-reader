@@ -9,10 +9,56 @@ const props = defineProps<{
   content: string
 }>()
 
+/** 规范化 AI 生成的表格：修复列数不一致、行首空列等问题 */
+function normalizeTables(md: string): string {
+  const lines = md.split('\n')
+  const result: string[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    // 检测表格头部行（以 | 开头且有分隔行紧随其后）
+    if (/^\|.+\|/.test(line) && i + 1 < lines.length && /^\|[-: |]+\|/.test(lines[i + 1])) {
+      const headerRow = line
+      const sepRow = lines[i + 1]
+      // 用分隔行确定列数（最可靠）
+      const colCount = sepRow.split('|').filter(c => c.trim()).length
+      const bodyRows: string[] = []
+      let j = i + 2
+      while (j < lines.length && /^\|/.test(lines[j])) {
+        bodyRows.push(lines[j])
+        j++
+      }
+      // 规范化每一行
+      function fixRow(row: string): string {
+        let cells = row.split('|')
+        // 去掉首尾空串
+        if (cells[0].trim() === '') cells.shift()
+        if (cells.length > 0 && cells[cells.length - 1].trim() === '') cells.pop()
+        cells = cells.map(c => c.trim())
+        // 对齐到目标列数
+        while (cells.length < colCount) cells.push('')
+        cells = cells.slice(0, colCount)
+        return '| ' + cells.join(' | ') + ' |'
+      }
+      result.push(fixRow(headerRow))
+      result.push(fixRow(sepRow))
+      for (const br of bodyRows) result.push(fixRow(br))
+      i = j
+      continue
+    }
+    result.push(line)
+    i++
+  }
+  return result.join('\n')
+}
+
 const renderedHtml = computed(() => {
   if (!props.content) return ''
   try {
-    return marked.parse(props.content, { breaks: true, gfm: true }) as string
+    let md = props.content
+    md = md.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[-: |]+\|)/g, '$1\n\n$2')
+    md = normalizeTables(md)
+    return marked.parse(md, { breaks: true, gfm: true, html: true }) as string
   } catch {
     return props.content.replace(/\n/g, '<br>')
   }
@@ -71,10 +117,15 @@ const renderedHtml = computed(() => {
   color: #6366f1;
   text-decoration: underline;
 }
+.markdown-renderer :deep(img) {
+  max-width: 100%; height: auto;
+}
 .markdown-renderer :deep(table) {
   border-collapse: collapse;
-  width: 100%;
   margin: 0.8em 0;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
 }
 .markdown-renderer :deep(th), .markdown-renderer :deep(td) {
   border: 1px solid #e2e8f0;

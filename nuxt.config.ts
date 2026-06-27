@@ -6,6 +6,12 @@ export default defineNuxtConfig({
 
   css: ['~/assets/styles/main.css'],
 
+  runtimeConfig: {
+    public: {
+      disableLocalUpload: false,
+    },
+  },
+
   nitro: {
     experimental: {
       openAPI: true,

@@ -1,6 +1,7 @@
-import { writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { ensureDir, LEGACY_UPLOADS } from '../../utils/storage'
+import { useR2, r2Put } from '../../utils/r2'
 
 const ALLOWED_VIDEO = ['.mp4', '.webm', '.ogg', '.mp3', '.wav', '.m4a', '.mov']
 
@@ -14,23 +15,32 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: `不支持的文件格式 ${ext}，支持: ${ALLOWED_VIDEO.join(', ')}` })
   }
 
-  // 限制 200MB
   const MAX_SIZE = 200 * 1024 * 1024
   if (file.size > MAX_SIZE) {
     throw createError({ statusCode: 400, message: '文件过大，限制 200MB' })
   }
 
-  const uploadDir = path.resolve('server/data/uploads')
-  if (!existsSync(uploadDir)) {
-    await mkdir(uploadDir, { recursive: true })
-  }
-
-  // 时间戳 + 随机后缀防重名
   const timestamp = Date.now()
   const safeName = `vid_${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-  const filePath = path.join(uploadDir, safeName)
 
   const buffer = Buffer.from(await file.arrayBuffer())
+
+  // ── R2 模式 ──
+  if (useR2()) {
+    const key = `uploads/${safeName}`
+    const contentType = mimeFromExt(ext)
+    await r2Put(key, buffer, contentType)
+    return {
+      filePath: key,
+      url: `/api/file/${key}`,
+      originalName: file.name,
+      size: file.size,
+    }
+  }
+
+  // ── 本地模式 ──
+  ensureDir(LEGACY_UPLOADS)
+  const filePath = path.join(LEGACY_UPLOADS, safeName)
   await writeFile(filePath, buffer)
 
   return {
@@ -40,3 +50,12 @@ export default defineEventHandler(async (event) => {
     size: file.size,
   }
 })
+
+function mimeFromExt(ext: string): string {
+  const m: Record<string, string> = {
+    '.mp4': 'video/mp4', '.webm': 'video/webm',
+    '.ogg': 'audio/ogg', '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.mov': 'video/quicktime',
+  }
+  return m[ext] || 'application/octet-stream'
+}

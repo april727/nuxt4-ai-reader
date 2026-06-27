@@ -9,9 +9,11 @@
       :active-cue-id="activeCueId"
       :practice="practice"
       :loop-cue-id="loopCueId"
+      :loop-end-cue-id="loopEndCueId"
       @cue-click="$emit('cueClick', $event)"
       @toggle-save="$emit('toggleSave', $event)"
       @toggle-loop="$emit('toggleLoop', $event)"
+      @reupload="$emit('reupload')"
     />
     <PracticeList
       :cues="cues"
@@ -34,6 +36,7 @@ defineProps<{
   activeCueId: string | null
   practice: Record<string, SubtitlePractice>
   loopCueId: string | null
+  loopEndCueId: string | null
   loading: boolean
 }>()
 
@@ -43,6 +46,7 @@ defineEmits<{
   toggleLoop: [cue: SubtitleCue]
   markMastered: [cue: SubtitleCue]
   removePractice: [cue: SubtitleCue]
+  reupload: []
 }>()
 </script>
 

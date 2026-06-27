@@ -133,17 +133,44 @@ export default defineEventHandler(async (event) => {
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 8000,
+        max_tokens: 12000,
+        response_format: { type: 'json_object' },
       },
     })
 
     const content = response.choices[0]?.message?.content || ''
-    const jsonMatch = content.match(/\[[\s\S]*\]/)
+    let raw: Array<{ index: number; text: string }>
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      throw new Error('Failed to parse AI response')
+      // 兼容旧格式：尝试匹配数组
+      const arrMatch = content.match(/\[[\s\S]*\]/)
+      if (!arrMatch) throw new Error('Failed to parse AI response')
+      try {
+        raw = JSON.parse(arrMatch[0])
+      } catch {
+        throw new Error('Failed to parse AI response')
+      }
+    } else {
+      let jsonStr = jsonMatch[0]
+      try {
+        const obj = JSON.parse(jsonStr)
+        raw = obj.segments || obj
+      } catch {
+        jsonStr = jsonStr.replace(/\}\s*\n\s*\{/g, '},\n{')
+          .replace(/\]\s*\n\s*\{/g, '],\n{')
+          .replace(/"\s*\n\s*\{/g, '",\n{')
+          .replace(/,(\s*[}\]])/g, '$1')
+        try {
+          const obj = JSON.parse(jsonStr)
+          raw = obj.segments || obj
+        } catch (repairErr: any) {
+          console.error('[segment] JSON 修复失败:', repairErr.message)
+          throw new Error('Failed to parse AI response')
+        }
+      }
     }
 
-    const raw = JSON.parse(jsonMatch[0]) as Array<{ index: number; text: string }>
+    if (!Array.isArray(raw)) throw new Error('AI response is not an array')
     const segments: Paragraph[] = raw.map((s, i) => ({
       id: `p-${i}`,
       index: i,

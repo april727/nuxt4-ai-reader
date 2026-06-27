@@ -1,6 +1,6 @@
 import { get } from 'node:https'
 import { request as httpRequest } from 'node:http'
-import { getDb, saveDb } from '../utils/db'
+import { queryOne, runQuery } from '../utils/db'
 
 function fetchHtml(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,16 +54,12 @@ export default defineEventHandler(async (event) => {
     const text = article.textContent.trim()
 
     // 3. 保存到 SQLite（URL 去重）
-    const db = await getDb()
-    const stmt = db.prepare('SELECT id,title FROM texts WHERE source=?')
-    stmt.bind([url])
-    if (stmt.step()) { const r = stmt.getAsObject(); stmt.free(); return { id: r.id, title: r.title, existed: true } }
-    stmt.free()
+    const row = await queryOne('SELECT id,title FROM texts WHERE source=?', [url])
+    if (row) return { id: row.id, title: row.title, existed: true }
 
     const id = `txt_${Date.now()}`
-    db.run('INSERT INTO texts (id,title,text,source,folder,excerpt,createdAt) VALUES (?,?,?,?,?,?,?)',
+    await runQuery('INSERT INTO texts (id,title,text,source,folder,excerpt,createdAt) VALUES (?,?,?,?,?,?,?)',
       [id, title.slice(0, 200), text.slice(0, 100000), url, 'default', text.replace(/\s+/g, ' ').trim().slice(0, 150), new Date().toISOString()])
-    await saveDb()
     return { id, title }
   } catch (err: any) {
     console.error('URL 提取失败:', err.message || err)

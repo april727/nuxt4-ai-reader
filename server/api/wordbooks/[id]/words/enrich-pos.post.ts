@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../../../utils/db'
+import { queryAll, runQuery } from '../../../../utils/db'
 
 // DeepSeek: 批量获取词性
 async function enrichPos(words: string[]): Promise<Map<string, string>> {
@@ -77,21 +77,16 @@ export default defineEventHandler(async (event) => {
     return { enriched: 0, total: 0, skipped: true }
   }
 
-  const db = await getDb()
-
   // 查找所有需要补充词性的单词（pos 为空且为单个英文单词）
-  const stmt = db.prepare('SELECT id, word FROM words WHERE bookId=? AND (pos IS NULL OR pos = \'\')')
-  stmt.bind([bookId])
+  const rows = await queryAll('SELECT id, word FROM words WHERE bookId=? AND (pos IS NULL OR pos = \'\')', [bookId])
   const targets: Array<{ id: string; word: string }> = []
-  while (stmt.step()) {
-    const w = stmt.getAsObject()
+  for (const w of rows) {
     const wordText = (w.word as string) || ''
     // 只处理纯英文单词（不含空格、标点），短语和句子跳过
     if (/^[a-zA-Z]+(?:-[a-zA-Z]+)?$/.test(wordText)) {
       targets.push({ id: w.id as string, word: wordText })
     }
   }
-  stmt.free()
 
   if (!targets.length) return { enriched: 0, total: 0 }
 
@@ -105,10 +100,9 @@ export default defineEventHandler(async (event) => {
   for (const t of targets) {
     const pos = posMap.get(t.word.trim().toLowerCase())
     if (!pos) continue
-    db.run('UPDATE words SET pos=?, updatedAt=? WHERE id=?', [pos, now, t.id])
+    await runQuery('UPDATE words SET pos=?, updatedAt=? WHERE id=?', [pos, now, t.id])
     enriched++
   }
 
-  if (enriched) await saveDb()
   return { enriched, total: targets.length }
 })

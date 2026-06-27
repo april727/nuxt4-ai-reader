@@ -69,6 +69,20 @@ export interface VideoMeta {
 
 export type VideoSourceType = 'youtube' | 'bilibili' | 'video_file' | 'audio_file'
 
+// ---- 段落笔记 ----
+
+export interface ParagraphNote {
+  id: string
+  paragraphId: string
+  startOffset: number
+  endOffset: number
+  quotedText: string
+  userContent: string    // Markdown
+  images: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 // API
 export interface AnalyzeRequest { text: string; title?: string }
 export interface ParagraphActionRequest {

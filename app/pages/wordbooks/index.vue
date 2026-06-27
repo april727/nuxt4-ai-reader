@@ -1,12 +1,7 @@
 <template>
   <div class="wb-page">
-    <header class="wb-header">
-      <NuxtLink to="/" class="wb-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        书架
-      </NuxtLink>
-      <h1 class="wb-title">单词本</h1>
-      <div class="wb-header-right">
+    <PageHeader title="单词本" active="wordbooks" back-to="/" back-label="书架">
+      <template #actions>
         <button class="wb-hdr-icon" @click="showCreateModal = true" title="新建单词本">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
@@ -17,8 +12,8 @@
         <NuxtLink to="/wordbooks/wb_default" class="wb-hdr-icon" title="所有生词">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         </NuxtLink>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <div class="wb-body">
       <!-- 按文本书籍列表 -->
@@ -129,15 +124,8 @@ onMounted(load)
 <style scoped>
 .wb-page { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: #f7f6f3; }
 
-.wb-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px; height: 50px; background: #fff;
-  border-bottom: 0.5px solid rgba(0,0,0,0.08);
-  flex-shrink: 0;
-}
 .wb-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #666; text-decoration: none; font-family: 'DM Sans', sans-serif; }
 .wb-title { font-size: 15px; font-weight: 600; color: #1a1a18; font-family: 'Lora', serif; }
-.wb-header-right { display: flex; align-items: center; gap: 4px; }
 .wb-hdr-icon { cursor: pointer; color: #888; padding: 4px; display: flex; background: none; border: none; font-family: inherit; }
 .wb-hdr-icon:hover { color: #3d3591; }
 
@@ -173,7 +161,6 @@ onMounted(load)
 .wb-card-btn:hover { border-color: #3d3591; color: #3d3591; }
 
 @media (max-width: 480px) {
-  .wb-header { padding: 0 14px; }
   .wb-list { padding-left: 14px; padding-right: 14px; }
 }
 </style>

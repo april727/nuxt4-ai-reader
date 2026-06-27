@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../utils/db'
+import { queryOne, queryAll, runQuery } from '../../utils/db'
 import type { VideoMeta } from '#shared/types'
 
 export default defineEventHandler(async (event) => {
@@ -10,24 +10,18 @@ export default defineEventHandler(async (event) => {
   if (!body?.videos?.length) throw createError({ statusCode: 400, message: '没有要导入的视频' })
 
   const folderName = body.playlistTitle.trim()
-  const db = await getDb()
 
   // 创建文件夹（检测重名）
-  let folderId = ''
-  const folderStmt = db.prepare('SELECT id FROM folders WHERE name=?')
-  folderStmt.bind([folderName])
-  if (folderStmt.step()) {
-    folderStmt.free()
+  const existingFolder = await queryOne('SELECT id FROM folders WHERE name=?', [folderName])
+  if (existingFolder) {
     throw createError({ statusCode: 409, message: `文件夹「${folderName}」已存在` })
   }
-  folderStmt.free()
 
-  folderId = 'folder_' + Date.now()
+  const folderId = 'folder_' + Date.now()
   const now = new Date().toISOString()
-  db.run('INSERT INTO folders (id,name,parent,createdAt) VALUES (?,?,?,?)', [
+  await runQuery('INSERT INTO folders (id,name,parent,createdAt) VALUES (?,?,?,?)', [
     folderId, folderName, '', now,
   ])
-  await saveDb()
 
   // 逐条导入（零等待模式 —— 只存 DB，元数据后续异步拉取）
   let imported = 0
@@ -37,9 +31,8 @@ export default defineEventHandler(async (event) => {
   // 批量预加载所有已有的 youtube/bilibili 视频 URL 用于去重
   const existing = new Set<string>()
   try {
-    const allStmt = db.prepare("SELECT videoMeta FROM texts WHERE source IN ('youtube','bilibili')")
-    while (allStmt.step()) {
-      const row = allStmt.getAsObject() as { videoMeta: string }
+    const allRows = await queryAll("SELECT videoMeta FROM texts WHERE source IN ('youtube','bilibili')")
+    for (const row of allRows) {
       if (row.videoMeta) {
         try {
           const meta: VideoMeta = JSON.parse(row.videoMeta)
@@ -47,15 +40,9 @@ export default defineEventHandler(async (event) => {
         } catch {}
       }
     }
-    allStmt.free()
   } catch {
     // 兼容旧库无 source 条件
   }
-
-  const insertStmt = db.prepare(
-    `INSERT INTO texts (id,title,text,source,folder,excerpt,filePath,segments,analysis,videoMeta,videoSubtitles,createdAt)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-  )
 
   for (const video of body.videos) {
     // 去重
@@ -75,19 +62,19 @@ export default defineEventHandler(async (event) => {
       thumbnail: '',
     }
 
-    insertStmt.bind([
-      id, video.title, '', videoType, folderId,
-      '', '', '[]', '', JSON.stringify(videoMeta), '[]', now,
-    ])
-    insertStmt.step()
-    insertStmt.reset()
+    await runQuery(
+      `INSERT INTO texts (id,title,text,source,folder,excerpt,filePath,segments,analysis,videoMeta,videoSubtitles,createdAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        id, video.title, '', videoType, folderId,
+        '', '', '[]', '', JSON.stringify(videoMeta), '[]', now,
+      ]
+    )
 
     imported++
     importedIds.push(id)
     existing.add(video.url)
   }
-
-  await saveDb()
 
   return { folderId, folderName, imported, skipped, importedIds }
 })

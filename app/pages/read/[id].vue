@@ -51,16 +51,18 @@
           </svg>
         </button>
         <button class="reader-icon-btn" @click="runManualAnalysis()" title="AI 分析" :disabled="analyzing">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg v-if="!analyzing" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M8 12a4 4 0 1 1 8 0"/>
             <circle cx="12" cy="12" r="2.5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
           </svg>
+          <div v-else class="btn-spinner-sm"></div>
         </button>
         <div class="segment-size-wrap" ref="segSizeWrapRef">
-          <button class="reader-icon-btn" @click="toggleSegSizeMenu" title="重新分段" :disabled="analyzing">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <button class="reader-icon-btn" @click="toggleSegSizeMenu" title="重新分段" :disabled="segmenting">
+            <svg v-if="!segmenting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
             </svg>
+            <div v-else class="btn-spinner-sm"></div>
             <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor" class="seg-chevron"><path d="M0 0l4 5 4-5z"/></svg>
           </button>
           <Transition name="seg-drop">
@@ -104,13 +106,38 @@
     <div class="reader-body" ref="readerBodyEl">
       <!-- 正文区 -->
       <article class="reader-article-pane" ref="articlePane" :style="{ width: leftWidth + 'px' }">
-        <div
+        <template
           v-for="(para, index) in paragraphs"
           :key="para.id"
+        >
+        <!-- 在段落上方插入 -->
+        <div
+          v-if="insertingPosition?.paragraphId === para.id && insertingPosition?.position === 'before'"
+          class="insert-block" @click.stop
+        >
+          <textarea
+            :ref="(el: any) => { insertTextareaEl = el }"
+            class="para-edit-area"
+            v-model="insertText"
+            :placeholder="`在「段落 ${index + 1}」上方插入自定义内容…`"
+            @keydown.escape="cancelInsert"
+            @keydown.ctrl.enter="confirmInsert"
+            @input="autoResizeInsertTextarea"
+            :rows="insertRows"
+          ></textarea>
+          <div class="insert-actions">
+            <button class="btn-cancel" @click="cancelInsert">取消</button>
+            <button class="btn-confirm" @click="confirmInsert">确认插入</button>
+          </div>
+        </div>
+
+        <div
           :data-id="para.id"
           class="para-block"
-          :class="{ active: para.id === activeParagraphId, past: para.id < activeParagraphId }"
+          :class="{ active: para.id === activeParagraphId, hovered: para.id === hoveredParaId && para.id !== activeParagraphId, past: para.id < activeParagraphId }"
           :ref="el => { if (el) paraRefs[index] = el }"
+          @mouseenter="cancelParaHide(); hoveredParaId = para.id"
+          @mouseleave="scheduleParaHide()"
           @click="handleParaClick(para, $event)"
           @mouseup="handleTextSelect(para)"
           @dblclick="handleDoubleClick(para)"
@@ -125,21 +152,33 @@
             <template v-else>{{ index + 1 }}</template>
           </div>
           <div class="para-body">
-            <p v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></p>
-            <textarea
-              v-else
-              class="para-edit-area"
-              v-model="editText"
-              @keydown.escape="cancelEdit"
-              @keydown.ctrl.enter="saveEdit(para.id)"
-              rows="4"
-            ></textarea>
-          <div class="para-actions" v-if="para.id === activeParagraphId" @click.stop>
+            <!-- 展示模式 -->
+            <div v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></div>
+            <!-- 编辑模式 -->
+            <template v-else>
+              <textarea
+                v-if="!editPreview"
+                :ref="(el: any) => { editTextareaEl = el }"
+                class="para-edit-area"
+                v-model="editText"
+                @keydown.escape="cancelEdit"
+                @keydown.ctrl.enter="saveEdit(para.id)"
+                @input="autoResizeEditTextarea"
+                :rows="editRows"
+                placeholder="支持 Markdown：# 标题、**加粗**、- 列表、空行分段…"
+              ></textarea>
+              <div
+                v-else
+                class="para-edit-preview"
+                v-html="renderEditPreview()"
+              ></div>
+            </template>
+          <div class="para-actions" v-if="para.id === activeParagraphId || para.id === hoveredParaId" @click.stop @mouseenter="cancelParaHide()" @mouseleave="scheduleParaHide()">
             <button
               v-if="isVideo && (para as any).start !== undefined"
               class="para-action-btn"
               @click.stop="playSegment(para)"
-              :title="miniPlayerVisible && miniPlayerStart === (para as any).start ? '跳转到播放页' : '播放本段'"
+              :title="miniPlayerVisible && miniPlayerStart === (para as any).start ? '重新播放本段' : '播放本段'"
             >
               <!-- 播放中：音频波形动画 -->
               <span v-if="miniPlayerPlaying && miniPlayerStart === (para as any).start" class="playing-bars">
@@ -161,6 +200,16 @@
               </svg>
             </button>
             <button
+              v-if="editingParagraphId === para.id"
+              class="para-action-btn"
+              :class="{ active: editPreview }"
+              @click.stop="editPreview = !editPreview"
+              :title="editPreview ? '编辑源码' : '预览效果'"
+            >
+              <svg v-if="!editPreview" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.41-9.82a2 2 0 1 1 2.83 2.83L11 15l-4 1 1-4 9.55-9.55z"/></svg>
+            </button>
+            <button
               v-else
               class="para-action-btn"
               @click.stop="startEdit(para.id)"
@@ -168,6 +217,34 @@
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+              </svg>
+            </button>
+            <button
+              class="para-action-btn"
+              @click.stop="startInsert('before', para.id)"
+              title="在上方插入段落"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="12" y1="5" x2="12" y2="19"/><polyline points="8 9 12 5 16 9"/><line x1="5" y1="3" x2="19" y2="3"/>
+              </svg>
+            </button>
+            <button
+              class="para-action-btn"
+              @click.stop="startInsert('after', para.id)"
+              title="在下方插入段落"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="12" y1="5" x2="12" y2="19"/><polyline points="16 15 12 19 8 15"/><line x1="5" y1="21" x2="19" y2="21"/>
+              </svg>
+            </button>
+            <button
+              v-if="index < paragraphs.length - 1"
+              class="para-action-btn"
+              @click.stop="mergeWithBelow(para.id)"
+              title="与下方段落合并"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M8 6h8M8 10h8M8 14h4"/><path d="M8 18l4-4 4 4"/><line x1="8" y1="18" x2="16" y2="18"/>
               </svg>
             </button>
             <button class="para-action-btn" @click.stop="focusChatInput" title="快捷提问">
@@ -208,6 +285,14 @@
                 <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
               </svg>
             </button>
+            <button class="para-action-btn" @click.stop="showAppearance = !showAppearance" title="阅读外观">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+            <button class="para-action-btn para-action-btn--delete" @click.stop="deleteParagraph(para.id)" title="删除段落">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              </svg>
+            </button>
           </div>
           <!-- 段落关联图片 -->
           <div v-if="(para as any).images?.length" class="para-images" :class="`para-images--${paraImageSize(para.id)}`">
@@ -232,6 +317,28 @@
           </div>
           </div>
         </div>
+
+        <!-- 在段落下方插入 -->
+        <div
+          v-if="insertingPosition?.paragraphId === para.id && insertingPosition?.position === 'after'"
+          class="insert-block" @click.stop
+        >
+          <textarea
+            :ref="(el: any) => { insertTextareaEl = el }"
+            class="para-edit-area"
+            v-model="insertText"
+            :placeholder="`在「段落 ${index + 1}」下方插入自定义内容…`"
+            @keydown.escape="cancelInsert"
+            @keydown.ctrl.enter="confirmInsert"
+            @input="autoResizeInsertTextarea"
+            :rows="insertRows"
+          ></textarea>
+          <div class="insert-actions">
+            <button class="btn-cancel" @click="cancelInsert">取消</button>
+            <button class="btn-confirm" @click="confirmInsert">确认插入</button>
+          </div>
+        </div>
+        </template>
       </article>
 
       <!-- 可拖拽分割线 -->
@@ -250,7 +357,7 @@
         </div>
 
         <!-- 理解 Tab -->
-        <div v-if="activeTab === 'understand'" class="panel-content qa-panel" @mousemove="onPanelMouseMove">
+        <div v-if="activeTab === 'understand'" class="panel-content qa-panel">
           <div class="panel-scroll">
             <section class="panel-section" v-if="rightPanelContent || isTyping || displayedContent">
               <div class="section-header">
@@ -273,10 +380,37 @@
             </div>
           </div>
 
-          <!-- 问答浮动区：默认隐藏，鼠标移至理解框底部时出现 -->
-          <Transition name="qa-slide"><div v-if="qaVisible" class="qa-area" ref="qaAreaRef" :style="qaCollapsed ? { background: 'transparent', borderTopColor: 'transparent' } : {}" @mouseenter="stopQaHideTimer" @mouseleave="qaCollapsed && startQaHideTimer()">
-            <!-- 拖拽手柄（有回答内容时才显示） -->
-            <div v-if="hasAnswerContent" class="qa-resize-handle" @mousedown.prevent="startQaResize"></div>
+          <!-- 问答区 -->
+          <div class="qa-toggle" @click="qaVisible = !qaVisible">
+            <span class="qa-toggle-label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              与 AI 讨论段落内容
+            </span>
+            <svg
+              width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              class="qa-chevron" :class="{ open: qaVisible }"
+            ><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <Transition name="qa-slide">
+            <div v-if="qaVisible" class="qa-area" ref="qaAreaRef">
+            <!-- 顶部操作栏 -->
+            <div class="qa-top-bar">
+              <div v-if="hasAnswerContent" class="qa-resize-handle" @mousedown.prevent="startQaResize"></div>
+              <button class="qa-collapse-btn" @click.stop="qaVisible = false" title="收起">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 15 12 9 18 15"/></svg>
+              </button>
+            </div>
+            <!-- 快捷提问 -->
+            <div v-if="currentParagraphChat.length === 0 && !chatLoading && !chatTyping" class="qa-quick">
+              <button
+                v-for="q in quickQuestions" :key="q.label"
+                class="qa-quick-btn"
+                :disabled="chatLoading"
+                @click="sendQuick(q.prompt)"
+              >{{ q.label }}</button>
+            </div>
             <!-- 回答区 -->
             <div class="qa-answer" ref="qaAnswerRef" :style="qaAnswerStyle">
               <div
@@ -303,7 +437,6 @@
                 v-model="chatInput"
                 placeholder="提问关于当前段落的问题…"
                 @keydown.enter="sendChat"
-                @focus="stopQaHideTimer"
                 :disabled="chatLoading"
               />
               <button class="send-btn" @click="sendChat" :disabled="!chatInput.trim() || chatLoading">
@@ -319,19 +452,26 @@
         <!-- 笔记 Tab -->
         <div v-if="activeTab === 'notes'" class="panel-content">
           <div class="panel-scroll">
-            <!-- 全局笔记（播客摘要等） -->
             <div v-if="textNotes" class="text-notes-section">
               <MarkdownRenderer :content="textNotes" />
             </div>
-            <!-- 段落标注笔记 -->
-            <div v-if="notes.length" class="notes-divider">
-              <span>段落笔记</span>
+            <div v-if="paragraphNotes.length" class="notes-divider">
+              <span>摘抄笔记 · {{ paragraphNotes.length }}</span>
             </div>
-            <div v-for="note in notes" :key="note.id" class="note-card">
-              <div class="note-para">第 {{ note.paraIdx }} 段</div>
-              <p class="note-content">{{ note.content }}</p>
+            <div v-for="(note, ni) in paragraphNotes" :key="note.id" class="note-card">
+              <div class="note-quote">
+                <svg class="note-quote-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.3"><path d="M3.7 6.7C2.4 8.3 1.5 10.4 1.5 12.9c0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8L3.7 6.7zm9.5 0c-1.3 1.6-2.2 3.7-2.2 6.2 0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8l-3.6-1.1z"/></svg>
+                <span class="note-quote-text">{{ note.quotedText }}</span>
+                <button class="note-jump-btn" @click.stop="jumpToNoteSource(note)" title="跳转到原文位置">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </button>
+              </div>
+              <div class="note-actions">
+                <span class="note-para-label">第 {{ paragraphIndex(note.paragraphId) }} 段</span>
+                <button class="note-action-btn note-action-btn--delete" @click.stop="deleteNote(ni)" title="删除">删除</button>
+              </div>
             </div>
-            <div v-if="!textNotes && notes.length === 0" class="empty-state">
+            <div v-if="!textNotes && paragraphNotes.length === 0" class="empty-state">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
                 <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
               </svg>
@@ -376,8 +516,8 @@
         <button class="sel-btn" style="--c:#06b6d4" @click="createMark('sentence')" title="标记为句子">
           <span class="sel-label">句</span><span class="sel-hint">标记</span>
         </button>
-        <button class="sel-btn" style="--c:#ec4899" @click="handleCreateNote(selToolbar.paraId, selToolbar.text, selToolbar.startOffset, selToolbar.endOffset); selToolbar.visible = false; window.getSelection()?.removeAllRanges()" title="添加笔记">
-          <span class="sel-label">记</span><span class="sel-hint">笔记</span>
+        <button class="sel-btn" style="--c:#ec4899" @click="handleCreateNote(selToolbar.paraId, selToolbar.text, selToolbar.startOffset, selToolbar.endOffset); selToolbar.visible = false; window.getSelection()?.removeAllRanges()" title="保存为知识要点">
+          <span class="sel-label">知</span><span class="sel-hint">要点</span>
         </button>
         <button class="sel-btn" style="--c:#8b5cf6" @click="handleQuickTranslate(selToolbar.text, { x: selToolbar.x, y: selToolbar.y }); selToolbar.visible = false; window.getSelection()?.removeAllRanges()" title="翻译选中">
           <span class="sel-label">译</span><span class="sel-hint">翻译</span>
@@ -395,6 +535,12 @@
     />
 
     <!-- 标记详情弹窗 -->
+    <!-- 文本外观设置 -->
+    <ReadingAppearance :visible="showAppearance" @close="showAppearance = false" />
+
+    <!-- 全局知识要点按钮（排除段落正文区） -->
+    <GlobalKnowledgeBtn :source-id="id" :source-title="title || article.analysis.value?.title || ''" />
+
     <MarkPopup
       :visible="markPopup.visible"
       :mark="markPopup.mark"
@@ -425,6 +571,7 @@
       :visible="miniPlayerVisible"
       :start-time="miniPlayerStart"
       :end-time="miniPlayerEnd"
+      :force-replay="forceReplayKey"
       @close="miniPlayerVisible = false"
     />
 
@@ -439,12 +586,15 @@
 </template>
 
 <script setup lang="ts">
-import type { ParagraphAction, ChatMessage, Paragraph, Mark, MarkType, ReadingPosition } from '#shared/types'
+import type { ParagraphAction, ChatMessage, Paragraph, Mark, MarkType, ReadingPosition, ParagraphNote } from '#shared/types'
 import { MARK_COLORS } from '#shared/types'
 import { useArticle } from '~/composables/useArticle'
 import { useDeepSeek } from '~/composables/useDeepSeek'
 import { useTextStream } from '~/composables/useTextStream'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
+import ReadingAppearance from '~/components/ReadingAppearance.vue'
+import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
+import { marked } from 'marked'
 
 const route = useRoute(); const id = route.params.id as string
 useHead({ title: 'AI 阅读分析' })
@@ -463,17 +613,16 @@ const miniPlayerStart = ref(0)
 const miniPlayerEnd = ref<number | undefined>(undefined)
 const miniPlayerRef = ref<any>(null)
 const miniPlayerPlaying = computed(() => miniPlayerRef.value?.playing ?? false)
+const forceReplayKey = ref(0)
 
 function playSegment(para: any) {
   if (!videoMeta.value) return
   miniPlayerEnd.value = para.end
-  if (miniPlayerVisible.value && miniPlayerStart.value === para.start && isVideo.value) {
-    // 同一个段落：切回跳转模式
-    jumpToWatch(para)
-    return
-  }
+  // 同一段落再次点击：从头重新播放（不再跳转到视频播放页）
   miniPlayerStart.value = para.start
   miniPlayerVisible.value = true
+  // 每次点击都强制 MiniPlayer 从 start 处重新播放
+  forceReplayKey.value++
 }
 const { displayText: displayedContent, isTyping, startStreaming, appendText, endStream, finishStreaming, stopStreaming, showAll } = textStream
 const { displayText: tcc, isTyping: chatTyping, startStreaming: startChatStream, appendText: appendChatText, endStream: endChatStream, stopStreaming: stopChatStream } = chatTextStream
@@ -482,6 +631,12 @@ const typingChatContent = computed(() => tcc.value)
 const activeTab = ref('understand')
 const chatInput = ref('')
 const chatLoading = ref(false)
+const quickQuestions = [
+  { label: '解释段落', prompt: '请用中文详细解释当前段落的内容和含义。' },
+  { label: '总结要点', prompt: '请用中文简要总结当前段落的核心要点。' },
+  { label: '分析语法', prompt: '分析当前段落中出现的重点语法结构和表达方式。' },
+  { label: '翻译全文', prompt: '请把当前段落翻译成流畅的中文。' },
+]
 const progressMsg = ref('')
 const pdfUrl = ref(''); const showPdf = ref(false); const pdfPage = ref<number | null>(null)
 const pdfViewerUrl = computed(() => {
@@ -491,6 +646,7 @@ const pdfViewerUrl = computed(() => {
 })
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
 const textNotes = ref('')
+const paragraphNotes = ref<ParagraphNote[]>([])
 
 // ── Prompt 模板缓存（客户端从 API 加载一次） ──
 const promptTemplates = reactive<Record<string, string>>({
@@ -543,7 +699,6 @@ const hasAnswerContent = computed(() =>
   currentParagraphChat.value.length > 0 || chatLoading.value || chatTyping.value
 )
 // QA 是否处于完全折叠态（无内容 + 高度归零）
-const qaCollapsed = computed(() => !hasAnswerContent.value && answerHeight.value === 0)
 // 回答区样式：折叠态透明，流式输出时自适应高度，手动拖拽后锁定高度
 const isStreaming = computed(() => chatTyping.value || chatLoading.value)
 const qaAnswerStyle = computed(() => {
@@ -563,14 +718,6 @@ watch(typingChatContent, () => {
   })
 })
 // 折叠态自动隐藏定时器
-let qaHideTimer: ReturnType<typeof setTimeout> | null = null
-function startQaHideTimer() {
-  stopQaHideTimer()
-  qaHideTimer = setTimeout(() => { hideQa() }, 1000)
-}
-function stopQaHideTimer() {
-  if (qaHideTimer) { clearTimeout(qaHideTimer); qaHideTimer = null }
-}
 
 // 笔记/生词本地数据
 // 生词 — 从全文章 marks 中自动提取 type=word 的标记
@@ -655,22 +802,166 @@ const markPopup = reactive<{ visible: boolean; mark: Mark; loading: boolean; typ
 })
 
 // ---- 渲染标记文字 ----
-function renderMarkedText(p: Paragraph): string {
-  let html = escapeHtml(p.text)
-  const all = marks.value.filter(m => m.paragraphId === p.id)
-    .sort((a, b) => b.startOffset - a.startOffset)
-  const covered: Array<{ s: number; e: number }> = []
-  for (const m of all) {
-    const overlaps = covered.some(c => m.startOffset < c.e && m.endOffset > c.s)
-    if (overlaps) continue
-    const before = html.slice(0, m.startOffset)
-    const marked = html.slice(m.startOffset, m.endOffset)
-    const after = html.slice(m.endOffset)
-    html = `${before}<mark class="hl-${m.type}" data-mark-id="${m.id}" style="background:${m.color}22;border-bottom:2px solid ${m.color};cursor:pointer;border-radius:2px;padding:1px 0">${marked}</mark>${after}`
-    covered.push({ s: m.startOffset, e: m.endOffset })
+function locateMark(m: Mark, paraText: string): { start: number; end: number } | null {
+  const markText = m.text
+  if (!markText) return null
+
+  // 先验证存储的 offset
+  if (paraText.slice(m.startOffset, m.endOffset) === markText) {
+    return { start: m.startOffset, end: m.endOffset }
   }
-  return html
+
+  // offset 失效 → 搜索定位
+  const idx = paraText.indexOf(markText)
+  if (idx === -1) return null
+
+  // 唯一匹配 → 更新存储的 offset
+  if (idx === paraText.lastIndexOf(markText)) {
+    m.startOffset = idx
+    m.endOffset = idx + markText.length
+    return { start: idx, end: idx + markText.length }
+  }
+
+  // 多处出现 → 取离原 offset 最近的
+  let best = idx, bestDist = Math.abs(idx - m.startOffset)
+  let pos = idx
+  while ((pos = paraText.indexOf(markText, pos + 1)) !== -1) {
+    const dist = Math.abs(pos - m.startOffset)
+    if (dist < bestDist) { best = pos; bestDist = dist }
+  }
+  m.startOffset = best
+  m.endOffset = best + markText.length
+  return { start: best, end: best + markText.length }
 }
+
+function renderMarkedText(p: Paragraph): string {
+  // 解析标记 → 定位 → 过滤失效标记
+  const resolved: Array<{ mark: Mark; start: number; end: number }> = []
+  for (const m of marks.value) {
+    if (m.paragraphId !== p.id) continue
+    const r = locateMark(m, p.text)
+    if (r) resolved.push({ mark: m, start: r.start, end: r.end })
+  }
+
+  // 无标记 → 纯 Markdown 渲染
+  if (!resolved.length) {
+    try { return marked.parse(p.text, { breaks: true, gfm: true }) as string }
+    catch { return escapeHtml(p.text).replace(/\n/g, '<br>') }
+  }
+
+  // 检测是否有重叠标记
+  resolved.sort((a, b) => a.start - b.start)
+  const hasOverlap = resolved.some((r, i) => {
+    if (i === 0) return false
+    return r.start < resolved[i - 1].end
+  })
+
+  // ── 无重叠 → token 路径（支持 Markdown）──
+  if (!hasOverlap) {
+    const tokens: string[] = []
+    let text = p.text
+    const sorted = [...resolved].sort((a, b) => b.start - a.start)
+    for (const r of sorted) {
+      const idx = tokens.length
+      const token = `⟨MRK${idx}⟩`
+      const markHtml = `<mark class="hl-${r.mark.type}" data-mark-id="${r.mark.id}" style="background:${r.mark.color}22;border-bottom:2px solid ${r.mark.color};cursor:pointer;border-radius:2px;padding:1px 0">${escapeHtml(text.slice(r.start, r.end))}</mark>`
+      tokens.push(markHtml)
+      text = text.slice(0, r.start) + token + text.slice(r.end)
+    }
+    try {
+      const mdHtml = marked.parse(text, { breaks: true, gfm: true }) as string
+      let result = mdHtml
+      for (let i = 0; i < tokens.length; i++) {
+        result = result.replace(`⟨MRK${i}⟩`, tokens[i])
+      }
+      // 如果任何 token 没被替换，说明 marked 改动了 token 字符 → 回退纯 MD
+      if (/⟨MRK\d+⟩/.test(result)) throw new Error('Token not replaced')
+      return result
+    } catch {
+      try { return marked.parse(p.text, { breaks: true, gfm: true }) as string }
+      catch { return escapeHtml(p.text) }
+    }
+  }
+
+  // ── 有重叠 → 先 Markdown 全文渲染，再叠加标记 ──
+  resolved.sort((a, b) => (b.end - b.start) - (a.end - a.start))
+
+  try {
+    // 第一步：Markdown 渲染全文
+    const mdHtml = marked.parse(p.text, { breaks: true, gfm: true }) as string
+
+    // 第二步：按分段构建输出，未标记段从 mdHtml 提取，标记段用 <mark> 嵌套
+    const points = new Set<number>()
+    points.add(0); points.add(p.text.length)
+    for (const r of resolved) { points.add(r.start); points.add(r.end) }
+    const pointArr = [...points].sort((a, b) => a - b)
+
+    // 提取 mdHtml 的纯文本 + 字符位置映射
+    const mdText = mdHtml.replace(/<[^>]+>/g, '')
+    function findInMdHtml(target: string, startPos: number): string {
+      // 在 mdHtml 中从 startPos（源文本偏移）开始查找 target
+      // 返回 mdHtml 中对应的 HTML 片段
+      const plainBefore = mdText.slice(0, startPos).length
+      // 简化：直接用 target 在 mdHtml 中搜索
+      const escaped = escapeHtml(target)
+      // 尝试在 mdHtml 中找到完整的 escaped 文本
+      // 跳过可能在 HTML 标签内的匹配
+      let searchFrom = 0
+      // 跳过 startPos 之前的纯文本长度对应的 HTML 位置
+      let plainCount = 0
+      for (let i = 0; i < mdHtml.length; i++) {
+        if (plainCount >= startPos) { searchFrom = i; break }
+        if (mdHtml[i] === '<') { while (i < mdHtml.length && mdHtml[i] !== '>') i++; continue }
+        plainCount++
+      }
+      const idx = mdHtml.indexOf(escaped, searchFrom)
+      if (idx !== -1 && mdHtml.indexOf(escaped, idx + 1) === -1) return mdHtml.slice(idx, idx + escaped.length)
+      return escaped
+    }
+
+    let html = ''
+    for (let i = 0; i < pointArr.length - 1; i++) {
+      const segStart = pointArr[i]
+      const segEnd = pointArr[i + 1]
+      const segText = p.text.slice(segStart, segEnd)
+      if (!segText) continue
+
+      const covering = resolved.filter(r => r.start <= segStart && r.end >= segEnd)
+      if (!covering.length) {
+        // 无标记段 → 从 mdHtml 提取对应的 HTML
+        html += findInMdHtml(segText, segStart)
+        continue
+      }
+
+      // 有标记段 → 嵌套 <mark>
+      let segHtml = escapeHtml(segText)
+      for (let j = covering.length - 1; j >= 0; j--) {
+        const m = covering[j]
+        const depth = covering.length - 1 - j
+        const alpha = depth === 0 ? '22' : String(Math.max(6, 22 - depth * 8)).padStart(2, '0')
+        segHtml = `<mark class="hl-${m.mark.type}${depth > 0 ? ' hl-top' : ''}" data-mark-id="${m.mark.id}" data-mark-depth="${depth}" style="background:${m.mark.color}${alpha};border-bottom:2px solid ${m.mark.color};cursor:pointer;border-radius:2px;padding:1px 0">${segHtml}</mark>`
+      }
+      html += segHtml
+    }
+    return html
+  } catch {
+    return escapeHtml(p.text)
+  }
+}
+
+function hasMarkdownSyntax(s: string): boolean {
+  return /^#{1,6}\s|[*_~`]|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>|\[.+\]\(.+\)/m.test(s)
+}
+
+/** 对无标记文本段应用 Markdown 行内渲染 */
+function renderInlineMD(text: string): string {
+  try {
+    return marked.parseInline(text, { breaks: true, gfm: true }) as string
+  } catch {
+    return escapeHtml(text)
+  }
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
@@ -690,32 +981,15 @@ function startResize(e: MouseEvent) {
   document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
 }
 
-// ---- QA 浮动区控制 ----
-function onPanelMouseMove(e: MouseEvent) {
-  if (qaVisible.value) return
-  const panel = e.currentTarget as HTMLElement
-  const rect = panel.getBoundingClientRect()
-  if (e.clientY >= rect.bottom - 50) {
-    showQa()
-  }
-}
-
+// ---- QA 区控制 ----
 function showQa() {
   qaVisible.value = true
-  stopQaHideTimer()
   userAdjustedHeight.value = false
   if (currentParagraphChat.value.length > 0) {
     answerHeight.value = Math.min(200, (qaAreaRef.value?.closest('.qa-panel')?.getBoundingClientRect().height || 400) - 56)
   } else {
     answerHeight.value = 0
-    startQaHideTimer()
   }
-}
-
-function hideQa() {
-  stopQaHideTimer()
-  qaVisible.value = false
-  qaResizing = false
 }
 
 function startQaResize(e: MouseEvent) {
@@ -726,7 +1000,6 @@ function startQaResize(e: MouseEvent) {
   if (qaAnswerRef.value) {
     answerHeight.value = qaAnswerRef.value.getBoundingClientRect().height
   }
-  stopQaHideTimer()
   document.body.style.cursor = 'row-resize'
   document.body.style.userSelect = 'none'
 
@@ -746,7 +1019,6 @@ function startQaResize(e: MouseEvent) {
       answerHeight.value = 0
       startH = 0
       startY = ev.clientY
-      if (!hasAnswerContent.value) startQaHideTimer()
       return
     }
 
@@ -754,8 +1026,6 @@ function startQaResize(e: MouseEvent) {
     const effectiveH = startH === 0
       ? QA_SNAP_MIN + (newH - SNAP_THRESHOLD)
       : newH
-
-    if (effectiveH > 0) stopQaHideTimer()
 
     const panel = (e.target as HTMLElement).closest('.qa-panel')
     if (panel) {
@@ -798,19 +1068,25 @@ function handleTextSelect(p: Paragraph) {
     const text = sel.toString().trim()
     if (text.length < 2 || text.length > 300) { selToolbar.visible = false; return }
     const range = sel.getRangeAt(0)
-    const paraEl = (sel.anchorNode?.parentElement)?.closest('.para-text')
-    if (!paraEl) { selToolbar.visible = false; return }
-    const startOffset = getTextOffset(paraEl, range.startContainer, range.startOffset)
-    const endOffset = getTextOffset(paraEl, range.endContainer, range.endOffset)
-    if (startOffset < 0 || endOffset < 0) return
     const rect = range.getBoundingClientRect()
+    // 尝试从 DOM 获取粗略偏移作为搜索提示
+    const paraEl = (sel.anchorNode?.parentElement)?.closest('.para-text') as HTMLElement | null
+    let hintOffset = 0
+    if (paraEl) {
+      const walker = document.createTreeWalker(paraEl, NodeFilter.SHOW_TEXT)
+      let offset = 0; let node: Node | null
+      while ((node = walker.nextNode())) {
+        if (node === range.startContainer) { hintOffset = offset + range.startOffset; break }
+        offset += (node.textContent || '').length
+      }
+    }
     selToolbar.visible = true
     selToolbar.x = rect.left + rect.width / 2
     selToolbar.y = rect.top
     selToolbar.text = text
     selToolbar.paraId = p.id
-    selToolbar.startOffset = startOffset
-    selToolbar.endOffset = endOffset
+    selToolbar.startOffset = hintOffset
+    selToolbar.endOffset = hintOffset + text.length
   }, 10)
 }
 
@@ -825,18 +1101,30 @@ function handleDoubleClick(para: Paragraph) {
   }, 20)
 }
 
-function getTextOffset(root: Element, targetNode: Node, nodeOffset: number): number {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let offset = 0; let node: Node | null
-  while ((node = walker.nextNode())) {
-    if (node === targetNode) return offset + nodeOffset
-    offset += (node.textContent || '').length
+/** 在段落原文中查找选中文字的偏移 */
+function findOffsetInSource(paraText: string, selectedText: string, hintOffset: number): { start: number; end: number } {
+  const idx = paraText.indexOf(selectedText)
+  if (idx === -1) return { start: 0, end: 0 }
+  // 唯一匹配
+  if (idx === paraText.lastIndexOf(selectedText)) {
+    return { start: idx, end: idx + selectedText.length }
   }
-  return -1
+  // 多处匹配 → 取离 hintOffset 最近的
+  let best = idx, bestDist = Math.abs(idx - hintOffset)
+  let pos = idx
+  while ((pos = paraText.indexOf(selectedText, pos + 1)) !== -1) {
+    const dist = Math.abs(pos - hintOffset)
+    if (dist < bestDist) { best = pos; bestDist = dist }
+  }
+  return { start: best, end: best + selectedText.length }
 }
 
 function createMark(type: MarkType) {
-  handleCreateMark(selToolbar.paraId, selToolbar.text, type, selToolbar.startOffset, selToolbar.endOffset)
+  const para = paragraphs.value.find(p => p.id === selToolbar.paraId)
+  if (!para) return
+  const { start, end } = findOffsetInSource(para.text, selToolbar.text, selToolbar.startOffset)
+  if (start === end) return // 找不到
+  handleCreateMark(selToolbar.paraId, selToolbar.text, type, start, end)
   selToolbar.visible = false
   window.getSelection()?.removeAllRanges()
 }
@@ -847,6 +1135,11 @@ let pendingPara: Paragraph | null = null
 
 function handleParaClick(p: Paragraph, e: MouseEvent) {
   const target = e.target as HTMLElement
+  // 点击 Markdown 渲染的图片 → 打开图片查看器
+  if (target.tagName === 'IMG') {
+    const src = (target as HTMLImageElement).src
+    if (src) { viewImage(src); return }
+  }
   if (target.tagName === 'MARK') {
     const mid = target.dataset.markId
     const mark = marks.value.find(m => m.id === mid)
@@ -856,12 +1149,6 @@ function handleParaClick(p: Paragraph, e: MouseEvent) {
   const sel = window.getSelection()
   if (sel && !sel.isCollapsed) return
   article.setActiveParagraph(p.id)
-  // 切换段落：有问答内容则自动展示，无内容则隐藏
-  if (currentParagraphChat.value.length > 0) {
-    if (!qaVisible.value) { qaVisible.value = true; stopQaHideTimer() }
-  } else {
-    hideQa()
-  }
   pendingPara = p
   clickTimer = setTimeout(() => {
     if (pendingPara) {
@@ -876,36 +1163,57 @@ function doCopy(text: string) { navigator.clipboard.writeText(text).catch(() => 
 // 段落文本编辑
 const editingParagraphId = ref<string | null>(null)
 const editText = ref('')
+let editTextareaEl: HTMLTextAreaElement | null = null
+const editRows = ref(1)
+const editPreview = ref(false)  // 编辑模式下的 Markdown 预览开关
+
+/** 根据文本内容自动调整 textarea 高度，使其与原文段落视觉大小一致 */
+function autoResizeEditTextarea() {
+  const ta = editTextareaEl
+  if (!ta) return
+  // 先重置为 1 行，再根据 scrollHeight 计算实际需要的行数
+  ta.style.height = 'auto'
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 27
+  const paddingV = parseFloat(getComputedStyle(ta).paddingTop) + parseFloat(getComputedStyle(ta).paddingBottom)
+  const targetHeight = ta.scrollHeight - paddingV
+  const rows = Math.max(1, Math.ceil(targetHeight / lineHeight))
+  editRows.value = rows
+  ta.style.height = '' // 清除临时高度，让 rows 属性接管
+}
+
 function startEdit(pid: string) {
   const para = paragraphs.value.find(p => p.id === pid)
   if (!para) return
   editingParagraphId.value = pid
   editText.value = para.text
+  editPreview.value = false
+  // 下一帧等 DOM 渲染后根据内容自动调整高度
+  nextTick(() => { autoResizeEditTextarea() })
 }
 function saveEdit(pid: string) {
   const newText = editText.value.trim()
-  if (!newText) { editingParagraphId.value = null; editText.value = ''; return }
+  if (!newText) {
+    deleteParagraph(pid)
+    return
+  }
 
-  // 处理该段落的标记：尝试在新文本中重新定位，定位不到才删除
-  const paraMarks = marks.value.filter(m => m.paragraphId === pid)
-  const oldText = paragraphs.value.find(p => p.id === pid)?.text || ''
-  let marksChanged = false
-
-  for (const m of paraMarks) {
-    const markedText = oldText.slice(m.startOffset, m.endOffset)
-    const newIdx = newText.indexOf(markedText)
-    if (newIdx !== -1 && newIdx === newText.lastIndexOf(markedText)) {
-      // 唯一匹配 → 更新 offset
-      m.startOffset = newIdx
-      m.endOffset = newIdx + markedText.length
-      marksChanged = true
-    } else {
-      // 找不到或有多处匹配 → 删除该标记
+  // 标记重新定位
+  const deletedMarkTexts: string[] = []
+  for (const m of marks.value) {
+    if (m.paragraphId !== pid) continue
+    const r = locateMark(m, newText)
+    if (!r) {
+      deletedMarkTexts.push(m.text || '')
       marks.value = marks.value.filter(x => x.id !== m.id)
-      marksChanged = true
     }
   }
-  if (marksChanged) saveMarks()
+
+  if (deletedMarkTexts.length) {
+    saveMarks()
+    progressError.value = true
+    progressMsg.value = `已移除 ${deletedMarkTexts.length} 个标记（文本变更导致无法定位：${deletedMarkTexts.slice(0, 3).join('、')}${deletedMarkTexts.length > 3 ? '等' : ''}）`
+    setTimeout(() => { if (progressMsg.value?.startsWith('已移除')) { progressMsg.value = ''; progressError.value = false } }, 5000)
+  }
 
   article.updateParagraphText(pid, newText)
   $fetch('/api/text/update-segment', {
@@ -914,14 +1222,233 @@ function saveEdit(pid: string) {
   }).catch(() => {})
   editingParagraphId.value = null
   editText.value = ''
+  editPreview.value = false
 }
+/** 编辑模式下预览 Markdown 渲染效果 */
+function renderEditPreview(): string {
+  try {
+    return marked.parse(editText.value || '', { breaks: true, gfm: true }) as string
+  } catch {
+    return escapeHtml(editText.value || '').replace(/\n/g, '<br>')
+  }
+}
+
 function cancelEdit() {
   editingParagraphId.value = null
   editText.value = ''
+  editTextareaEl = null
+  editPreview.value = false
+}
+
+// ── 段落插入 ──
+const insertingPosition = ref<{ position: 'before' | 'after'; paragraphId: string } | null>(null)
+const insertText = ref('')
+let insertTextareaEl: HTMLTextAreaElement | null = null
+const insertRows = ref(2)
+
+function autoResizeInsertTextarea() {
+  const ta = insertTextareaEl
+  if (!ta) return
+  ta.style.height = 'auto'
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 27
+  const paddingV = parseFloat(getComputedStyle(ta).paddingTop) + parseFloat(getComputedStyle(ta).paddingBottom)
+  const targetHeight = ta.scrollHeight - paddingV
+  insertRows.value = Math.max(2, Math.ceil(targetHeight / lineHeight))
+  ta.style.height = ''
+}
+
+function startInsert(position: 'before' | 'after', paragraphId: string) {
+  insertingPosition.value = { position, paragraphId }
+  insertText.value = ''
+  insertRows.value = 2
+  nextTick(() => {
+    insertTextareaEl?.focus()
+  })
+}
+
+function cancelInsert() {
+  insertingPosition.value = null
+  insertText.value = ''
+  insertTextareaEl = null
+}
+
+function confirmInsert() {
+  const text = insertText.value.trim()
+  if (!text) { cancelInsert(); return }
+
+  const pos = insertingPosition.value
+  if (!pos) return
+
+  const refPara = paragraphs.value.find(p => p.id === pos.paragraphId)
+  if (!refPara) { cancelInsert(); return }
+
+  // 计算插入位置索引
+  const refIdx = paragraphs.value.indexOf(refPara)
+  const insertIdx = pos.position === 'before' ? refIdx : refIdx + 1
+
+  // 生成新段落 ID
+  const newId = `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  const newPara: Paragraph = { id: newId, index: insertIdx, text }
+
+  // 插入新段落并重排后续索引
+  const newParagraphs = [...paragraphs.value]
+  newParagraphs.splice(insertIdx, 0, newPara)
+  for (let i = insertIdx + 1; i < newParagraphs.length; i++) {
+    newParagraphs[i] = { ...newParagraphs[i], index: i }
+  }
+
+  // 更新本地状态
+  article.setParagraphs(newParagraphs)
+
+  // 持久化到数据库
+  $fetch('/api/text/insert-segment', {
+    method: 'POST',
+    body: { textId: id, beforeParagraphId: pos.position === 'before' ? pos.paragraphId : undefined, afterParagraphId: pos.position === 'after' ? pos.paragraphId : undefined, segmentId: newId, text },
+  }).catch(() => {})
+
+  cancelInsert()
+}
+
+// ── 段落删除 ──
+async function deleteParagraph(pid: string) {
+  const idx = paragraphs.value.findIndex(p => p.id === pid)
+  if (idx === -1) { editingParagraphId.value = null; editText.value = ''; return }
+
+  const para = paragraphs.value[idx]
+  const markCount = marks.value.filter(m => m.paragraphId === pid).length
+  const imageCount = para.images?.length || 0
+
+  // 确认提示
+  const parts: string[] = [`确定删除「段落 ${idx + 1}」？`]
+  if (markCount > 0) parts.push(`${markCount} 个标记将同时移除`)
+  if (imageCount > 0) parts.push(`${imageCount} 张图片将同时移除`)
+  if (!confirm(parts.join('，') + '。')) { editingParagraphId.value = null; editText.value = ''; editTextareaEl = null; return }
+
+  // 清理此段落的标记
+  let marksChanged = false
+  const removed = marks.value.filter(m => m.paragraphId !== pid)
+  if (removed.length !== marks.value.length) {
+    marks.value = removed
+    marksChanged = true
+  }
+  if (marksChanged) saveMarks()
+
+  // 清理此段落的 AI 缓存
+  article.setCachedExplanation(pid, 'explain', '')
+  article.setCachedExplanation(pid, 'translate', '')
+
+  // 清理阅读位置
+  if (readingPosition.value?.paragraphId === pid) {
+    readingPosition.value = null
+    $fetch('/api/text/update', { method: 'POST', body: { id, readingPosition: null } }).catch(() => {})
+  }
+
+  // 从数组中移除并重排索引
+  const newParagraphs = [...paragraphs.value]
+  newParagraphs.splice(idx, 1)
+  for (let i = 0; i < newParagraphs.length; i++) {
+    newParagraphs[i] = { ...newParagraphs[i], index: i }
+  }
+  article.setParagraphs(newParagraphs)
+
+  // 清除编辑状态
+  editingParagraphId.value = null
+  editText.value = ''
+  editTextareaEl = null
+
+  // 如果当前活跃段落被删，清除激活状态
+  if (activeParagraphId.value === pid) {
+    article.setActiveParagraph(null)
+  }
+
+  // 持久化
+  try {
+    await $fetch('/api/text/delete-segment', {
+      method: 'POST',
+      body: { textId: id, segmentId: pid },
+    })
+    progressMsg.value = `段落 ${idx + 1} 已删除`
+    setTimeout(() => { if (progressMsg.value?.startsWith('段落')) progressMsg.value = '' }, 2000)
+  } catch {
+    progressError.value = true
+    progressMsg.value = '删除失败，请刷新后重试'
+    setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
+  }
+}
+
+// ── 段落合并 ──
+async function mergeWithBelow(upperId: string) {
+  const upperIdx = paragraphs.value.findIndex(p => p.id === upperId)
+  if (upperIdx === -1 || upperIdx >= paragraphs.value.length - 1) return
+
+  const upper = paragraphs.value[upperIdx]
+  const lower = paragraphs.value[upperIdx + 1]
+
+  // 合并文本
+  const upperTextLen = upper.text.length
+  const separator = '\n'
+  const mergedText = upper.text + separator + lower.text
+
+  // 迁移 lower 的标记到 upper
+  let marksChanged = false
+  for (const m of marks.value) {
+    if (m.paragraphId === lower.id) {
+      m.paragraphId = upper.id
+      m.startOffset += upperTextLen + separator.length
+      m.endOffset += upperTextLen + separator.length
+      marksChanged = true
+    }
+  }
+  if (marksChanged) saveMarks()
+
+  // 合并图片
+  const mergedImages = [...(upper.images || []), ...(lower.images || [])]
+
+  // 合并对话历史
+  const lowerChats = article.getParagraphChat(lower.id)
+  if (lowerChats.length > 0) {
+    const sepMsg: ChatMessage = { role: 'system', content: '── 以下对话来自合并前的下方段落 ──' }
+    for (const msg of lowerChats) {
+      article.addParagraphChatMessage(upper.id, msg)
+    }
+    // 把分隔消息插入到原始对话和 lower 对话之间
+    const allChats = article.getParagraphChat(upper.id)
+    const originalLen = allChats.length - lowerChats.length
+    const reordered = [...allChats.slice(0, originalLen), sepMsg, ...allChats.slice(originalLen)]
+    article.setParagraphChat(upper.id, reordered)
+    article.loadParagraphChats({ [upper.id]: reordered })
+  }
+
+  // 更新本地段落数组
+  const newParagraphs = [...paragraphs.value]
+  newParagraphs[upperIdx] = { ...upper, text: mergedText, images: mergedImages.length ? mergedImages : undefined }
+  newParagraphs.splice(upperIdx + 1, 1) // 删除 lower
+  for (let i = 0; i < newParagraphs.length; i++) {
+    newParagraphs[i] = { ...newParagraphs[i], index: i }
+  }
+  article.setParagraphs(newParagraphs)
+
+  // 清除合并后段落的 AI 缓存
+  article.setCachedExplanation(upper.id, 'explain', '')
+  article.setCachedExplanation(upper.id, 'translate', '')
+
+  // 持久化
+  try {
+    await $fetch('/api/text/merge-segments', {
+      method: 'POST',
+      body: { textId: id, upperParagraphId: upperId, lowerParagraphId: lower.id },
+    })
+    progressMsg.value = '段落已合并'
+    setTimeout(() => { if (progressMsg.value === '段落已合并') progressMsg.value = '' }, 2000)
+  } catch {
+    progressError.value = true
+    progressMsg.value = '合并失败，请刷新后重试'
+    setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
+  }
 }
 
 function focusChatInput() {
-  if (!qaVisible.value) { qaVisible.value = true; stopQaHideTimer() }
+  if (!qaVisible.value) qaVisible.value = true
   nextTick(() => { chatInputEl.value?.focus() })
 }
 
@@ -937,12 +1464,46 @@ onMounted(async () => {
     if (!data?.text) throw new Error('No text')
     source.value = data.source || ''
     article.setRawText(data.text)
-    article.setParagraphs(quickSegment(data.text))
+    if (data.segments) {
+      article.setParagraphs(data.segments)
+    } else {
+      const segs = quickSegment(data.text)
+      article.setParagraphs(segs)
+      // 首次加载：将自然分段持久化到数据库，以便后续合并/拆分等操作能找到段落 ID
+      $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs } }).catch(() => {})
+    }
     if (data.filePath) pdfUrl.value = `/api/file/${data.filePath}`
-    if (data.segments) article.setParagraphs(data.segments)
     if (data.analysis) { article.setAnalysis(data.analysis); showAll(formatMd(data.analysis)) }
     if (data.explanations) for (const [k, v] of Object.entries(data.explanations)) { const [pid, act] = k.split(':'); article.setCachedExplanation(pid, act as any, v as string) }
     if (data.marks) marks.value = data.marks
+    if (data.paragraphNotes && data.paragraphNotes.length) {
+      paragraphNotes.value = data.paragraphNotes
+    }
+    // 迁移旧格式：将 type='note' 的 marks 转为 paragraphNotes
+    if (data.marks) {
+      const noteMarks = data.marks.filter((m: any) => m.type === 'note')
+      if (noteMarks.length) {
+        const existingIds = new Set(paragraphNotes.value.map(n => n.id))
+        for (const m of noteMarks) {
+          if (existingIds.has(m.id)) continue
+          paragraphNotes.value.push({
+            id: m.id,
+            paragraphId: m.paragraphId,
+            startOffset: m.startOffset,
+            endOffset: m.endOffset,
+            quotedText: m.text,
+            userContent: m.note || '',
+            images: [],
+            createdAt: m.createdAt || new Date().toISOString(),
+            updatedAt: m.createdAt || new Date().toISOString(),
+          })
+        }
+        // 从 marks 中移除已迁移的 note 标记，避免重复
+        data.marks = data.marks.filter((m: any) => m.type !== 'note')
+        // 保存清理后的 marks 和新 paragraphNotes
+        $fetch('/api/text/update', { method: 'POST', body: { id, marks: data.marks, paragraphNotes: paragraphNotes.value } }).catch(() => {})
+      }
+    }
     if (data.readingPosition) readingPosition.value = data.readingPosition
     if (data.notes) textNotes.value = data.notes
     if (data.paragraphChats) {
@@ -955,7 +1516,19 @@ onMounted(async () => {
     if (data.videoMeta) {
       videoMeta.value = data.videoMeta as { url: string; type: string; duration: number }
     }
-    // ⚠️ 不再自动触发 AI 分析 — 保留原文段落结构，用户手动点「AI 智能分析」才分段
+    // 后台自动开始 AI 分析（如果还没有），不阻塞页面
+    if (!data.analysis || !data.analysis.title) {
+      analyzing.value = true
+      runAnalysis(article.rawText.value).finally(() => { analyzing.value = false })
+    }
+
+    // 检查后台是否有分段正在执行（跨页面恢复 spinner）
+    const segStatus = await $fetch<{ running: boolean }>(`/api/text/segment-status?id=${id}`).catch(() => ({ running: false }))
+    if (segStatus.running) {
+      segmenting.value = true
+      pollSegments()
+    }
+
     const markPid = route.query.mark as string
     if (markPid) { await nextTick(); const el = document.querySelector(`[data-id="${markPid}"]`); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
     $fetch('/api/text/stats', { method: 'POST', body: { id, marks: marks.value.length } }).catch(() => {})
@@ -1052,69 +1625,70 @@ function mapSegmentsToCues(
 ): Paragraph[] {
   if (!cues.length) return segments
 
-  // 完整拼接文本 + 归一化版本（用于匹配）
-  const fullText = cues.map(c => c.text).join(' ').replace(/\s{2,}/g, ' ').trim()
-  const normFull = normalizeText(fullText)
+  // 预计算每个 cue 的归一化词集（用于模糊匹配）
+  const cueWords: Array<Set<string>> = cues.map(c => {
+    const words = normalizeText(c.text).split(/\s+/).filter(w => w.length > 1)
+    return new Set(words)
+  })
 
-  // 构建每个 cue 在归一化文本中的字符范围
-  let offset = 0
-  const ranges: Array<{ start: number; end: number; cueIdx: number }> = []
-  for (let i = 0; i < cues.length; i++) {
-    const normCue = normalizeText(cues[i].text)
-    const idx = normFull.indexOf(normCue, offset)
-    const start = idx >= 0 ? idx : offset
-    const end = start + normCue.length
-    ranges.push({ start, end, cueIdx: i })
-    offset = end + 1
+  // 计算两段文本的词重叠数
+  function wordOverlap(a: string, b: string): number {
+    const wa = normalizeText(a).split(/\s+/).filter(w => w.length > 1)
+    const wb = new Set(normalizeText(b).split(/\s+/).filter(w => w.length > 1))
+    return wa.filter(w => wb.has(w)).length
   }
 
   return segments.map((seg, segIdx) => {
-    // AI 输出文本也做归一化，消除大小写/标点差异
     const segClean = seg.text.replace(/\s+/g, ' ').trim()
-    const normSeg = normalizeText(segClean)
-    const head = normSeg.slice(0, 60)
-    let startPos = normFull.indexOf(head)
-    if (startPos < 0) {
-      startPos = normFull.indexOf(normSeg.slice(0, 40))
-    }
-    if (startPos < 0) {
-      // 兜底：AI 可能添加了原文不存在的标点/修正/合并，文本匹配失败时按位置比例估算
-      const ratio = segIdx / Math.max(1, segments.length)
-      const cueIdx = Math.min(Math.floor(ratio * cues.length), cues.length - 1)
-      const nextIdx = Math.min(cueIdx + Math.max(1, Math.ceil(cues.length / segments.length)), cues.length - 1)
-      return { ...seg, start: cues[cueIdx]?.start, end: cues[nextIdx]?.end }
-    }
 
-    const endPos = startPos + normSeg.length
+    // 先尝试精确匹配（大部分情况下管用）
+    let firstCueIdx = -1, lastCueIdx = -1
 
-    // 找到覆盖该范围的 cue
-    let firstCue: { text: string; start: number; end: number } | null = null
-    let lastCue: { text: string; start: number; end: number } | null = null
-    for (const r of ranges) {
-      if (r.start <= startPos && r.end > startPos && !firstCue) firstCue = cues[r.cueIdx]
-      if (r.start < endPos) lastCue = cues[r.cueIdx]
+    // 用段落的开头词匹配第一个 cue
+    const segWords = normalizeText(segClean).split(/\s+/)
+    const segHead = segWords.slice(0, 5).join(' ')
+    let bestScore = 0
+    for (let i = 0; i < cues.length; i++) {
+      const score = wordOverlap(segHead, cues[i].text)
+      if (score > bestScore) { bestScore = score; firstCueIdx = i }
     }
-    if (!firstCue) firstCue = cues[0]
-    if (!lastCue) lastCue = cues[cues.length - 1]
+    if (bestScore === 0) firstCueIdx = Math.floor(segIdx / Math.max(1, segments.length) * cues.length)
+
+    // 用段落的结尾词匹配最后一个 cue
+    const segTail = segWords.slice(-5).join(' ')
+    bestScore = 0
+    for (let i = firstCueIdx; i < cues.length; i++) {
+      const score = wordOverlap(segTail, cues[i].text)
+      if (score > bestScore) { bestScore = score; lastCueIdx = i }
+    }
+    if (bestScore === 0) {
+      // 估算：下一个段落的起始 cue 之前，或当前段落按比例覆盖
+      if (segIdx < segments.length - 1) {
+        const nextSegHead = normalizeText(segments[segIdx + 1].text.replace(/\s+/g, ' ').trim()).split(/\s+/).slice(0, 5).join(' ')
+        bestScore = 0
+        for (let i = firstCueIdx; i < cues.length; i++) {
+          const score = wordOverlap(nextSegHead, cues[i].text)
+          if (score > bestScore) { bestScore = score; lastCueIdx = i - 1 }
+        }
+      }
+      if (lastCueIdx < firstCueIdx) {
+        const span = Math.max(1, Math.ceil(cues.length / segments.length))
+        lastCueIdx = Math.min(firstCueIdx + span, cues.length - 1)
+      }
+    }
 
     return {
       ...seg,
-      start: firstCue?.start,
-      end: lastCue?.end,
+      start: cues[firstCueIdx]?.start,
+      end: cues[lastCueIdx >= 0 ? lastCueIdx : firstCueIdx]?.end,
     }
   })
 }
 
 /**
- * 统一的 AI 分析流程：先分析（流式）→ 再分段（专用端点）
- *
- * 分离理由：
- * - 分析需要截断文本 + 流式体验，长文短文都能用
- * - 分段走 segment 端点：短文全文送入、长文截断 + 本地兜底，精度远高于正则挖断点
- * - 两步分开后不互相污染，各自失败有独立兜底
+ * AI 分析（独立功能）：仅生成文章摘要、背景、关键要点，不影响分段
  */
-async function runAnalysis(text: string, skipSegmentation = false) {
-  // ---- 第一步：AI 分析（流式，只出元信息 + 右面板展示） ----
+async function runAnalysis(text: string) {
   const maxInput = 15000
   const inputText = text.length > maxInput
     ? text.slice(0, maxInput) + `\n\n[全文共 ${text.length} 字符，此处仅提供前 ${maxInput} 字符用于分析]`
@@ -1164,17 +1738,22 @@ ${inputText}
         .split('\n').filter((s: string) => s.trim().startsWith('-')).map((s: string) => s.replace(/^-\s*/, '')),
     }
     article.setAnalysis(a)
-    // 同步标题到数据库，卡片显示 AI 生成的标题
+    // 同步标题到数据库
     $fetch('/api/text/update', { method: 'POST', body: { id, title: a.title, analysis: a } }).catch(() => {})
   } catch (err: any) {
     stopStreaming()
     const reason = err?.message || '未知错误'
     console.error('AI 分析失败:', reason)
-    progressMsg.value = `AI 分析失败（${reason}），继续分段…`
+    progressMsg.value = `AI 分析失败（${reason}）`
+    progressError.value = true
+    throw err
   }
+}
 
-  // ---- 第二步：AI 分段（按来源类型走不同策略） ----
-  if (skipSegmentation) return
+/**
+ * AI 分段（独立功能）：仅重新划分段落，不影响文章分析
+ */
+async function runSegmentation(text: string) {
   try {
     const segType = isVideo.value ? 'subtitle' : 'document'
     const sizeOverride = segSizeMap[segSizeKey.value]
@@ -1192,7 +1771,7 @@ ${inputText}
 
     article.setParagraphs(segs)
     article.clearParagraphCaches()
-    // 保存分段 + 清除数据库中的旧解释和对话
+    // 保存分段 + 清除旧解释和对话（分段变了，旧解释无效）
     $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs, explanations: {}, paragraphChats: {} } }).catch(() => {})
   } catch (err: any) {
     // segment 端点内部已有 fallback，此处额外的兜底
@@ -1208,6 +1787,16 @@ ${inputText}
 }
 
 const analyzing = ref(false)
+const segmenting = ref(false)
+const showAppearance = ref(false)
+const hoveredParaId = ref<string | null>(null)
+let hoverHideTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleParaHide() {
+  hoverHideTimer = setTimeout(() => { hoveredParaId.value = null }, 1000)
+}
+function cancelParaHide() {
+  if (hoverHideTimer) { clearTimeout(hoverHideTimer); hoverHideTimer = null }
+}
 
 // ── 分段粒度控制 ──
 const segSizeOptions = [
@@ -1354,7 +1943,7 @@ async function runManualAnalysis() {
   article.isProcessingWritable.value = true
   progressMsg.value = 'AI 正在分析文章…'
   try {
-    await runAnalysis(article.rawText.value, true)
+    await runAnalysis(article.rawText.value)
     progressMsg.value = '分析完成'
   } catch { /* runAnalysis 内部已设置错误信息 */ }
   finally {
@@ -1363,81 +1952,64 @@ async function runManualAnalysis() {
   }
 }
 
-// 重新分段（分段 + 分析）
+// 重新分段（后台运行，离开页面也不中断）
 async function runManualSegment() {
-  if (analyzing.value || !article.rawText.value) return
-  analyzing.value = true
-  article.isProcessingWritable.value = true
+  if (segmenting.value || analyzing.value || !article.rawText.value) return
+  segmenting.value = true
 
-  // Podcast 模式：一次调用完成分段+分析+笔记
-  if (segSizeKey.value === 'podcast') {
-    progressMsg.value = 'AI 正在整理播客内容…'
-    try {
-      const result = await $fetch<{
-        segments: Array<{ index: number; label: string; text: string }>
-        analysis: string
-        notes: string
-      }>('/api/deepseek/podcast-full', {
-        method: 'POST',
-        body: { text: article.rawText.value },
-      })
+  const mode = segSizeKey.value === 'podcast' ? 'podcast' : 'standard'
+  const sizeOverride = segSizeMap[segSizeKey.value]
 
-      // 分段
-      const segs = result.segments.map((s, i) => ({
-        id: `p-${i}`, index: i, text: s.text,
-      }))
-      // 视频字幕：映射回原始 cue 时间轴
-      const finalSegs = isVideo.value && originalSubtitles.value?.length
-        ? mapSegmentsToCues(segs, originalSubtitles.value)
-        : segs
-      article.setParagraphs(finalSegs)
-      article.clearParagraphCaches()
-
-      // 分析面板
-      showAll(result.analysis)
-      article.setRightContent(result.analysis, 'analyze')
-
-      // 笔记
-      textNotes.value = result.notes
-      await $fetch('/api/text/notes', {
-        method: 'POST',
-        body: { id, notes: result.notes },
-      })
-
-      // 持久化分段
-      $fetch('/api/text/update', {
-        method: 'POST',
-        body: { id, segments: finalSegs, explanations: {}, paragraphChats: {} },
-      }).catch(() => {})
-
-      progressMsg.value = '播客内容整理完成'
-    } catch (e: any) {
-      // 失败时回退到标准分段
-      progressMsg.value = '播客整理失败，回退标准分段…'
-      try {
-        await runAnalysis(article.rawText.value, false)
-        progressMsg.value = '分段完成（标准模式）'
-      } catch {
-        progressError.value = true
-      }
-    } finally {
-      analyzing.value = false; article.isProcessingWritable.value = false
-      setTimeout(() => { if (!progressError.value) progressMsg.value = '' }, 4000)
-    }
-    return
-  }
-
-  // 非 Podcast：标准分段流程
-  progressMsg.value = 'AI 正在重新分段…'
   try {
-    await runAnalysis(article.rawText.value, false)
-    progressMsg.value = '分段完成'
-  } catch { /* runAnalysis 内部已设置错误信息 */ }
-  finally {
-    analyzing.value = false; article.isProcessingWritable.value = false
-    setTimeout(() => { if (!progressError.value) progressMsg.value = '' }, 3000)
+    await $fetch('/api/text/segment-async', {
+      method: 'POST',
+      body: {
+        id: route.params.id,
+        mode,
+        size: sizeOverride || null,
+      },
+    })
+
+    // 轮询等待分段完成
+    pollSegments()
+  } catch {
+    segmenting.value = false
   }
 }
+
+let segmentPollTimer: ReturnType<typeof setInterval> | null = null
+
+function pollSegments() {
+  if (segmentPollTimer) clearInterval(segmentPollTimer)
+  segmentPollTimer = setInterval(async () => {
+    try {
+      const data = await $fetch<any>(`/api/text/${route.params.id}`)
+      const freshSegs = data?.segments
+      const currentSegs = article.paragraphs.value
+
+      // 段数变了 或 内容变了 → 分段已完成
+      if (freshSegs?.length && freshSegs.length !== currentSegs.length) {
+        article.setParagraphs(freshSegs)
+        article.clearParagraphCaches()
+        segmenting.value = false
+        if (segmentPollTimer) { clearInterval(segmentPollTimer); segmentPollTimer = null }
+      }
+    } catch { /* 继续等待 */ }
+  }, 3000)
+
+  // 最多等 2 分钟
+  setTimeout(() => {
+    if (segmentPollTimer) {
+      clearInterval(segmentPollTimer)
+      segmentPollTimer = null
+      segmenting.value = false
+    }
+  }, 120000)
+}
+
+onUnmounted(() => {
+  if (segmentPollTimer) clearInterval(segmentPollTimer)
+})
 
 const pendingExplain = ref('')
 
@@ -1481,17 +2053,27 @@ async function cleanParagraph(pid: string, ptext: string) {
     })
     if (cleaned && cleaned !== ptext) {
       article.updateParagraphText(pid, cleaned)
-      // 清除此段落缓存（文本变了，旧解释可能不准确）
       article.setCachedExplanation(pid, 'explain', '')
       article.setCachedExplanation(pid, 'translate', '')
-      // 持久化到 DB
+      // 标记重新定位
+      let marksChanged = false
+      for (const m of marks.value) {
+        if (m.paragraphId !== pid) continue
+        const r = locateMark(m, cleaned)
+        if (!r) {
+          marks.value = marks.value.filter(x => x.id !== m.id)
+          marksChanged = true
+        }
+      }
+      if (marksChanged) saveMarks()
+      // 持久化
       $fetch('/api/text/update-segment', {
         method: 'POST',
         body: { textId: id, segmentId: pid, text: cleaned },
       }).catch(() => {})
     }
   } catch (e: any) {
-    // 静默失败，不打断阅读
+    // 静默失败
   } finally {
     cleaningPara.value = null
   }
@@ -1542,15 +2124,21 @@ function insertImageForParagraph(paraId: string) {
 }
 
 async function uploadParaImage(paraId: string, file: File | Blob, filename = 'image.png') {
+  const para = paragraphs.value.find(p => p.id === paraId)
+  if (!para) return
   try {
     const form = new FormData()
     form.append('file', file, filename)
     form.append('id', id)
-    form.append('paragraphId', paraId)
 
-    await $fetch<{ url: string; name: string }>('/api/paragraph/image', { method: 'POST', body: form })
-    // 刷新段落数据
-    await refreshParagraphs()
+    const result = await $fetch<{ url: string }>('/api/upload/image', { method: 'POST', body: form })
+    // 将 Markdown 图片语法插入段落文本末尾（之后可编辑移动到任意位置）
+    const imgMd = `\n\n![](${result.url})`
+    const newText = para.text + imgMd
+    article.updateParagraphText(paraId, newText)
+    $fetch('/api/text/update-segment', { method: 'POST', body: { textId: id, segmentId: paraId, text: newText } }).catch(() => {})
+    progressMsg.value = '图片已插入段落末尾，可编辑移动位置'
+    setTimeout(() => { if (progressMsg.value?.startsWith('图片已插入')) progressMsg.value = '' }, 2500)
   } catch (e: any) {
     alert('图片上传失败: ' + (e?.message || ''))
   }
@@ -1640,12 +2228,76 @@ async function handleQuickTranslate(text: string, position: { x: number; y: numb
   } catch { tc.visible = false }
 }
 
-// 标记
+// ── 段落笔记 ──
 function handleCreateNote(pid: string, text: string, startOffset: number, endOffset: number) {
-  const idx = paragraphs.value.findIndex(p => p.id === pid)
-  notes.value.push({ id: `n_${Date.now()}`, paraIdx: idx + 1, content: text, createdAt: new Date().toISOString() })
-  const m: Mark = { id: `n_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type: 'note' as any, color: '#fbcfe8', detail: '', note: '', createdAt: new Date().toISOString() }
-  marks.value.push(m); saveMarks()
+  const now = new Date().toISOString()
+  const noteId = `pn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  paragraphNotes.value.push({
+    id: noteId,
+    paragraphId: pid,
+    startOffset,
+    endOffset,
+    quotedText: text,
+    userContent: '',
+    images: [],
+    createdAt: now,
+    updatedAt: now,
+  })
+  // 在原文中创建视觉标记（粉色高亮，不影响 AI 系统）
+  marks.value.push({
+    id: noteId, paragraphId: pid, startOffset, endOffset, text,
+    type: 'word' as any, color: '#f9a8d4', detail: '', note: '', lemma: '',
+    createdAt: now,
+  })
+  saveMarks()
+  persistParagraphNotes()
+  // 同步创建知识要点
+  $fetch('/api/knowledge/create', {
+    method: 'POST',
+    body: {
+      content: text,
+      sourceId: id,
+      sourceTitle: title.value || article.analysis.value?.title || '',
+      sourceType: 'note',
+    },
+  }).catch(() => {})
+}
+
+async function persistParagraphNotes() {
+  try {
+    await $fetch('/api/text/paragraph-notes', {
+      method: 'POST',
+      body: { textId: id, paragraphNotes: JSON.parse(JSON.stringify(paragraphNotes.value)) },
+    })
+  } catch { /* ignore */ }
+}
+
+async function deleteNote(idx: number) {
+  if (!confirm('确定删除这条摘抄？')) return
+  const noteId = paragraphNotes.value[idx]?.id
+  paragraphNotes.value.splice(idx, 1)
+  // 同时移除对应的视觉标记
+  if (noteId) {
+    marks.value = marks.value.filter(m => m.id !== noteId)
+    saveMarks()
+  }
+  await persistParagraphNotes()
+}
+
+function jumpToNoteSource(note: ParagraphNote) {
+  activeTab.value = 'analyze'
+  nextTick(() => {
+    const el = document.querySelector(`[data-id="${note.paragraphId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      ;(el as HTMLElement).classList.add('note-flash')
+      setTimeout(() => (el as HTMLElement).classList.remove('note-flash'), 2000)
+    }
+  })
+}
+
+function paragraphIndex(pid: string): number {
+  return paragraphs.value.findIndex(p => p.id === pid) + 1
 }
 
 async function handleCreateMark(pid: string, text: string, type: MarkType, startOffset: number, endOffset: number) {
@@ -1717,13 +2369,18 @@ function saveChats() {
   $fetch('/api/text/update', { method: 'POST', body: { id, paragraphChats: chats } }).catch(() => {})
 }
 
+function sendQuick(prompt: string) {
+  chatInput.value = prompt
+  sendChat()
+}
+
 async function sendChat() {
   const msg = chatInput.value.trim(); if (!msg || chatLoading.value) return
   const pid = activeParagraphId.value; if (!pid) return
   // 确保 QA 可见并有足够高度
   if (!qaVisible.value) showQa()
   userAdjustedHeight.value = false
-  if (answerHeight.value < 80) { answerHeight.value = 80; stopQaHideTimer() }
+  if (answerHeight.value < 80) answerHeight.value = 80
   const para = paragraphs.value.find(p => p.id === pid)
   const ctx = [para ? `段落原文：\n${para.text}` : '', rightPanelContent.value ? `分析内容：\n${rightPanelContent.value}` : ''].filter(Boolean).join('\n\n')
   const um: ChatMessage = { role: 'user', content: msg }; article.addParagraphChatMessage(pid, um); saveChats(); paragraphsWithChats.add(pid); chatLoading.value = true; chatInput.value = ''
@@ -1738,11 +2395,11 @@ async function sendChat() {
   finally { chatLoading.value = false; nextTick(() => { if (qaAnswerRef.value) qaAnswerRef.value.scrollTop = qaAnswerRef.value.scrollHeight }) }
 }
 
-onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
+onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 </script>
 
 <style scoped>
-.reader-app { display: flex; flex-direction: column; height: 100vh; font-family: 'DM Sans', sans-serif; background: #ffffff; color: #1a1a18; }
+.reader-app { display: flex; flex-direction: column; height: 100vh; font-family: 'DM Sans', sans-serif; background: var(--ra-bg, #ffffff); color: #1a1a18; transition: background 0.3s; }
 
 /* 选中文字浮动工具条 */
 .sel-toolbar {
@@ -1839,10 +2496,64 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   border: 1.5px solid #3d3591;
   border-radius: 8px;
   padding: 8px 12px;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
   outline: none;
   background: #fafaf8;
 }
+
+/* 编辑预览区 */
+.para-edit-preview {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 15px; line-height: 1.82;
+  color: #1a1a18;
+  width: 100%; min-height: 60px;
+  border: 1.5px dashed #6366f1;
+  border-radius: 8px; padding: 10px 14px;
+  background: #fafafe;
+}
+.para-edit-preview :deep(h1),
+.para-edit-preview :deep(h2),
+.para-edit-preview :deep(h3) {
+  font-family: 'Lora', Georgia, serif; font-weight: 600;
+  margin: 0.6em 0 0.3em; line-height: 1.4;
+}
+.para-edit-preview :deep(h2) { font-size: 1.2em; }
+.para-edit-preview :deep(h3) { font-size: 1.05em; }
+.para-edit-preview :deep(p) { margin: 0.4em 0; }
+.para-edit-preview :deep(strong) { font-weight: 600; }
+.para-edit-preview :deep(ul), .para-edit-preview :deep(ol) { padding-left: 1.5em; margin: 0.3em 0; }
+.para-edit-preview :deep(code) { background: #f1f5f9; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }
+.para-edit-preview :deep(blockquote) { border-left: 3px solid #c4c1ba; padding-left: 1em; margin: 0.5em 0; color: #64748b; }
+
+/* 显示模式 Markdown 块级元素样式（全局 reset 清掉了浏览器默认值，需补回） */
+.para-text :deep(h1), .para-text :deep(h2), .para-text :deep(h3),
+.para-text :deep(h4), .para-text :deep(h5), .para-text :deep(h6) {
+  font-family: 'Lora', Georgia, serif; font-weight: 600;
+  margin: 0.6em 0 0.3em; line-height: 1.4;
+}
+.para-text :deep(h1) { font-size: 1.4em; }
+.para-text :deep(h2) { font-size: 1.2em; }
+.para-text :deep(h3) { font-size: 1.05em; }
+.para-text :deep(p) { margin: 0.4em 0; }
+.para-text :deep(strong) { font-weight: 600; }
+.para-text :deep(ul), .para-text :deep(ol) { padding-left: 1.5em; margin: 0.3em 0; }
+.para-text :deep(code) { background: #f1f5f9; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }
+.para-text :deep(blockquote) { border-left: 3px solid #6366f1; padding-left: 1em; margin: 0.5em 0; color: #64748b; }
+.para-text :deep(pre) { background: #f5f4f0; padding: 0.8em 1em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
+.para-text :deep(pre code) { background: none; padding: 0; }
+.para-text :deep(img) {
+  max-width: 100%; height: auto;
+  border-radius: 6px; margin: 8px 0;
+  cursor: pointer;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+  transition: box-shadow 0.15s;
+}
+.para-text :deep(img:hover) {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+
+.para-action-btn.active { background: #edeafd; color: #3d3591; border-color: rgba(61,53,145,0.2); }
 
 /* 编辑确认按钮 — 绿色 */
 .para-action-btn.edit-confirm {
@@ -1852,6 +2563,56 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 }
 .para-action-btn.edit-confirm:hover {
   background: #d1fae5;
+}
+
+/* 删除按钮 — 红色 */
+.para-action-btn--delete {
+  color: #ef4444;
+  border-color: rgba(239,68,68,0.2);
+}
+.para-action-btn--delete:hover {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: rgba(239,68,68,0.3);
+}
+
+/* ── 段落插入 ── */
+.insert-block {
+  margin: 0 0 18px 36px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  border: 1.5px dashed #10b981;
+}
+.insert-block .para-edit-area {
+  border-color: #10b981;
+  background: #fff;
+}
+.insert-block .para-edit-area::placeholder {
+  color: #86b89a;
+}
+
+.insert-actions {
+  display: flex; gap: 8px; margin-top: 8px;
+  justify-content: flex-end;
+}
+.insert-actions button {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.78rem; font-weight: 500;
+  padding: 5px 14px; border-radius: 6px;
+  border: none; cursor: pointer; transition: all 0.15s;
+}
+.insert-actions .btn-cancel {
+  background: #f0efe9; color: #6b6963;
+}
+.insert-actions .btn-cancel:hover {
+  background: #e5e3db;
+}
+.insert-actions .btn-confirm {
+  background: #10b981; color: #fff;
+}
+.insert-actions .btn-confirm:hover {
+  background: #059669;
 }
 
 /* 播放中音频波动画 */
@@ -1878,6 +2639,16 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 
 @keyframes spinInline {
   to { transform: rotate(360deg); }
+}
+
+/* 按钮内小 spinner（分段/分析后台运行时显示） */
+.btn-spinner-sm {
+  width: 12px; height: 12px;
+  border: 1.5px solid rgba(61, 53, 145, 0.2);
+  border-top-color: #3d3591;
+  border-radius: 50%;
+  animation: spinInline 0.6s linear infinite;
+  flex-shrink: 0;
 }
 
 /* 问答历史标记 — 序号下方紫色圆点 */
@@ -1913,14 +2684,13 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
 }
 
 .qa-resize-handle {
-  height: 8px;
+  height: 10px;
   cursor: row-resize;
-  flex-shrink: 0;
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  z-index: 2;
 }
 .qa-resize-handle::before,
 .qa-resize-handle::after {
@@ -1954,14 +2724,62 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   display: none;
 }
 
+/* QA 折叠条 */
+.qa-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; cursor: pointer;
+  border-top: 0.5px solid rgba(0,0,0,0.06);
+  color: #8a877c; font-size: 12px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.qa-toggle:hover { color: #3d3591; }
+.qa-toggle-label { display: flex; align-items: center; gap: 6px; }
+.qa-chevron { transition: transform 0.2s; }
+.qa-chevron.open { transform: rotate(180deg); }
+.qa-top-bar {
+  display: flex; align-items: center;
+  flex-shrink: 0; padding: 1px;
+  justify-content: flex-end;
+}
+.qa-collapse-btn {
+  flex-shrink: 0;
+  width: 15px; height: 10px; border: none; border-radius: 3px;
+  background: transparent; color: #b0ada0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.qa-collapse-btn:hover { background: #e8e6df; color: #3d3591; }
+
+/* 快捷提问按钮 */
+.qa-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px 4px;
+}
+.qa-quick-btn {
+  padding: 4px 10px;
+  border: 1px solid rgba(61, 53, 145, 0.15);
+  border-radius: 6px;
+  background: #faf9fe;
+  color: #3d3591;
+  font-size: 11px;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.qa-quick-btn:hover { background: #edeafd; border-color: #3d3591; }
+.qa-quick-btn:disabled { opacity: 0.4; cursor: default; }
+
 .qa-input-row {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border-top: 0.5px solid rgba(0,0,0,0.08);
-  background: #f0efe9;
+  padding: 8px 14px;
+  border-top: 0.5px solid rgba(0,0,0,0.06);
 }
 
 /* typing cursor */
@@ -2142,6 +2960,57 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   border-radius: 3px;
   font-size: 0.9em;
 }
+/* ── 段落笔记卡片 ── */
+.note-card {
+  margin-bottom: 14px;
+  border: 1px solid #ebe9e4;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fdfdfc;
+}
+.note-quote {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px;
+  background: #f9f6fc;
+  border-bottom: 1px solid #ebe9e4;
+}
+.note-quote-icon { flex-shrink: 0; margin-top: 2px; color: #a78bfa; }
+.note-quote-text {
+  flex: 1; font-family: 'Lora', Georgia, serif;
+  font-size: 13px; line-height: 1.6; color: #5b5569;
+  font-style: italic;
+}
+.note-jump-btn {
+  flex-shrink: 0; width: 24px; height: 24px; border: none; background: none;
+  cursor: pointer; color: #b0a8c0; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.note-jump-btn:hover { color: #6366f1; background: rgba(99,102,241,0.08); }
+
+.note-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; border-top: 1px solid #f0efe9;
+}
+.note-para-label {
+  font-size: 10px; color: #b0ada0;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+.note-action-btn {
+  border: none; background: none; cursor: pointer;
+  font-size: 11px; color: #a09e97; font-family: 'DM Sans', system-ui, sans-serif;
+  padding: 3px 8px; border-radius: 4px; transition: all 0.15s;
+}
+.note-action-btn:hover { color: #3d3591; background: #f5f4f0; }
+.note-action-btn--delete:hover { color: #ef4444; background: #fef2f2; }
+
+/* 跳转高亮闪烁 */
+@keyframes noteFlash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251,207,232,0); }
+  50% { box-shadow: 0 0 0 6px rgba(251,207,232,0.5); }
+}
+.para-block.note-flash { animation: noteFlash 0.6s ease-in-out 3; }
+
 .notes-divider {
   display: flex;
   align-items: center;
@@ -2158,6 +3027,11 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer); })
   flex: 1;
   height: 1px;
   background: rgba(0,0,0,0.06);
+}
+
+/* ── 重叠标记：上层透明度递减 ── */
+:deep(mark.hl-top) {
+  border-bottom-style: dashed;
 }
 
 </style>

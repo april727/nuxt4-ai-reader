@@ -7,7 +7,9 @@ dist
 .DS_Store
 server/data/reader.db
 server/data/uploads/
+server/data/files/
 server/data/backups/
+server/data/trash/
 server/data/youtube_cookies.txt
 server/data/youtube-cookies.txt
 server/data/cookies.json

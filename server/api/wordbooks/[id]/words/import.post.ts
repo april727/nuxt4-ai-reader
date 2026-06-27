@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../../../utils/db'
+import { queryOne, runQuery } from '../../../../utils/db'
 
 // DeepSeek AI 增强：批量获取音标+释义+例句
 async function enrichWords(words: string[]): Promise<{ word: string; phonetic: string; meaning: string; example: string; pos: string }[]> {
@@ -59,7 +59,6 @@ export default defineEventHandler(async (event) => {
   const { words: rawWords, enrich = true, source = '' } = await readBody<{ words: string[]; enrich?: boolean; source?: string }>(event)
   if (!bookId || !rawWords?.length) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
   const filtered = rawWords.map(w => w.trim()).filter(Boolean)
 
   // AI 增强
@@ -75,19 +74,16 @@ export default defineEventHandler(async (event) => {
 
   for (const item of enriched) {
     // 跳过已存在的
-    const dup = db.prepare('SELECT id FROM words WHERE bookId=? AND word=?')
-    dup.bind([bookId, item.word])
-    if (dup.step()) { dup.free(); continue }
-    dup.free()
+    const dup = await queryOne('SELECT id FROM words WHERE bookId=? AND word=?', [bookId, item.word])
+    if (dup) continue
 
     const id = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-    db.run(
+    await runQuery(
       `INSERT INTO words (id,bookId,word,phonetic,meaning,example,pos,source,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [id, bookId, item.word, item.phonetic || '', item.meaning || '', item.example || '', item.pos || '', source, now, now]
     )
     inserted++
   }
 
-  await saveDb()
   return { inserted, total: filtered.length, skipped: filtered.length - inserted }
 })

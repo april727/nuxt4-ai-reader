@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../../../utils/db'
+import { runQuery } from '../../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const bookId = getRouterParam(event, 'id')
@@ -11,7 +11,6 @@ export default defineEventHandler(async (event) => {
 
   if (!bookId || !wordId) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
   const sets: string[] = []
   const vals: any[] = []
 
@@ -23,7 +22,6 @@ export default defineEventHandler(async (event) => {
   sets.push('updatedAt=?'); vals.push(new Date().toISOString())
   vals.push(wordId, bookId)
 
-  db.run(`UPDATE words SET ${sets.join(',')} WHERE id=? AND bookId=?`, vals)
-  await saveDb()
+  await runQuery(`UPDATE words SET ${sets.join(',')} WHERE id=? AND bookId=?`, vals)
   return { ok: true }
 })

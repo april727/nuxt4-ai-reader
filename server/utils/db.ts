@@ -54,6 +54,8 @@ function createTables() {
   )`)
   // migration: add missing columns from older schema versions
   try { db.run('ALTER TABLE folders ADD COLUMN parent TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE folders ADD COLUMN isPrivate INTEGER DEFAULT 0') } catch {}
+  try { db.run('ALTER TABLE folders ADD COLUMN passwordHash TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN paragraphChats TEXT DEFAULT \'\'') } catch {}
   // video fields (added 2026-05-14)
   try { db.run('ALTER TABLE texts ADD COLUMN videoMeta TEXT DEFAULT \'\'') } catch {}
@@ -61,6 +63,25 @@ function createTables() {
   try { db.run('ALTER TABLE texts ADD COLUMN subtitlePractice TEXT DEFAULT \'\'') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN completedAt TEXT DEFAULT NULL') } catch {}
   try { db.run('ALTER TABLE texts ADD COLUMN notes TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE texts ADD COLUMN paragraphNotes TEXT DEFAULT \'[]\'') } catch {}
+
+  // ── 知识要点系统 ──
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_points (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    sourceId TEXT DEFAULT '',
+    sourceTitle TEXT DEFAULT '',
+    sourceType TEXT DEFAULT 'selection',
+    sourceContext TEXT DEFAULT '',
+    customGroup TEXT DEFAULT '',
+    tags TEXT DEFAULT '[]',
+    sortOrder INTEGER DEFAULT 0,
+    createdAt TEXT,
+    updatedAt TEXT
+  )`)
+  try { db.run('ALTER TABLE knowledge_points ADD COLUMN customGroup TEXT DEFAULT \'\'') } catch {}
+  try { db.run('ALTER TABLE knowledge_points ADD COLUMN chatHistory TEXT DEFAULT \'[]\'') } catch {}
 
   // migration: pos column for words
   try { db.run('ALTER TABLE words ADD COLUMN pos TEXT DEFAULT \'\'') } catch {}
@@ -112,6 +133,13 @@ function createTables() {
     db.run(`INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,2,?)`,
       ['wb_sentences', '默认句子本', now])
   }
+
+  // 每日 AI 解读
+  db.run(`CREATE TABLE IF NOT EXISTS daily_insights (
+    date TEXT PRIMARY KEY,
+    content TEXT,
+    createdAt TEXT
+  )`)
 }
 
 function migrateFromJson() {

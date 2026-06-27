@@ -59,6 +59,8 @@ defineEmits<{
   cursor: pointer;
   transition: all 0.2s;
   font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .fc-chip.active {
   background: #ffffff;

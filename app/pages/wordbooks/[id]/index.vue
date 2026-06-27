@@ -1,12 +1,7 @@
 <template>
   <div class="wd-page">
-    <header class="wd-header">
-      <NuxtLink to="/wordbooks" class="wd-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        书架
-      </NuxtLink>
-      <h1 class="wd-title">{{ bookName }}</h1>
-      <div class="wd-header-right">
+    <PageHeader :title="bookName" active="wordbooks" back-to="/wordbooks" back-label="单词本">
+      <template #actions>
         <button class="wd-hdr-btn" @click="goCards">Learn</button>
         <button class="wd-hdr-btn wd-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
           <template v-if="batchRunning"><span class="wd-spin-sm"></span></template>
@@ -25,8 +20,9 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           </template>
         </button>
-      </div>
-    </header>
+        <button class="wd-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+      </template>
+    </PageHeader>
 
     <!-- 工具栏 -->
     <div class="wd-toolbar" v-if="selectedIds.length">
@@ -160,14 +156,17 @@ const showAdd = ref(false)
 const addWord = ref('')
 const wordbookList = ref<any[]>([])
 
+const marksPosCounts = ref<Record<string, number>>({})
+
 async function load() {
   loading.value = true
   try {
-    const [wList, bList] = await Promise.all([
-      $fetch<Word[]>(`/api/wordbooks/${bookId}/words`),
+    const [wData, bList] = await Promise.all([
+      $fetch<{ words: Word[]; posCounts: Record<string, number> }>(`/api/wordbooks/${bookId}/words`),
       $fetch<any[]>('/api/wordbooks'),
     ])
-    words.value = wList
+    words.value = wData.words
+    marksPosCounts.value = wData.posCounts
     bookName.value = bList.find(b => b.id === bookId)?.name || '单词本'
     wordbookList.value = bList
   } catch {}
@@ -242,6 +241,17 @@ async function handleAdd() {
 
 function goCards() { window.location.href = `/wordbooks/${bookId}/cards` }
 
+function exportTxt() {
+  const text = posFilteredWords.value.map(w => w.word).join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `wordbook-${bookId}-words.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ── 词性筛选 ──
 const posTabs = [
   { key: '', label: '全部' },
@@ -249,6 +259,11 @@ const posTabs = [
   { key: 'v.', label: 'v.动词' },
   { key: 'adj.', label: 'adj.形容词' },
   { key: 'adv.', label: 'adv.副词' },
+  { key: 'prep.', label: 'prep.介词' },
+  { key: 'pron.', label: 'pron.代词' },
+  { key: 'conj.', label: 'conj.连词' },
+  { key: 'phr.', label: 'phr.短语' },
+  { key: 'sent.', label: 'sent.句子' },
 ]
 const activePos = ref('')
 const posFilteredWords = computed(() =>
@@ -256,18 +271,13 @@ const posFilteredWords = computed(() =>
 )
 
 const posCounts = computed(() => {
-  const total = words.value.length
-  const counts: Record<string, number> = {}
-  for (const w of words.value) {
-    const p = w.pos || ''
-    counts[p] = (counts[p] || 0) + 1
-  }
+  const counts = marksPosCounts.value
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
   const labelMap: Record<string, string> = {
     '': '全部',
-    'n.': '名词',
-    'v.': '动词',
-    'adj.': '形容词',
-    'adv.': '副词',
+    'n.': '名词', 'v.': '动词', 'adj.': '形容词', 'adv.': '副词',
+    'prep.': '介词', 'pron.': '代词', 'conj.': '连词',
+    'phr.': '短语', 'sent.': '句子',
   }
   const items: Array<{ key: string; label: string; count: number }> = []
   for (const t of posTabs) {
@@ -353,6 +363,14 @@ onMounted(load)
 .wd-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #666; text-decoration: none; font-family: 'DM Sans', sans-serif; white-space: nowrap; flex-shrink: 0; }
 .wd-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; color: #1a1a18; font-family: 'Lora', serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 12px; }
 .wd-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.wd-nav-link {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: #6b6963; text-decoration: none;
+  padding: 5px 10px; border-radius: 7px;
+  border: 0.5px solid rgba(0,0,0,0.1);
+  transition: all 0.12s;
+}
+.wd-nav-link:hover { background: #f0efe9; color: #3d3591; }
 .wd-hdr-btn { padding: 5px 12px; border: 1px solid #e0ddd5; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; color: #666; white-space: nowrap; }
 .wd-hdr-btn:hover { border-color: #3d3591; color: #3d3591; }
 .wd-btn-add { font-size: 18px; font-weight: 500; padding: 3px 12px; }

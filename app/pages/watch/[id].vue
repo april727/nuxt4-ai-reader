@@ -21,9 +21,6 @@
           <button :class="{ active: viewMode === 'audio' }" @click="viewMode = 'audio'" title="纯听模式">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
           </button>
-          <button :class="{ active: viewMode === 'notes' }" @click="viewMode = 'notes'" title="听写模式">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-          </button>
         </div>
         <button class="watch-learn-btn" :class="{ disabled: subtitlesLoading }" :disabled="subtitlesLoading" @click="goToLearn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -58,22 +55,39 @@
           <WatchSubtitles
             v-if="subtitles.length || subtitlesLoading"
             :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
-            :loop-cue-id="loopCueId" :loading="subtitlesLoading"
+            :loop-cue-id="loopCueId" :loop-end-cue-id="loopEndCueId" :loading="subtitlesLoading"
             @cue-click="handleCueClick" @toggle-save="handleToggleSave"
             @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
-            @remove-practice="handleRemovePractice"
+            @remove-practice="handleRemovePractice" @reupload="triggerReupload"
           />
           <div v-else class="sub-upload-area">
-            <p class="sub-upload-hint">暂无字幕</p>
-            <label class="sub-upload-btn">
-              <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              上传字幕
-            </label>
-            <div v-if="subUploading" class="sub-upload-loading">
-              <div class="mini-spinner"></div>
-              <span>处理中…</span>
+            <div class="sub-upload-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a09e97" stroke-width="1.2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
             </div>
+            <p class="sub-upload-hint">暂无字幕</p>
+            <p class="sub-upload-desc">尝试自动获取，或手动上传 SRT / VTT 文件</p>
+            <div class="sub-upload-actions">
+              <button
+                class="sub-upload-btn"
+                :disabled="subtitlesLoading || subUploading"
+                @click="extractSubtitlesInBackground"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                {{ subtitlesLoading ? '获取中...' : '获取字幕' }}
+              </button>
+              <label class="sub-upload-btn">
+                <input type="file" accept=".srt,.vtt" @change="handleSubUpload" :disabled="subUploading" hidden />
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                上传字幕
+              </label>
+            </div>
+            <div v-if="subUploading || subtitlesLoading" class="sub-upload-loading">
+              <div class="mini-spinner"></div>
+              <span>{{ subUploading ? '正在解析字幕…' : '正在获取字幕…' }}</span>
+            </div>
+            <p v-if="subUploadError" class="sub-upload-error">{{ subUploadError }}</p>
           </div>
           <SubtitleChat
             v-if="subtitles.length"
@@ -82,53 +96,55 @@
         </div>
       </template>
 
-      <!-- ── A：纯听 — 音频条 + 全宽字幕 ── -->
-      <div v-else-if="viewMode === 'audio'" class="audio-mode-wrap">
+      <!-- ── 音频模式：控制条 + 字幕 + 可选笔记 ── -->
+      <div v-else class="audio-mode-wrap">
         <AudioControlBar
           :current="currentTime" :duration="totalDuration"
           :playing="audioPlaying" :volume="audioVolume"
           @toggle="toggleAudioPlay" @seek="seekAudio" @set-volume="setAudioVolume"
         />
-        <div class="audio-subtitles-full">
-          <WatchSubtitles
-            v-if="subtitles.length || subtitlesLoading"
-            :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
-            :loop-cue-id="loopCueId" :loading="subtitlesLoading"
-            @cue-click="handleCueClick" @toggle-save="handleToggleSave"
-            @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
-            @remove-practice="handleRemovePractice"
-          />
-          <div v-else class="sub-upload-area">
-            <p class="sub-upload-hint">暂无字幕</p>
-            <label class="sub-upload-btn">
-              <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              上传字幕
-            </label>
-            <div v-if="subUploading" class="sub-upload-loading">
-              <div class="mini-spinner"></div>
-              <span>处理中…</span>
+        <div class="audio-layout">
+          <!-- 字幕区：笔记隐藏时占满，显示时在左侧 -->
+          <div class="audio-subtitles-col" :class="{ 'with-notes': showNotes }">
+            <WatchSubtitles
+              v-if="subtitles.length || subtitlesLoading"
+              :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
+              :loop-cue-id="loopCueId" :loop-end-cue-id="loopEndCueId" :loading="subtitlesLoading"
+              @cue-click="handleCueClick" @toggle-save="handleToggleSave"
+              @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
+              @remove-practice="handleRemovePractice" @reupload="triggerReupload"
+            />
+            <div v-else class="sub-upload-area">
+              <div class="sub-upload-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a09e97" stroke-width="1.2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+              </div>
+              <p class="sub-upload-hint">自动字幕下载失败</p>
+              <p class="sub-upload-desc">该视频未能自动获取字幕，您可以手动上传 SRT 或 VTT 字幕文件</p>
+              <label class="sub-upload-btn">
+                <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                上传字幕文件
+              </label>
+              <div v-if="subUploading" class="sub-upload-loading">
+                <div class="mini-spinner"></div>
+                <span>正在解析字幕…</span>
+              </div>
+              <p v-if="subUploadError" class="sub-upload-error">{{ subUploadError }}</p>
             </div>
+            <SubtitleChat
+              v-if="subtitles.length"
+              :cues="subtitles" :active-cue-id="activeCueId" :title="title"
+            />
           </div>
-          <SubtitleChat
-            v-if="subtitles.length"
-            :cues="subtitles" :active-cue-id="activeCueId" :title="title"
-          />
-        </div>
-      </div>
 
-      <!-- ── B：听写 — 音频条 + 笔记 + 字幕 ── -->
-      <div v-else class="notes-mode-wrap">
-        <AudioControlBar
-          :current="currentTime" :duration="totalDuration"
-          :playing="audioPlaying" :volume="audioVolume"
-          @toggle="toggleAudioPlay" @seek="seekAudio" @set-volume="setAudioVolume"
-        />
-        <div class="notes-layout">
-          <div class="notes-panel">
-            <div class="notes-header">
-              <span class="notes-label">笔记</span>
-              <div class="notes-header-right">
+          <!-- 笔记面板 -->
+          <div v-if="showNotes" class="panel-divider" @mousedown="startNotesResize"></div>
+          <div class="notes-panel" :style="{ width: showNotes ? notesSidebarWidth + 'px' : 'auto' }">
+            <div class="notes-header" :class="{ collapsed: !showNotes }">
+              <span v-if="showNotes" class="notes-label">笔记</span>
+              <div v-if="showNotes" class="notes-header-right">
                 <button
                   class="notes-mode-btn"
                   :class="{ active: notesMode === 'edit' }"
@@ -141,45 +157,26 @@
                 >预览</button>
                 <button class="notes-save-btn" @click="notesDirty = true; saveNotes()">保存</button>
               </div>
+              <button class="notes-collapse-btn" @click="showNotes = !showNotes" :title="showNotes ? '收起笔记' : '展开笔记'">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline v-if="showNotes" points="6 15 12 9 18 15"/>
+                  <polyline v-else points="6 9 12 15 18 9"/>
+                </svg>
+              </button>
             </div>
-            <textarea
-              v-if="notesMode === 'edit'"
-              v-model="notes"
-              class="notes-textarea"
-              placeholder="边听边记…（支持 Markdown）"
-              @input="markNotesDirty"
-            ></textarea>
-            <div v-else class="notes-preview">
-              <MarkdownRenderer v-if="notes.trim()" :content="notes" />
-              <p v-else class="notes-preview-empty">暂无笔记</p>
-            </div>
-          </div>
-          <div class="panel-divider" @mousedown="startNotesResize"></div>
-          <div class="notes-subtitles" :style="{ width: notesSidebarWidth + 'px' }">
-            <WatchSubtitles
-              v-if="subtitles.length || subtitlesLoading"
-              :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
-              :loop-cue-id="loopCueId" :loading="subtitlesLoading"
-              @cue-click="handleCueClick" @toggle-save="handleToggleSave"
-              @toggle-loop="handleToggleLoop" @mark-mastered="handleMarkMastered"
-              @remove-practice="handleRemovePractice"
-            />
-            <div v-else class="sub-upload-area">
-              <p class="sub-upload-hint">暂无字幕</p>
-              <label class="sub-upload-btn">
-                <input type="file" accept=".srt,.vtt" @change="handleSubUpload" hidden />
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                上传字幕
-              </label>
-              <div v-if="subUploading" class="sub-upload-loading">
-                <div class="mini-spinner"></div>
-                <span>处理中…</span>
+            <template v-if="showNotes">
+              <textarea
+                v-if="notesMode === 'edit'"
+                v-model="notes"
+                class="notes-textarea"
+                placeholder="边听边记…（支持 Markdown）"
+                @input="markNotesDirty"
+              ></textarea>
+              <div v-else class="notes-preview">
+                <MarkdownRenderer v-if="notes.trim()" :content="notes" />
+                <p v-else class="notes-preview-empty">暂无笔记</p>
               </div>
-            </div>
-            <SubtitleChat
-              v-if="subtitles.length"
-              :cues="subtitles" :active-cue-id="activeCueId" :title="title"
-            />
+            </template>
           </div>
         </div>
       </div>
@@ -191,11 +188,19 @@
     <div class="mini-spinner"></div>
     <p>加载中...</p>
   </div>
+
+  <!-- 隐藏的文件选择器：用于替换字幕 -->
+  <input ref="reuploadInputRef" type="file" accept=".srt,.vtt" class="file-input-hidden" @change="handleReupload" />
+
+  <!-- 全局知识要点按钮 -->
+  <GlobalKnowledgeBtn :source-id="id" :source-title="title" />
+
 </template>
 
 <script setup lang="ts">
 import type { SubtitleCue, SubtitlePractice } from '#shared/types'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
+import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -208,18 +213,22 @@ const videoUrl = ref('')
 const subtitles = ref<SubtitleCue[]>([])
 const subtitlesLoading = ref(false)
 const subUploading = ref(false)
+const subUploadError = ref('')
+const reuploadInputRef = ref<HTMLInputElement | null>(null)
 const practice = ref<Record<string, SubtitlePractice>>({})
 const isPlaying = ref(false)
 const currentTime = ref(0)
 const totalDuration = ref(0)
 const activeCueId = ref<string | null>(null)
 const loopCueId = ref<string | null>(null)
+const loopEndCueId = ref<string | null>(null)
 const initialTime = ref(0)
 const sidebarWidth = ref(380)
 const playerRef = ref<any>(null)
 
 // ── 显示模式 ──
-const viewMode = ref<'video' | 'audio' | 'notes'>('video')
+const viewMode = ref<'video' | 'audio'>('video')
+const showNotes = ref(true)
 const audioPlaying = ref(false)
 const audioVolume = ref(80)
 const notes = ref('')
@@ -311,36 +320,65 @@ onMounted(async () => {
     loaded.value = true
     loadNotes()
 
-    // 字幕为空 → 仅对 youtube/bilibili 自动后台拉取（本地文件需手动上传）
-    if ((!subtitles.value || subtitles.value.length === 0) && (source.value === 'youtube' || source.value === 'bilibili')) {
-      extractSubtitlesInBackground()
-    }
+    // 字幕为空时不再自动获取，用户可手动点击「获取字幕」或「上传字幕」
   } catch (e: any) {
     alert('加载失败: ' + (e?.message || ''))
   }
 })
 
+const MAX_POLL_ATTEMPTS = 15 // 最多轮询 15 次（约 30 秒），避免永久等待
+const POLL_INTERVAL = 2000
+
 async function extractSubtitlesInBackground() {
   subtitlesLoading.value = true
+  let pollAttempts = 0
+
   try {
     // 触发后台提取（立即返回）
-    await $fetch(`/api/video/extract-subtitles/${id}`, { method: 'POST' })
+    const extractRes = await $fetch<{ status: string }>(`/api/video/extract-subtitles/${id}`, { method: 'POST' })
 
-    // 轮询等待提取完成（每 2 秒检查一次）
-    const poll = async () => {
+    // 如果服务端明确失败（如 yt-dlp 未安装），直接停止
+    if (extractRes.status === 'done') {
+      // 已有字幕，重载数据
       const data = await $fetch<any>(`/api/video/${id}`)
       if (data.subtitles?.length > 0) {
         title.value = data.title
         subtitles.value = data.subtitles
         practice.value = data.practice || {}
-        subtitlesLoading.value = false
-      } else {
-        setTimeout(poll, 2000)
+      }
+      subtitlesLoading.value = false
+      return
+    }
+
+    // 轮询等待提取完成（最多 MAX_POLL_ATTEMPTS 次）
+    const poll = async () => {
+      pollAttempts++
+      try {
+        const data = await $fetch<any>(`/api/video/${id}`)
+        if (data.subtitles?.length > 0) {
+          title.value = data.title
+          subtitles.value = data.subtitles
+          practice.value = data.practice || {}
+          subtitlesLoading.value = false
+        } else if (pollAttempts >= MAX_POLL_ATTEMPTS) {
+          // 超时：停止轮询，显示手动上传区域
+          console.warn('[watch] 字幕自动提取超时，请手动上传')
+          subtitlesLoading.value = false
+        } else {
+          setTimeout(poll, POLL_INTERVAL)
+        }
+      } catch {
+        // 单次请求失败不终止，继续轮询
+        if (pollAttempts >= MAX_POLL_ATTEMPTS) {
+          subtitlesLoading.value = false
+        } else {
+          setTimeout(poll, POLL_INTERVAL)
+        }
       }
     }
-    setTimeout(poll, 2000)
+    setTimeout(poll, POLL_INTERVAL)
   } catch (e: any) {
-    console.warn('[watch] 后台字幕提取失败:', e?.message || '')
+    console.warn('[watch] 后台字幕提取启动失败:', e?.message || '')
     subtitlesLoading.value = false
   }
 }
@@ -350,19 +388,96 @@ async function handleSubUpload(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   subUploading.value = true
+  subUploadError.value = ''
+
   try {
+    // 客户端预检
+    if (file.size > 5 * 1024 * 1024) {
+      subUploadError.value = '文件过大（超过 5MB），请确认是否为有效字幕文件'
+      return
+    }
+    if (file.size === 0) {
+      subUploadError.value = '文件为空，请重新选择'
+      return
+    }
+
     const fd = new FormData()
     fd.append('file', file)
-    const parsed = await $fetch<{ subtitles: SubtitleCue[], text: string, duration: number }>('/api/video/subtitle/upload', {
-      method: 'POST', body: fd,
-    })
+    const parsed = await $fetch<{ subtitles: SubtitleCue[], text: string, duration: number }>(
+      '/api/video/subtitle/upload', { method: 'POST', body: fd }
+    )
     await $fetch(`/api/video/${id}/attach-subtitles`, {
       method: 'POST', body: { subtitles: parsed.subtitles },
     })
     subtitles.value = parsed.subtitles
-    title.value = file.name.replace(/\.(srt|vtt)$/i, '')
+    // 只在标题为空或是原始 video ID 时才用文件名覆盖，已有标题则保留
+    if (!title.value || /^[A-Za-z0-9_-]{11}$/.test(title.value)) {
+      title.value = file.name.replace(/\.(srt|vtt)$/i, '')
+    }
+    subUploadError.value = ''
   } catch (e: any) {
-    alert('字幕上传失败: ' + (e?.message || ''))
+    // 根据错误类型给出不同的提示
+    const msg = e?.message || e?.statusMessage || ''
+    if (msg.includes('编码') || msg.includes('encoding')) {
+      subUploadError.value = '文件编码不兼容，请用 UTF-8 重新保存字幕文件后再试'
+    } else if (msg.includes('格式') || msg.includes('format') || msg.includes('SRT') || msg.includes('VTT')) {
+      subUploadError.value = msg
+    } else if (msg.includes('解析') || msg.includes('时间戳') || msg.includes('parse')) {
+      subUploadError.value = '字幕解析失败：文件格式可能不正确，请检查是否包含有效的时间戳'
+    } else if (e?.statusCode === 413 || msg.includes('too large') || msg.includes('过大')) {
+      subUploadError.value = '文件过大，请确认是否为有效字幕文件'
+    } else {
+      subUploadError.value = '上传失败: ' + (msg || '网络错误，请重试')
+    }
+  } finally {
+    subUploading.value = false
+    ;(e.target as HTMLInputElement).value = ''
+  }
+}
+
+// ---- 替换字幕 ----
+function triggerReupload() {
+  subUploadError.value = ''
+  reuploadInputRef.value?.click()
+}
+
+async function handleReupload(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  subUploading.value = true
+  subUploadError.value = ''
+
+  try {
+    if (file.size > 5 * 1024 * 1024) {
+      subUploadError.value = '文件过大（超过 5MB），请确认是否为有效字幕文件'
+      return
+    }
+    if (file.size === 0) {
+      subUploadError.value = '文件为空，请重新选择'
+      return
+    }
+
+    const fd = new FormData()
+    fd.append('file', file)
+    const parsed = await $fetch<{ subtitles: SubtitleCue[], text: string, duration: number }>(
+      '/api/video/subtitle/upload', { method: 'POST', body: fd }
+    )
+    await $fetch(`/api/video/${id}/attach-subtitles`, {
+      method: 'POST', body: { subtitles: parsed.subtitles },
+    })
+    subtitles.value = parsed.subtitles
+    subUploadError.value = ''
+  } catch (e: any) {
+    const msg = e?.message || e?.statusMessage || ''
+    if (msg.includes('编码') || msg.includes('encoding')) {
+      subUploadError.value = '文件编码不兼容，请用 UTF-8 重新保存字幕文件后再试'
+    } else if (msg.includes('格式') || msg.includes('format') || msg.includes('SRT') || msg.includes('VTT')) {
+      subUploadError.value = msg
+    } else if (msg.includes('解析') || msg.includes('时间戳') || msg.includes('parse')) {
+      subUploadError.value = '字幕解析失败：文件格式可能不正确，请检查是否包含有效的时间戳'
+    } else {
+      subUploadError.value = '替换失败: ' + (msg || '网络错误，请重试')
+    }
   } finally {
     subUploading.value = false
     ;(e.target as HTMLInputElement).value = ''
@@ -377,11 +492,18 @@ function onTimeUpdate(time: number) {
   const cue = subtitles.value.find(c => time >= c.start && time < c.end)
   activeCueId.value = cue?.id || null
 
-  // A-B 循环
+  // 区间循环：从起点 start 到终点 end
   if (loopCueId.value) {
-    const loopCue = subtitles.value.find(c => c.id === loopCueId.value)
-    if (loopCue && time >= loopCue.end) {
-      playerRef.value?.seek(loopCue.start)
+    const startCue = subtitles.value.find(c => c.id === loopCueId.value)
+    const endCue = loopEndCueId.value ? subtitles.value.find(c => c.id === loopEndCueId.value) : startCue
+    if (!startCue || !endCue) return
+
+    // 确保起点在前
+    const loopStart = startCue.index <= endCue.index ? startCue : endCue
+    const loopEnd = startCue.index <= endCue.index ? endCue : startCue
+
+    if (time >= loopEnd.end) {
+      playerRef.value?.seek(loopStart.start)
     }
   }
 }
@@ -393,6 +515,7 @@ function onDurationChange(duration: number) {
 async function onEnded() {
   isPlaying.value = false
   loopCueId.value = null
+  loopEndCueId.value = null
   // 自动标记为已完成
   try { await $fetch('/api/text/complete', { method: 'POST', body: { id } }) } catch {}
 }
@@ -405,16 +528,32 @@ function handleCueClick(cue: SubtitleCue) {
   }
 }
 
-// ---- 循环控制 ----
+// ---- 循环控制（多句区间循环） ----
 function handleToggleLoop(cue: SubtitleCue) {
-  if (loopCueId.value === cue.id) {
+  // 已有完整区间：点任意 cue 都清除
+  if (loopCueId.value && loopEndCueId.value) {
     loopCueId.value = null
-  } else {
-    loopCueId.value = cue.id
-    playerRef.value?.seek(cue.start)
-    playerRef.value?.togglePlay()
-    // 确保在播放中
+    loopEndCueId.value = null
+    return
   }
+
+  // 只有起点，没有终点
+  if (loopCueId.value && !loopEndCueId.value) {
+    if (cue.id === loopCueId.value) {
+      // 再次点击起点 → 取消
+      loopCueId.value = null
+    } else {
+      // 点击不同 cue → 设置终点，形成区间
+      loopEndCueId.value = cue.id
+    }
+    return
+  }
+
+  // 没有循环 → 设置起点
+  loopCueId.value = cue.id
+  loopEndCueId.value = null
+  playerRef.value?.seek(cue.start)
+  if (!isPlaying.value) playerRef.value?.togglePlay()
 }
 
 // ---- 精听练习 ----
@@ -564,6 +703,7 @@ function startNotesResize(e: MouseEvent) {
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
 }
+
 </script>
 
 <style scoped>
@@ -616,20 +756,35 @@ function startNotesResize(e: MouseEvent) {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 32px 20px;
+  padding: 40px 24px;
   flex: 1;
+  text-align: center;
 }
-.sub-upload-hint { font-size: 14px; color: #a09e97; margin: 0; }
+.sub-upload-icon { margin-bottom: 4px; opacity: 0.5; }
+.sub-upload-hint { font-size: 14.5px; font-weight: 500; color: #6b6963; margin: 0; }
+.sub-upload-desc {
+  font-size: 12px; color: #a09e97; margin: 0;
+  line-height: 1.6; max-width: 260px;
+}
+.sub-upload-actions {
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+}
 .sub-upload-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 8px 16px; border: 1px solid rgba(61,53,145,0.3); border-radius: 8px;
-  background: #fff; color: #3d3591; font-size: 13px; font-weight: 450;
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 20px; border: 1px solid rgba(61,53,145,0.3); border-radius: 8px;
+  background: #fff; color: #3d3591; font-size: 13px; font-weight: 500;
   cursor: pointer; font-family: inherit; transition: all 0.15s;
 }
 .sub-upload-btn:hover { background: #f8f7ff; border-color: #3d3591; }
+.sub-upload-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .sub-upload-loading {
   display: flex; align-items: center; gap: 8px;
   font-size: 13px; color: #a09e97;
+}
+.sub-upload-error {
+  font-size: 12px; color: #dc2626; margin: 4px 0 0;
+  line-height: 1.5; text-align: center; max-width: 280px;
+  padding: 8px 12px; background: #fef2f2; border-radius: 6px;
 }
 
 .watch-player-col {
@@ -681,26 +836,26 @@ function startNotesResize(e: MouseEvent) {
 .mode-switcher button:hover { background: #f5f4f2; }
 .mode-switcher button.active { background: #3d3591; color: #fff; }
 
-/* ── 音频/笔记模式包装 ── */
-.audio-mode-wrap,
-.notes-mode-wrap {
+/* ── 音频模式 ── */
+.audio-mode-wrap {
   flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
 }
 
-/* ── 模式 A：全宽字幕 ── */
-.audio-subtitles-full {
-  flex: 1; overflow-y: auto; background: #fff; min-height: 0;
-  display: flex; flex-direction: column;
-}
-.audio-subtitles-full :deep(.subtitle-list) { flex: 1; min-height: 0; }
-
-/* ── 模式 B：笔记 + 字幕 ── */
-.notes-layout {
+.audio-layout {
   flex: 1; display: flex; overflow: hidden; min-height: 0;
 }
+
+/* 字幕列：笔记隐藏时占满，显示时在左侧 */
+.audio-subtitles-col {
+  flex: 1; overflow-y: auto; background: #fff; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.audio-subtitles-col :deep(.subtitle-list) { flex: 1; min-height: 0; }
+
+/* 笔记面板 */
 .notes-panel {
-  flex: 1; display: flex; flex-direction: column;
-  background: #faf9f7; min-width: 0;
+  flex-shrink: 0; display: flex; flex-direction: column;
+  background: #faf9f7; min-width: 0; overflow: hidden;
 }
 .notes-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -732,6 +887,20 @@ function startNotesResize(e: MouseEvent) {
   transition: background 0.12s;
 }
 .notes-save-btn:hover { background: #3d3591; color: #fff; }
+.notes-collapse-btn {
+  width: 22px; height: 22px; border: none; border-radius: 4px;
+  background: transparent; color: #b0ada0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; margin-left: 4px;
+}
+.notes-collapse-btn:hover { background: #e8e6df; color: #3d3591; }
+.notes-header.collapsed {
+  padding: 4px 6px;
+  justify-content: flex-end;
+}
+.notes-header.collapsed .notes-collapse-btn {
+  margin-left: 0;
+}
 .notes-preview {
   flex: 1; overflow-y: auto; padding: 14px 16px;
   font-size: 0.85rem; line-height: 1.7; color: #333;
@@ -755,10 +924,5 @@ function startNotesResize(e: MouseEvent) {
   background: transparent;
 }
 .notes-textarea::placeholder { color: #ccc; }
-.notes-subtitles {
-  flex-shrink: 0; overflow: hidden; background: #fff;
-  display: flex; flex-direction: column;
-  border-left: 0.5px solid rgba(0,0,0,0.08);
-}
-.notes-subtitles :deep(.subtitle-list) { flex: 1; min-height: 0; }
+
 </style>

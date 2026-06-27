@@ -1,18 +1,14 @@
-import { getDb } from '../../utils/db'
+import { queryAll } from '../../utils/db'
 
 export default defineEventHandler(async () => {
-  const db = await getDb()
-
   // 一次性查询所有文件夹的文章数量
-  const stmt = db.prepare(
+  const rows = await queryAll(
     'SELECT folder, COUNT(*) as count FROM texts GROUP BY folder'
   )
   const counts: Record<string, number> = {}
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as { folder: string; count: number }
-    counts[row.folder] = row.count
+  for (const row of rows) {
+    counts[row.folder as string] = row.count as number
   }
-  stmt.free()
 
   return counts
 })

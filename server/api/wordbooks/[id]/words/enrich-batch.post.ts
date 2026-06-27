@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../../../utils/db'
+import { queryAll, runQuery } from '../../../../utils/db'
 
 // 从 mark.detail 中提取字段
 function extractPhonetic(detail: string): string {
@@ -26,32 +26,26 @@ export default defineEventHandler(async (event) => {
   const { wordIds } = await readBody<{ wordIds?: string[] }>(event)
   if (!bookId) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
-
   // 1. 获取本单词本中无含义的词条
-  const allWords = db.prepare('SELECT id, word, meaning FROM words WHERE bookId=?')
-  allWords.bind([bookId])
+  const allWords = await queryAll('SELECT id, word, meaning FROM words WHERE bookId=?', [bookId])
   const targets: Array<{ id: string; word: string }> = []
-  while (allWords.step()) {
-    const w = allWords.getAsObject()
+  for (const w of allWords) {
     if (wordIds?.length) {
       if (wordIds.includes(w.id as string)) targets.push({ id: w.id as string, word: w.word as string })
     } else if (!(w.meaning as string)?.trim()) {
       targets.push({ id: w.id as string, word: w.word as string })
     }
   }
-  allWords.free()
 
   if (!targets.length) return { enriched: 0, total: 0 }
 
   // 2. 读取所有有标记的文本，建立 词文本 → mark.detail 的索引
-  const textStmt = db.prepare(
+  const textRows = await queryAll(
     `SELECT marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
   )
   const markIndex = new Map<string, { phonetic: string; meaning: string; lemma: string }>()
 
-  while (textStmt.step()) {
-    const row = textStmt.getAsObject()
+  for (const row of textRows) {
     let marks: any[] = []
     try { marks = JSON.parse(row.marks) } catch { continue }
     for (const mark of marks) {
@@ -66,7 +60,6 @@ export default defineEventHandler(async (event) => {
       }
     }
   }
-  textStmt.free()
 
   // 3. 用已有数据补全词条
   const now = new Date().toISOString()
@@ -83,13 +76,12 @@ export default defineEventHandler(async (event) => {
     }
 
     const data = info || markIndex.get(t.word.replace(/[^a-zA-Z]/g, '').toLowerCase())!
-    db.run(
+    await runQuery(
       `UPDATE words SET phonetic=?, meaning=?, updatedAt=? WHERE id=? AND bookId=?`,
       [data.phonetic, data.meaning, now, t.id, bookId]
     )
     enriched++
   }
 
-  if (enriched) await saveDb()
   return { enriched, total: targets.length }
 })

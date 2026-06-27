@@ -1,18 +1,14 @@
-import { getDb } from '../../utils/db'
+import { queryOne } from '../../utils/db'
 import { safeParse } from '../../utils/subtitle'
 import type { SubtitleCue, SubtitlePractice, VideoMeta } from '#shared/types'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
-  const db = await getDb()
 
-  const stmt = db.prepare(
-    'SELECT id,title,source,folder,excerpt,filePath,analysis,segments,marks,videoMeta,videoSubtitles,subtitlePractice,readingPosition,completedAt,createdAt FROM texts WHERE id=?'
+  const row = await queryOne(
+    'SELECT id,title,source,folder,excerpt,filePath,analysis,segments,marks,videoMeta,videoSubtitles,subtitlePractice,readingPosition,completedAt,createdAt FROM texts WHERE id=?',
+    [id]
   )
-  stmt.bind([id])
-  let row: any = null
-  if (stmt.step()) row = stmt.getAsObject()
-  stmt.free()
   if (!row) throw createError({ statusCode: 404, message: '视频不存在' })
 
   const source = row.source || ''

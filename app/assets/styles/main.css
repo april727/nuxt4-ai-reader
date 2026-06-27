@@ -115,7 +115,8 @@ body {
 .reader-body { display: flex; flex: 1; overflow: hidden; }
 
 /* ---- 正文区 ---- */
-.reader-article-pane { padding: 36px 48px; overflow-y: auto; scroll-behavior: smooth; flex-shrink: 0; }
+.reader-article-pane { padding: 36px 48px; overflow-y: auto; scroll-behavior: smooth; flex-shrink: 0; background: var(--ra-bg, #ffffff); transition: background 0.3s; }
+.reader-article-pane .para-block { max-width: var(--ra-col-width, none); margin-left: auto; margin-right: auto; }
 
 /* ---- 右侧面板 ---- */
 .reader-panel {
@@ -129,8 +130,8 @@ body {
   width: 4px; background: #e8ecf1; cursor: col-resize;
   flex-shrink: 0; transition: background 0.15s; position: relative;
 }
-.panel-divider:hover, .panel-divider:active { background: #c4c1ba; }
-.panel-divider::after { content: ''; position: absolute; inset: 0 -4px; }
+.panel-divider:hover, .panel-divider:active { background: #b0adc0; }
+.panel-divider::after { content: ''; position: absolute; inset: 0 -3px; }
 
 /* ---- 段落块 (阅读页) ---- */
 .para-block {
@@ -138,7 +139,7 @@ body {
   padding: 14px; border-radius: 10px;
   cursor: pointer; transition: background 0.15s; position: relative;
 }
-.para-block:hover { background: #f7f6f3; }
+.para-block.hovered { background: #f5f4f0; }
 .para-block.active { background: #edeafd; cursor: default; }
 .para-block.active .para-text { cursor: text; }
 .para-block.past .para-text { color: #a09e97; }
@@ -164,17 +165,18 @@ body {
 }
 
 .para-text {
-  font-family: 'Lora', Georgia, serif;
-  font-size: 15px; line-height: 1.82;
-  color: #1a1a18; flex: 1; transition: color 0.15s;
+  font-family: var(--ra-font, 'Lora', Georgia, serif);
+  font-size: var(--ra-font-size, 15px);
+  line-height: var(--ra-line-height, 1.82);
+  letter-spacing: var(--ra-letter-spacing, normal);
+  color: var(--ra-fg, #1a1a18);
+  flex: 1; transition: color 0.15s;
 }
 
 .para-actions {
-  position: absolute; top: 6px; right: 12px;
+  position: absolute; top: -30px; right: 0;
   display: flex; gap: 4px;
-}
-.para-block.active {
-  padding-top: 30px;
+  flex-wrap: wrap; justify-content: flex-end;
 }
 .para-action-btn {
   width: 26px; height: 26px; border-radius: 7px;
@@ -395,8 +397,12 @@ body {
 .loading-state { padding: 48px 24px; text-align: center; color: #64748b; font-size: 0.9em; display: flex; flex-direction: column; align-items: center; gap: 12px; }
 
 /* ---- Scrollbar ---- */
+:root {
+  scrollbar-width: auto;
+  scrollbar-color: #cbd5e1 transparent;
+}
 ::-webkit-scrollbar {
-  width: 5px;
+  width: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -405,11 +411,16 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 3px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* ---- Selection ---- */
@@ -666,19 +677,20 @@ body {
   border-bottom-left-radius: 3px;
 }
 .chat-input {
-  flex: 1; padding: 7px 11px; border: 0.5px solid rgba(0,0,0,0.12); border-radius: 8px;
-  font-size: 12.5px; background: #ffffff; color: #1a1a18;
-  font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.12s;
+  flex: 1; padding: 7px 10px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
+  font-size: 12.5px; background: #fafaf8; color: #1a1a18;
+  font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.12s, background 0.12s;
 }
-.chat-input:focus { }
+.chat-input:focus { border-color: #3d3591; background: #fff; }
 .chat-input::placeholder { color: #c0bdb4; }
+.chat-input:disabled { opacity: 0.4; }
 .send-btn {
   width: 30px; height: 30px; border-radius: 8px; background: #3d3591; border: none;
   color: #fff; display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.12s; flex-shrink: 0;
 }
-.send-btn:hover { background: #332d7a; }
-.send-btn:disabled { background: #dddcd4; cursor: not-allowed; }
+.send-btn:hover { background: #2f2875; }
+.send-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* 笔记/生词卡片 */
 .empty-state { text-align: center; padding: 40px 20px; color: #c0bdb4; display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 12.5px; }

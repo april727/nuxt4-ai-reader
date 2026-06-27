@@ -1,13 +1,11 @@
 <template>
   <div class="cards-page">
-    <header class="cards-header">
-      <NuxtLink :to="`/wordbooks/${bookId}`" class="cards-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        返回
-      </NuxtLink>
-      <span class="cards-progress">{{ currentIdx + 1 }} / {{ queue.length }}</span>
-      <button class="cards-settings-btn" @click="showSettings = !showSettings" title="设置">⚙</button>
-    </header>
+    <PageHeader title="闪卡学习" active="wordbooks" :back-to="backUrl" back-label="返回">
+      <template #actions>
+        <span class="cards-progress">{{ currentIdx + 1 }} / {{ queue.length }}</span>
+        <button class="cards-settings-btn" @click="showSettings = !showSettings" title="设置">⚙</button>
+      </template>
+    </PageHeader>
 
     <!-- 设置面板 -->
     <div v-if="showSettings" class="cards-settings" @click.self="showSettings = false">
@@ -50,7 +48,10 @@
             <!-- 正面：单词 -->
             <div class="card-face card-front">
               <div v-if="!settings.spellMode" class="card-content">
-                <div class="card-word">{{ currentWord.word }}</div>
+                <div class="card-word">
+                  {{ currentWord.word }}
+                  <span v-if="currentWord.pos" class="card-pos-badge">{{ currentWord.pos }}</span>
+                </div>
                 <button class="card-flip-btn front-flip-btn" @click.stop="onCardClick">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><polyline points="9 10 6 12 9 14"/><polyline points="15 10 18 12 15 14"/></svg>
                   查看释义
@@ -72,6 +73,7 @@
               <div class="card-content">
                 <div class="card-word-row">
                   <span class="card-word">{{ currentWord.word }}</span>
+                  <span v-if="currentWord.pos" class="card-pos-badge">{{ currentWord.pos }}</span>
                   <span v-if="currentWord.phase" class="card-phase" :class="'card-phase--' + currentWord.phase">
                     {{ phaseLabel(currentWord.phase) }}
                   </span>
@@ -116,11 +118,19 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick } from 'vue'
+import { nextTick, computed } from 'vue'
 const route = useRoute()
 const bookId = route.params.id as string
+const sourceTextId = (route.query.source as string) || ''
+const sourceType = (route.query.type as string) || ''
+const dailyDate = (route.query.dailyDate as string) || ''
+const dailyType = (route.query.dailyType as string) || 'word'
 
-interface Word { id: string; word: string; phonetic: string; meaning: string; example: string; phase: string; learnCorrect: number; ease: number; interval: number; repetitions: number; nextReview: string; pos: string }
+const backUrl = computed(() =>
+  dailyDate ? `/words/daily/${dailyDate}` : `/wordbooks/${bookId}`
+)
+
+interface Word { id: string; word: string; phonetic: string; meaning: string; example: string; phase: string; learnCorrect: number; ease: number; interval: number; repetitions: number; nextReview: string; pos: string; bookId?: string }
 
 const words = ref<Word[]>([])
 const queue = ref<Word[]>([])
@@ -284,7 +294,7 @@ async function enrichCurrent() {
   enrichLoading.value = true
   try {
     const res = await $fetch<{ phonetic: string; meaning: string; example: string; note: string }>(
-      `/api/wordbooks/${bookId}/words/enrich`,
+      `/api/wordbooks/${currentWord.value.bookId || bookId}/words/enrich`,
       { method: 'POST', body: { wordId: currentWord.value.id } }
     )
     if (currentWord.value) {
@@ -360,7 +370,7 @@ async function rate(grade: 'again' | 'hard' | 'good' | 'easy') {
   }
 
   // 更新 DB
-  await $fetch(`/api/wordbooks/${bookId}/words/${w.id}`, {
+  await $fetch(`/api/wordbooks/${w.bookId || bookId}/words/${w.id}`, {
     method: 'PATCH',
     body: { phase, learnCorrect, learnTotal, learnWrong, ease, interval, repetitions, nextReview },
   })
@@ -440,7 +450,7 @@ function clearAutoTimer() { if (autoInterval) { clearInterval(autoInterval); aut
 async function resetQueue() {
   for (const w of words.value) {
     if (w.phase === 'mastered') {
-      await $fetch(`/api/wordbooks/${bookId}/words/${w.id}`, {
+      await $fetch(`/api/wordbooks/${w.bookId || bookId}/words/${w.id}`, {
         method: 'PATCH',
         body: { phase: 'learn', learnCorrect: 0, interval: 0, repetitions: 0, nextReview: '' },
       })
@@ -451,7 +461,18 @@ async function resetQueue() {
 
 async function load() {
   loading.value = true
-  try { words.value = await $fetch<Word[]>(`/api/wordbooks/${bookId}/words`) } catch {}
+  try {
+    let url: string
+    if (dailyDate) {
+      url = `/api/words/daily-cards?date=${dailyDate}&type=${dailyType}`
+    } else if (sourceTextId) {
+      url = `/api/wordbooks/book/${sourceTextId}/words?type=${sourceType}`
+    } else {
+      url = `/api/wordbooks/${bookId}/words`
+    }
+    const data = await $fetch<{ words: Word[]; posCounts: Record<string, number> }>(url)
+    words.value = data.words
+  } catch {}
   loading.value = false
   buildQueue()
 }
@@ -487,6 +508,14 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); clearAutoTimer
 }
 .cards-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #8a877c; text-decoration: none; font-family: 'DM Sans', sans-serif; }
 .cards-back:hover { color: #3d3591; }
+
+.cards-nav-links { display: flex; gap: 6px; margin-left: 12px; }
+.cards-nav-link {
+  font-size: 0.7rem; color: #6b6963; text-decoration: none;
+  padding: 3px 8px; border-radius: 5px;
+  border: 0.5px solid rgba(0,0,0,0.08);
+}
+.cards-nav-link:hover { background: #f0efe9; color: #3d3591; }
 .cards-progress { font-size: 13px; color: #a09e97; font-family: 'DM Mono', monospace; }
 .cards-settings-btn { border: none; background: none; font-size: 18px; cursor: pointer; color: #c4c1ba; }
 .cards-settings-btn:hover { color: #3d3591; }
@@ -541,6 +570,14 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); clearAutoTimer
 .card-back { background: #faf9fe; border: 1.5px solid rgba(61,53,145,0.08); box-shadow: 0 4px 32px rgba(61,53,145,0.08), 0 1px 4px rgba(0,0,0,0.04); transform: rotateY(180deg); }
 .card-content { text-align: center; padding: 32px; }
 .card-word { font-size: 52px; font-weight: 600; font-family: 'Lora', serif; letter-spacing: 0.02em; color: #1a1a18; }
+.card-pos-badge {
+  display: inline-block; vertical-align: middle;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.35em; font-weight: 500;
+  color: #6b6963; background: #f0efe9;
+  padding: 2px 8px; border-radius: 6px;
+  margin-left: 8px;
+}
 .card-flip-btn {
   display: inline-flex; align-items: center; gap: 6px;
   margin-top: 24px; padding: 10px 24px;
