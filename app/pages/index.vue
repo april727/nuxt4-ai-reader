@@ -1352,7 +1352,7 @@ function stopAutoRefresh() {
   .lib-main { width: 100%; padding: 12px; }
   .lib-toolbar { padding: 8px 0; }
   .lib-toolbar-row { flex-wrap: wrap; gap: 8px; }
-  .lib-filter-bar { gap: 4px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .lib-filter-bar { display: none; }
   .lf-chip { font-size: 11px; padding: 4px 10px; white-space: nowrap; }
   .lib-title { font-size: 16px; }
   .book-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
