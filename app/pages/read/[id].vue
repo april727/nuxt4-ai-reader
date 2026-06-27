@@ -351,7 +351,7 @@
       <div class="panel-divider" :class="{ hidden: isMobile }" @mousedown="startResize"></div>
 
       <!-- 右侧面板 -->
-      <aside class="reader-panel" :class="{ 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="{ width: isMobile ? '100%' : rightWidth + 'px' }">
+      <aside v-show="showAnalysisPanel" class="reader-panel" :class="{ 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="{ width: isMobile ? '100%' : rightWidth + 'px' }">
         <div class="panel-tabs">
           <button
             v-for="tab in tabs"
@@ -694,8 +694,10 @@ const PANEL_WIDTH = 340
 function applyPanelState() {
   if (showAnalysisPanel.value) {
     rightWidth.value = PANEL_WIDTH
+    leftWidth.value = Math.floor(window.innerWidth * 0.6)
   } else {
     rightWidth.value = 0
+    leftWidth.value = window.innerWidth  // 文章占满
   }
 }
 // 记录哪些段落有问答历史（用于段落序号指示器）

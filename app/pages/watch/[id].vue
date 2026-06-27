@@ -39,7 +39,7 @@
     <!-- 主体 -->
     <div class="watch-body">
       <!-- 播放器：始终挂载，视频模式可见，音频/笔记模式隐藏 -->
-      <div v-show="viewMode === 'video'" class="watch-player-col">
+      <div v-show="viewMode === 'video'" class="watch-player-col" :class="{ 'expanded': !showSubtitles || !subtitles.length }">
         <VideoPlayer
           ref="playerRef"
           :src="videoUrl"
@@ -946,7 +946,8 @@ function startNotesResize(e: MouseEvent) {
 /* ── 手机端适配 ── */
 @media (max-width: 767px) {
   .watch-body { flex-direction: column; }
-  .watch-player-col { width: 100%; max-height: 60vh; margin-bottom: 12px; }
+  .watch-player-col { width: 100%; max-height: 50vh; margin-bottom: 12px; }
+  .watch-player-col.expanded { max-height: none; }
   .watch-panel { width: 100%; }
   .watch-topbar { padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
   .watch-topbar-center h1 { font-size: 15px; max-width: 60vw; }
