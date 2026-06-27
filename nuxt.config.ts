@@ -19,7 +19,7 @@ export default defineNuxtConfig({
   },
 
   features: {
-    inlineStyles: (id) => id.includes('.vue'),
+    inlineStyles: (id) => id?.includes('.vue') ?? false,
   },
 
   typescript: {
