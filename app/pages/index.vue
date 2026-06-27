@@ -118,9 +118,6 @@
             </button>
           </div>
           <div class="lib-actions">
-            <button v-if="thumbFixCount > 0" class="lib-wordbook-btn" style="color:#b84b2e;border-color:rgba(184,75,46,0.2)" @click="downloadAllThumbs" :disabled="thumbFixing">
-              {{ thumbFixing ? `${thumbFixDone}/${thumbFixCount}` : `修复封面(${thumbFixCount})` }}
-            </button>
             <ToolbarActions
               @import-video="showVideoImport = true"
               @upload="showUpload = true"
@@ -232,7 +229,6 @@
           >
             <button @click="renameBook">重命名</button>
             <button @click="toggleComplete">{{ contextMenu.completedAt ? '取消完成' : '标记完成' }}</button>
-            <button v-if="isVideoSource(contextMenu.source)" @click="fixThumbnail">修复缩略图</button>
             <hr class="ctx-divider" />
             <button class="ctx-danger" @click="deleteBook">删除</button>
           </div>
@@ -665,18 +661,6 @@ function isVideoSource(source: string) {
   return videoSources.includes(source)
 }
 
-async function fixThumbnail() {
-  const id = contextMenu.bookId
-  if (!id) return
-  contextMenu.show = false
-  try {
-    await $fetch(`/api/video/${id}/fix-thumbnail`, { method: 'POST' })
-    await refreshBooks()
-  } catch (e: any) {
-    alert('缩略图修复失败: ' + (e?.message || '请确认 yt-dlp 或 ffmpeg 已安装'))
-  }
-}
-
 async function toggleComplete() {
   try {
     if (contextMenu.completedAt) {
@@ -715,40 +699,7 @@ async function fetchUrl() {
   finally { urlLoading.value = false }
 }
 
-// ── 临时：浏览器端下载远程缩略图 ──
-const thumbFixCount = ref(0)
-const thumbFixDone = ref(0)
-const thumbFixing = ref(false)
-
-async function checkRemoteThumbs() {
-  try {
-    const list = await $fetch<any[]>('/api/video/remote-thumbs-list')
-    thumbFixCount.value = list.length
-  } catch {}
-}
-
-async function downloadAllThumbs() {
-  thumbFixing.value = true
-  thumbFixDone.value = 0
-  try {
-    const list = await $fetch<any[]>('/api/video/remote-thumbs-list')
-    thumbFixCount.value = list.length
-    for (const item of list) {
-      try {
-        const blob = await fetch(item.thumbUrl).then(r => r.ok ? r.blob() : Promise.reject('fail'))
-        const fd = new FormData()
-        fd.append('id', item.id)
-        fd.append('file', blob, 'thumb.jpg')
-        await $fetch('/api/video/save-thumb-from-client', { method: 'POST', body: fd })
-        thumbFixDone.value++
-      } catch {}
-    }
-    await refreshBooks()
-    thumbFixCount.value = 0
-  } finally { thumbFixing.value = false }
-}
-
-onMounted(() => { counts(); startAutoRefresh(); checkRemoteThumbs() })
+onMounted(() => { counts(); startAutoRefresh() })
 onUnmounted(() => { stopAutoRefresh() })
 
 // 书架静默刷新：检测后台分段完成后自动更新标题颜色

@@ -19,3 +19,6 @@ server/data/youtube_cookies.json
 # 测试/临时文件
 toolbar-layout.html
 completed-style.html
+
+# Local Netlify folder
+.netlify
