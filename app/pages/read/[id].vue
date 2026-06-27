@@ -1003,8 +1003,8 @@ function startQaResize(e: MouseEvent) {
   document.body.style.cursor = 'row-resize'
   document.body.style.userSelect = 'none'
 
-  const startY = e.clientY
-  const startH = answerHeight.value
+  let startY = e.clientY
+  let startH = answerHeight.value
 
   const SNAP_THRESHOLD = 30
   const QA_SNAP_MIN = 80
