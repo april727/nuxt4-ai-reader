@@ -22,6 +22,11 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
           </button>
         </div>
+        <button class="watch-btn-icon" @click="toggleSubtitles" :title="showSubtitles ? '隐藏字幕' : '显示字幕'" v-if="subtitles.length">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" :opacity="showSubtitles ? 1 : 0.4">
+            <rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h3"/><path d="M13 12h4"/><path d="M7 16h7"/>
+          </svg>
+        </button>
         <button class="watch-learn-btn" :class="{ disabled: subtitlesLoading }" :disabled="subtitlesLoading" @click="goToLearn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
@@ -53,7 +58,7 @@
         <div class="panel-divider" @mousedown="startResize"></div>
         <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
           <WatchSubtitles
-            v-if="subtitles.length || subtitlesLoading"
+            v-if="showSubtitles && (subtitles.length || subtitlesLoading)"
             :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
             :loop-cue-id="loopCueId" :loop-end-cue-id="loopEndCueId" :loading="subtitlesLoading"
             @cue-click="handleCueClick" @toggle-save="handleToggleSave"
@@ -107,7 +112,7 @@
           <!-- 字幕区：笔记隐藏时占满，显示时在左侧 -->
           <div class="audio-subtitles-col" :class="{ 'with-notes': showNotes }">
             <WatchSubtitles
-              v-if="subtitles.length || subtitlesLoading"
+              v-if="showSubtitles && (subtitles.length || subtitlesLoading)"
               :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
               :loop-cue-id="loopCueId" :loop-end-cue-id="loopEndCueId" :loading="subtitlesLoading"
               @cue-click="handleCueClick" @toggle-save="handleToggleSave"
@@ -212,6 +217,9 @@ const source = ref('')
 const videoUrl = ref('')
 const subtitles = ref<SubtitleCue[]>([])
 const subtitlesLoading = ref(false)
+const showSubtitles = ref(loadSubPref())
+function loadSubPref(): boolean { try { return localStorage.getItem('subtitles-visible') !== 'false' } catch { return true } }
+function toggleSubtitles() { showSubtitles.value = !showSubtitles.value; try { localStorage.setItem('subtitles-visible', String(showSubtitles.value)) } catch {} }
 const subUploading = ref(false)
 const subUploadError = ref('')
 const reuploadInputRef = ref<HTMLInputElement | null>(null)
@@ -742,6 +750,16 @@ function startNotesResize(e: MouseEvent) {
 }
 .watch-learn-btn:hover { background: #ddd8fa; }
 .watch-learn-btn.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.watch-btn-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: 0.5px solid rgba(0,0,0,0.08);
+  border-radius: 8px;
+  background: transparent;
+  color: #6b6963;
+  cursor: pointer; transition: all 0.12s;
+}
+.watch-btn-icon:hover { background: rgba(0,0,0,0.04); color: #1a1a18; }
 
 .watch-body {
   display: flex;
@@ -925,4 +943,17 @@ function startNotesResize(e: MouseEvent) {
 }
 .notes-textarea::placeholder { color: #ccc; }
 
+/* ── 手机端适配 ── */
+@media (max-width: 767px) {
+  .watch-body { flex-direction: column; }
+  .watch-player-col { width: 100%; max-height: 60vh; margin-bottom: 12px; }
+  .watch-panel { width: 100%; }
+  .watch-topbar { padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
+  .watch-topbar-center h1 { font-size: 15px; max-width: 60vw; }
+  .watch-topbar-right { gap: 6px; }
+  .watch-learn-btn { padding: 6px 10px; font-size: 11px; }
+  .audio-subtitles-col { width: 100% !important; }
+  .notes-panel { width: 100% !important; max-width: 100%; }
+  .mode-switcher button { padding: 5px 8px; }
+}
 </style>

@@ -385,4 +385,10 @@ onMounted(() => document.addEventListener('click', () => { groupMenu.key = '' })
 .mini-spinner-inline { display: inline-block; width: 12px; height: 12px; border: 1.5px solid rgba(0,0,0,0.1); border-top-color: #3d3591; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .kp-detail-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #c0bdb4; font-size: 13px; }
+
+@media (max-width: 767px) {
+  .kp-layout { flex-direction: column; }
+  .kp-sidebar { width: 100%; max-height: 40vh; overflow-y: auto; border-right: none; border-bottom: 1px solid rgba(0,0,0,0.06); }
+  .kp-detail { width: 100%; padding: 16px; }
+}
 </style>

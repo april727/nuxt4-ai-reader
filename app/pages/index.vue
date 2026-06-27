@@ -71,7 +71,9 @@
     </Transition>
 
     <!-- 左侧文件夹 -->
-    <aside class="lib-sidebar">
+    <aside class="lib-sidebar" :class="{ 'sidebar-mobile-overlay': isMobile, 'sidebar-visible': showSidebar }">
+      <!-- 移动端遮罩 -->
+      <div v-if="isMobile && showSidebar" class="sidebar-backdrop" @click="showSidebar = false"></div>
       <FolderSidebar
         ref="sidebarRef"
         :folders="folders"
@@ -98,6 +100,11 @@
       <header class="lib-toolbar">
         <div class="lib-toolbar-row">
           <div class="lib-toolbar-left">
+            <button v-if="isMobile" class="lib-hamburger" @click="showSidebar = !showSidebar">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+              </svg>
+            </button>
             <h1 class="lib-title">{{ activeFolderName }}</h1>
             <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
           </div>
@@ -326,8 +333,12 @@
 
 <script setup lang="ts">
 import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
+import { useIsMobile } from '~/composables/useIsMobile'
 
 useHead({ title: 'AI 阅读分析 - 书架' })
+
+const isMobile = useIsMobile()
+const showSidebar = ref(false)
 
 interface Folder { id: string; name: string }
 interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean }
@@ -1392,5 +1403,35 @@ function stopAutoRefresh() {
   background: #fef2f2;
   border-radius: 6px;
   line-height: 1.4;
+}
+
+/* ── 手机端适配 ── */
+@media (max-width: 767px) {
+  .library-layout { flex-direction: column; }
+  .lib-sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 200;
+    width: 280px; max-width: 80vw;
+    transform: translateX(-100%); transition: transform 0.2s;
+  }
+  .lib-sidebar.sidebar-visible { transform: translateX(0); }
+  .lib-sidebar.sidebar-mobile-overlay { background: #fff; box-shadow: 2px 0 16px rgba(0,0,0,0.1); border-radius: 0 12px 12px 0; }
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: -1; background: rgba(0,0,0,0.3); }
+  .lib-main { width: 100%; padding: 12px; }
+  .lib-toolbar { padding: 8px 0; }
+  .lib-toolbar-row { flex-wrap: wrap; gap: 8px; }
+  .lib-hamburger {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border: none; background: transparent;
+    color: #4a4a46; cursor: pointer; border-radius: 8px;
+    margin-right: 4px; flex-shrink: 0;
+  }
+  .lib-hamburger:hover { background: rgba(0,0,0,0.04); }
+  .lib-filter-bar { gap: 4px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .lf-chip { font-size: 11px; padding: 4px 10px; white-space: nowrap; }
+  .lib-title { font-size: 16px; }
+  .book-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+}
+@media (min-width: 768px) {
+  .lib-hamburger { display: none; }
 }
 </style>

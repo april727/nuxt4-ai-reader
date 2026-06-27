@@ -857,4 +857,10 @@ onMounted(async () => {
   color: #a09e97;
 }
 
+@media (max-width: 767px) {
+  .review-grid { grid-template-columns: 1fr; gap: 8px; }
+  .review-card { padding: 12px; }
+  .review-detail { max-width: 100vw; margin: 0; }
+}
+
 </style>

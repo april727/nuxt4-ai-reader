@@ -50,6 +50,12 @@
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
         </button>
+        <button class="reader-icon-btn" @click="toggleAnalysisPanel" :title="showAnalysisPanel ? '隐藏分析面板' : '显示分析面板'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><rect v-if="showAnalysisPanel" x="15" y="3" width="6" height="18" rx="1" fill="currentColor" opacity="0.15"/>
+            <line v-if="!showAnalysisPanel" x1="15" y1="3" x2="15" y2="21"/>
+          </svg>
+        </button>
         <button class="reader-icon-btn" @click="runManualAnalysis()" title="AI 分析" :disabled="analyzing">
           <svg v-if="!analyzing" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M8 12a4 4 0 1 1 8 0"/>
@@ -341,11 +347,11 @@
         </template>
       </article>
 
-      <!-- 可拖拽分割线 -->
-      <div class="panel-divider" @mousedown="startResize"></div>
+      <!-- 可拖拽分割线（移动端隐藏） -->
+      <div class="panel-divider" :class="{ hidden: isMobile }" @mousedown="startResize"></div>
 
       <!-- 右侧面板 -->
-      <aside class="reader-panel" :style="{ width: rightWidth + 'px' }">
+      <aside class="reader-panel" :class="{ 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="{ width: isMobile ? '100%' : rightWidth + 'px' }">
         <div class="panel-tabs">
           <button
             v-for="tab in tabs"
@@ -591,6 +597,7 @@ import { MARK_COLORS } from '#shared/types'
 import { useArticle } from '~/composables/useArticle'
 import { useDeepSeek } from '~/composables/useDeepSeek'
 import { useTextStream } from '~/composables/useTextStream'
+import { useIsMobile } from '~/composables/useIsMobile'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
 import ReadingAppearance from '~/components/ReadingAppearance.vue'
 import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
@@ -604,6 +611,7 @@ const chatTextStream = useTextStream()
 const { rawText, title, paragraphs, analysis, chatHistory, activeParagraphId, rightPanelContent, isProcessing, currentParagraphChat } = article
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
+const isMobile = useIsMobile()
 const source = ref('')
 const isVideo = computed(() => videoSources.includes(source.value))
 const originalSubtitles = ref<Array<{ text: string; start: number; end: number }> | null>(null)
@@ -674,6 +682,22 @@ const articlePane = ref<HTMLElement | null>(null)
 const paraRefs = ref<HTMLElement[]>([])
 const leftWidth = ref(0)
 const rightWidth = ref(340)
+// 分析面板开关（localStorage 持久）
+const showAnalysisPanel = ref(loadPanelPref())
+function loadPanelPref(): boolean { try { return localStorage.getItem('analysis-panel-visible') !== 'false' } catch { return true } }
+function toggleAnalysisPanel() {
+  showAnalysisPanel.value = !showAnalysisPanel.value
+  try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
+  applyPanelState()
+}
+const PANEL_WIDTH = 340
+function applyPanelState() {
+  if (showAnalysisPanel.value) {
+    rightWidth.value = PANEL_WIDTH
+  } else {
+    rightWidth.value = 0
+  }
+}
 // 记录哪些段落有问答历史（用于段落序号指示器）
 const paragraphsWithChats = reactive(new Set<string>())
 
@@ -972,7 +996,7 @@ function startResize(e: MouseEvent) {
   resizing = true; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
   const onMove = (ev: MouseEvent) => {
     if (!(ev.buttons & 1)) { onUp(); return }  // 鼠标已松开（如 iframe 吞掉事件）→ 强制清理
-    if (!resizing) return; const t = window.innerWidth
+    if (!resizing || !showAnalysisPanel.value) return; const t = window.innerWidth
     let l = ev.clientX; if (l < 320) l = 320; if (l > t - 340) l = t - 340
     leftWidth.value = l; rightWidth.value = t - l - 6
   }
@@ -1455,7 +1479,7 @@ function focusChatInput() {
 // ---- 加载 ----
 onMounted(() => {
   leftWidth.value = Math.floor(window.innerWidth * 0.6)
-  rightWidth.value = Math.floor(window.innerWidth * 0.4 - 6)
+  applyPanelState()
 })
 onMounted(async () => {
   loadPromptTemplates()
@@ -3034,4 +3058,25 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   border-bottom-style: dashed;
 }
 
+/* ── 手机端适配 ── */
+@media (max-width: 767px) {
+  .reader-layout { flex-direction: column; min-height: 100dvh; }
+  .reader-pane { flex: none; width: 100% !important; min-width: 0; }
+  .article-pane { width: 100% !important; padding: 12px 16px; }
+  .article-body { font-size: 15px; line-height: 1.85; }
+  .reader-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 4px; }
+  .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }
+  .panel-divider.hidden { display: none; }
+  .panel-divider { display: none; }
+  .reader-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 200;
+    width: 100% !important; max-width: 100vw;
+    border-radius: 0; box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+    display: none;
+  }
+  .reader-panel.panel-mobile-overlay { display: flex; }
+  .reader-header { padding: 10px 16px; }
+  .reader-header h1 { font-size: 18px; }
+  .page-header { padding: 10px 16px; }
+}
 </style>
