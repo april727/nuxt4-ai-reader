@@ -111,7 +111,7 @@
 
     <div class="reader-body" ref="readerBodyEl">
       <!-- 正文区 -->
-      <article class="reader-article-pane" ref="articlePane" :style="{ width: leftWidth + 'px' }">
+      <article class="reader-article-pane" ref="articlePane" :style="{ maxWidth: showAnalysisPanel ? leftWidth + 'px' : '100%' }">
         <template
           v-for="(para, index) in paragraphs"
           :key="para.id"
@@ -684,7 +684,7 @@ const leftWidth = ref(0)
 const rightWidth = ref(340)
 // 分析面板开关（localStorage 持久）
 const showAnalysisPanel = ref(loadPanelPref())
-function loadPanelPref(): boolean { try { return localStorage.getItem('analysis-panel-visible') !== 'false' } catch { return true } }
+function loadPanelPref(): boolean { try { return localStorage.getItem('analysis-panel-visible') === 'true' } catch { return false } }
 function toggleAnalysisPanel() {
   showAnalysisPanel.value = !showAnalysisPanel.value
   try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
@@ -3060,11 +3060,15 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   border-bottom-style: dashed;
 }
 
+/* 阅读区自适应 */
+.reader-body { display: flex; flex-direction: row; overflow: hidden; }
+.reader-article-pane { flex: 1; overflow-y: auto; min-width: 0; }
+
 /* ── 手机端适配 ── */
 @media (max-width: 767px) {
   .reader-layout { flex-direction: column; min-height: 100dvh; }
-  .reader-pane { flex: none; width: 100% !important; min-width: 0; }
-  .article-pane { width: 100% !important; padding: 12px 16px; }
+  .reader-body { flex-direction: column; }
+  .reader-article-pane { flex: 1; width: 100% !important; max-width: 100% !important; padding: 0; }
   .article-body { font-size: 15px; line-height: 1.85; }
   .reader-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 4px; }
   .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }

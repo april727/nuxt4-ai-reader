@@ -86,6 +86,27 @@ async function getSqljsDb(): Promise<any> {
     }
     return sqljsDb
   })()
+
+  // 启动健康检查：本地空但 Turso 有数据时提示
+  sqljsInitPromise.then(async () => {
+    const localStmt = sqljsDb.prepare('SELECT COUNT(*) as c FROM texts')
+    let localCount = 0
+    if (localStmt.step()) localCount = localStmt.getAsObject().c as number
+    localStmt.free()
+
+    if (localCount === 0 && process.env['TURSO_URL'] && process.env['TURSO_AUTH_TOKEN']) {
+      try {
+        const { createClient } = await import('@libsql/client')
+        const turso = createClient({ url: process.env['TURSO_URL'], authToken: process.env['TURSO_AUTH_TOKEN'] })
+        const r = await turso.execute('SELECT COUNT(*) as c FROM texts')
+        const remoteCount = Number(r.rows[0]?.[0] ?? 0)
+        if (remoteCount > 0) {
+          console.log(`[health] ⚠️  本地数据为空，Turso 有 ${remoteCount} 条记录。点击书架「同步到云端」可双向同步数据。`)
+        }
+      } catch { /* Turso 不可达，跳过 */ }
+    }
+  })
+
   return sqljsInitPromise
 }
 
@@ -148,6 +169,25 @@ function migrateFromJson() {
 const BACKUP_DIR = path.join(DB_DIR, 'backups')
 const MAX_BACKUPS = 10
 
+let syncTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 写入后 30 秒自动同步到 Turso（多次写入合并为一次） */
+function scheduleSyncToTurso() {
+  if (USE_TURSO) return  // Turso 模式下不需要这个
+  if (syncTimer) clearTimeout(syncTimer)
+  syncTimer = setTimeout(async () => {
+    try {
+      const { syncToTurso } = await import('./sync-turso')
+      const result = await syncToTurso()
+      if (result.totalInserted > 0 || result.totalUpdated > 0) {
+        console.log(`[auto-sync] +${result.totalInserted} ~${result.totalUpdated}`)
+      }
+    } catch (e: any) {
+      // 同步失败不阻塞主流程（可能 Turso 未配置或网络不通）
+    }
+  }, 30_000)
+}
+
 function saveDbSqljs() {
   const data = sqljsDb.export()
   if (existsSync(DB_PATH)) {
@@ -159,6 +199,7 @@ function saveDbSqljs() {
     } catch {}
   }
   writeFileSync(DB_PATH, Buffer.from(data))
+  scheduleSyncToTurso()  // 写入后触发自动同步
 }
 
 // ==========================================================
@@ -177,7 +218,9 @@ export async function runQuery(sql: string, params?: any[]) {
     const db = await getTursoDb()
     return db.execute({ sql, args: params || [] })
   }
-  return (await getSqljsDb()).run(sql, params)
+  const result = (await getSqljsDb()).run(sql, params)
+  saveDbSqljs()  // 每次写操作后立即持久化到磁盘
+  return result
 }
 
 export async function queryAll(sql: string, params?: any[]): Promise<any[]> {

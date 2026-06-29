@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { ensureDir, LEGACY_UPLOADS } from '../../utils/storage'
 import { useR2, r2Put } from '../../utils/r2'
+import { queueFileSync } from '../../utils/file-sync'
 
 const ALLOWED_VIDEO = ['.mp4', '.webm', '.ogg', '.mp3', '.wav', '.m4a', '.mov']
 
@@ -42,6 +43,7 @@ export default defineEventHandler(async (event) => {
   ensureDir(LEGACY_UPLOADS)
   const filePath = path.join(LEGACY_UPLOADS, safeName)
   await writeFile(filePath, buffer)
+  queueFileSync(`uploads/${safeName}`, filePath, mimeFromExt(ext))
 
   return {
     filePath: safeName,

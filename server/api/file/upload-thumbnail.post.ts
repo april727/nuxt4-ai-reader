@@ -3,6 +3,7 @@ import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { LEGACY_UPLOADS, ensureDir } from '../../utils/storage'
 import { useR2, r2Put } from '../../utils/r2'
+import { queueFileSync } from '../../utils/file-sync'
 
 export default defineEventHandler(async (event) => {
   const form = await readMultipartFormData(event)
@@ -24,6 +25,8 @@ export default defineEventHandler(async (event) => {
   ensureDir(LEGACY_UPLOADS)
   const filePath = join(LEGACY_UPLOADS, name)
   writeFileSync(filePath, file.data)
+  const ct = ext === '.png' ? 'image/png' : 'image/jpeg'
+  queueFileSync(`uploads/${name}`, filePath, ct)
 
   return { url: `/api/file/${name}`, path: name, size: file.data?.length || 0 }
 })
