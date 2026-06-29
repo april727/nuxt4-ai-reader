@@ -22,7 +22,14 @@ export default defineEventHandler(async (event) => {
   // ── R2 模式：生成签名 URL，302 跳转让浏览器直连 R2 ──
   if (useR2()) {
     const head = await r2Head(name)
-    if (!head) throw createError({ statusCode: 404, message: '文件不存在' })
+    if (!head) {
+      // R2 没有 → 回退本地文件系统（图刚上传还没同步）
+      const localPath = resolveFilePath(name)
+      if (!existsSync(localPath)) throw createError({ statusCode: 404, message: '文件不存在' })
+      setHeader(event, 'Content-Type', mimeMap[path.extname(name).toLowerCase()] || 'application/octet-stream')
+      setHeader(event, 'Content-Length', statSync(localPath).size)
+      return createReadStream(localPath)
+    }
 
     // 大文件（视频）仍然走流代理，保证 Range 请求支持
     const ext = path.extname(name).toLowerCase()

@@ -1,7 +1,8 @@
 import { queryOne, runQuery } from '../../utils/db'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { getImagesDir, ensureDir } from '../../utils/storage'
+import { queueFileSync } from '../../utils/file-sync'
 
 export default defineEventHandler(async (event) => {
   const form = await readMultipartFormData(event)
@@ -28,6 +29,7 @@ export default defineEventHandler(async (event) => {
   const filename = `img_${hash}${ext}`
   const filePath = `${folderId}/${textId}/images/${filename}`
   writeFileSync(dir + '/' + filename, file.data)
+  queueFileSync(filePath, dir + '/' + filename, ext === '.png' ? 'image/png' : 'image/jpeg')
 
   // 更新 segments JSON
   const segRow = await queryOne('SELECT segments FROM texts WHERE id=?', [textId])

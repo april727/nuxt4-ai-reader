@@ -22,7 +22,13 @@ export default defineEventHandler(async (event) => {
   // ── R2 模式：生成签名 URL，302 跳转让浏览器直连 R2 ──
   if (useR2()) {
     const head = await r2Head(name)
-    if (!head) throw createError({ statusCode: 404, message: '文件不存在' })
+    if (!head) {
+      const localPath = resolveFilePath(name)
+      if (!existsSync(localPath)) throw createError({ statusCode: 404, message: '文件不存在' })
+      setHeader(event, 'Content-Type', mimeMap[path.extname(name).toLowerCase()] || 'application/octet-stream')
+      setHeader(event, 'Content-Length', statSync(localPath).size)
+      return createReadStream(localPath)
+    }
 
     const ext = path.extname(name).toLowerCase()
     if (['.mp4', '.webm', '.mov', '.ogg', '.mp3', '.wav', '.m4a'].includes(ext)) {
