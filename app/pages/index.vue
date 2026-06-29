@@ -71,12 +71,19 @@
     </Transition>
 
     <!-- 左侧文件夹 -->
-    <aside class="lib-sidebar">
+    <aside class="lib-sidebar" :class="{ hidden: sidebarCollapsed }">
+      <div class="sidebar-toggle" @click="cycleSidebar" :title="sidebarCollapsed ? '展开书架' : '隐藏书架'">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="toggle-arrow">
+          <polyline v-if="sidebarCollapsed" points="9 18 15 12 9 6"/>
+          <polyline v-else points="15 18 9 12 15 6"/>
+        </svg>
+      </div>
       <FolderSidebar
         ref="sidebarRef"
         :folders="folders"
         :active-folder="activeFolder"
         :counts="folderCounts"
+        :collapsed="sidebarCollapsed"
         @select="activeFolder = $event"
         @create="handleCreateFolder"
         @drop-on-folder="handleDropOnFolder"
@@ -88,7 +95,7 @@
       <div class="lib-sidebar-footer">
         <button class="lib-nav-btn" @click="navigateTo('/knowledge')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-          知识要点
+          <span>知识要点</span>
         </button>
       </div>
     </aside>
@@ -351,6 +358,10 @@ const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncDa
 )
 
 const folderCounts = ref<Record<string, number>>({})
+const sidebarCollapsed = ref(loadSidebarPref())
+function loadSidebarPref(): boolean { try { return localStorage.getItem('sidebar-collapsed') === 'true' } catch { return false } }
+function cycleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
+watch(sidebarCollapsed, v => { try { localStorage.setItem('sidebar-collapsed', String(v)) } catch {} })
 const showUpload = ref(false)
 const showPaste = ref(false)
 const showUrl = ref(false)
@@ -1345,10 +1356,26 @@ function stopAutoRefresh() {
   line-height: 1.4;
 }
 
+/* ── 侧栏收起/展开动画 ── */
+.sidebar-toggle {
+  position: absolute; top: 8px; right: -12px; z-index: 10;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 50%;
+  cursor: pointer; color: #8a8880; transition: all 0.2s;
+}
+.sidebar-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
+.toggle-arrow { transition: transform 0.25s ease; }
+.lib-sidebar { position: relative; width: 220px; min-width: 220px; transition: width 0.25s ease, min-width 0.25s ease; overflow: visible; }
+.lib-sidebar.hidden { width: 0; min-width: 0; overflow: visible; border: none; }
+.lib-sidebar.hidden .sidebar-toggle { right: -24px; display: flex !important; }
+.lib-sidebar.hidden > :not(.sidebar-toggle) { display: none; }
+
 /* ── 手机端适配 ── */
 @media (max-width: 767px) {
   .library-layout { flex-direction: column; }
   .lib-sidebar { display: none; }
+  .sidebar-toggle { display: none; }
   .lib-main { width: 100%; padding: 12px; }
   .lib-toolbar { padding: 8px 0; }
   .lib-toolbar-row { flex-wrap: wrap; gap: 8px; }

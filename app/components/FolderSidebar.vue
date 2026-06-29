@@ -150,7 +150,7 @@
 <script setup lang="ts">
 interface Folder { id: string; name: string; parent?: string; isPrivate?: boolean }
 
-const props = defineProps<{ folders: Folder[]; activeFolder: string; counts: Record<string, number> }>()
+const props = defineProps<{ folders: Folder[]; activeFolder: string; counts: Record<string, number>; collapsed?: boolean }>()
 const emit = defineEmits<{
   select: [id: string]
   create: [name: string, parent?: string]

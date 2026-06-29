@@ -22,11 +22,6 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
           </button>
         </div>
-        <button class="watch-btn-icon" @click="toggleSubtitles" :title="showSubtitles ? '隐藏字幕' : '显示字幕'" v-if="subtitles.length">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" :opacity="showSubtitles ? 1 : 0.4">
-            <rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h3"/><path d="M13 12h4"/><path d="M7 16h7"/>
-          </svg>
-        </button>
         <button class="watch-learn-btn" :class="{ disabled: subtitlesLoading }" :disabled="subtitlesLoading" @click="goToLearn">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
@@ -56,7 +51,14 @@
       <!-- ── 默认：视频 + 字幕 ── -->
       <template v-if="viewMode === 'video'">
         <div class="panel-divider" @mousedown="startResize"></div>
-        <div class="watch-sidebar" :style="{ width: sidebarWidth + 'px' }">
+        <div class="watch-sidebar" :class="{ hidden: !showSubtitles }" :style="{ width: showSubtitles ? sidebarWidth + 'px' : '0px' }">
+          <!-- 字幕推拉按钮 -->
+          <div class="subs-toggle" @click="toggleSubtitles" :title="showSubtitles ? '隐藏字幕' : '显示字幕'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline v-if="showSubtitles" points="15 18 9 12 15 6"/>
+              <polyline v-else points="9 18 15 12 9 6"/>
+            </svg>
+          </div>
           <WatchSubtitles
             v-if="showSubtitles && (subtitles.length || subtitlesLoading)"
             :cues="subtitles" :active-cue-id="activeCueId" :practice="practice"
@@ -146,7 +148,13 @@
 
           <!-- 笔记面板 -->
           <div v-if="showNotes" class="panel-divider" @mousedown="startNotesResize"></div>
-          <div class="notes-panel" :style="{ width: showNotes ? notesSidebarWidth + 'px' : 'auto' }">
+          <div class="notes-panel" :class="{ hidden: !showNotes }" :style="{ width: showNotes ? notesSidebarWidth + 'px' : '0px' }">
+            <div class="notes-toggle" @click="showNotes = !showNotes" :title="showNotes ? '隐藏笔记' : '展开笔记'">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline v-if="showNotes" points="15 18 9 12 15 6"/>
+                <polyline v-else points="9 18 15 12 9 6"/>
+              </svg>
+            </div>
             <div class="notes-header" :class="{ collapsed: !showNotes }">
               <span v-if="showNotes" class="notes-label">笔记</span>
               <div v-if="showNotes" class="notes-header-right">
@@ -162,12 +170,6 @@
                 >预览</button>
                 <button class="notes-save-btn" @click="notesDirty = true; saveNotes()">保存</button>
               </div>
-              <button class="notes-collapse-btn" @click="showNotes = !showNotes" :title="showNotes ? '收起笔记' : '展开笔记'">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline v-if="showNotes" points="6 15 12 9 18 15"/>
-                  <polyline v-else points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
             </div>
             <template v-if="showNotes">
               <textarea
@@ -814,13 +816,25 @@ function startNotesResize(e: MouseEvent) {
 }
 
 .watch-sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   border-left: 0.5px solid rgba(0,0,0,0.08);
   background: #ffffff;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
 }
+.watch-sidebar.hidden { overflow: visible; }
+.watch-sidebar.hidden > :not(.subs-toggle) { display: none; }
+.subs-toggle {
+  position: absolute; top: 8px; left: -12px; z-index: 10;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 50%;
+  cursor: pointer; color: #8a8880; transition: all 0.2s;
+}
+.subs-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
+.watch-sidebar.hidden .subs-toggle { left: -24px; }
 
 .watch-sidebar :deep(.subtitle-list) { flex: 1; min-height: 0; }
 
@@ -872,9 +886,21 @@ function startNotesResize(e: MouseEvent) {
 
 /* 笔记面板 */
 .notes-panel {
+  position: relative;
   flex-shrink: 0; display: flex; flex-direction: column;
-  background: #faf9f7; min-width: 0; overflow: hidden;
+  background: #faf9f7; min-width: 0; overflow: visible;
 }
+.notes-panel.hidden { overflow: visible; }
+.notes-panel.hidden > :not(.notes-toggle) { display: none; }
+.notes-toggle {
+  position: absolute; top: 8px; left: -12px; z-index: 10;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 50%;
+  cursor: pointer; color: #8a8880; transition: all 0.2s;
+}
+.notes-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
+.notes-panel.hidden .notes-toggle { left: -24px; }
 .notes-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 12px; border-bottom: 0.5px solid rgba(0,0,0,0.06);

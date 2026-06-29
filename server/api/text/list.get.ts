@@ -1,8 +1,16 @@
 import { queryAll } from '../../utils/db'
+import { getCached, setCache } from '../../utils/cache'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const folder = (query.folder as string) || 'default'
+
+  const cacheKey = `texts:${folder}`
+  const cached = getCached(cacheKey)
+  if (cached) {
+    setResponseHeader(event, 'Cache-Control', 'public, max-age=15, stale-while-revalidate=60')
+    return cached
+  }
 
   async function getStats(): Promise<Map<string, any>> {
     const map = new Map()
@@ -21,14 +29,13 @@ export default defineEventHandler(async (event) => {
     rows = await queryAll('SELECT id,title,source,folder,excerpt,createdAt,completedAt,0 as len,filePath,videoMeta,segments FROM texts WHERE folder=? ORDER BY createdAt DESC', [folder])
   }
 
-  return rows.map((r: any) => {
+  const result = rows.map((r: any) => {
     const s = statsMap.get(r.id) || {}
     let duration = 0
     let thumbnail = ''
     if (r.videoMeta) {
       try { const vm = JSON.parse(r.videoMeta); duration = vm.duration || 0; thumbnail = vm.thumbnail || '' } catch {}
     }
-    // 缩略图 URL：远程 URL 直接使用，本地路径拼接 /api/file/
     if (thumbnail) {
       thumbnail = thumbnail.startsWith('http') ? thumbnail : `/api/file/${thumbnail}`
     }
@@ -47,4 +54,8 @@ export default defineEventHandler(async (event) => {
       duration, thumbnail, aiSegmented,
     }
   })
+
+  setCache(cacheKey, result)
+  setResponseHeader(event, 'Cache-Control', 'public, max-age=15, stale-while-revalidate=60')
+  return result
 })

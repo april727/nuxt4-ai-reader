@@ -50,12 +50,6 @@
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
         </button>
-        <button class="reader-icon-btn" @click="toggleAnalysisPanel" :title="showAnalysisPanel ? '隐藏分析面板' : '显示分析面板'">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><rect v-if="showAnalysisPanel" x="15" y="3" width="6" height="18" rx="1" fill="currentColor" opacity="0.15"/>
-            <line v-if="!showAnalysisPanel" x1="15" y1="3" x2="15" y2="21"/>
-          </svg>
-        </button>
         <button class="reader-icon-btn" @click="runManualAnalysis()" title="AI 分析" :disabled="analyzing">
           <svg v-if="!analyzing" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M8 12a4 4 0 1 1 8 0"/>
@@ -111,7 +105,7 @@
 
     <div class="reader-body" ref="readerBodyEl">
       <!-- 正文区 -->
-      <article class="reader-article-pane" ref="articlePane" :style="{ maxWidth: showAnalysisPanel ? leftWidth + 'px' : '100%' }">
+      <article class="reader-article-pane" ref="articlePane">
         <template
           v-for="(para, index) in paragraphs"
           :key="para.id"
@@ -348,10 +342,17 @@
       </article>
 
       <!-- 可拖拽分割线（移动端隐藏） -->
-      <div class="panel-divider" :class="{ hidden: isMobile }" @mousedown="startResize"></div>
+      <div class="panel-divider" :class="{ hidden: isMobile }"></div>
 
       <!-- 右侧面板 -->
-      <aside v-show="showAnalysisPanel" class="reader-panel" :class="{ 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="{ width: isMobile ? '100%' : rightWidth + 'px' }">
+      <aside class="reader-panel" :class="{ hidden: !showAnalysisPanel, 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="isMobile ? { width: '100%' } : {}">
+        <!-- 面板推拉按钮 -->
+        <div class="panel-toggle" @click="toggleAnalysisPanel" :title="showAnalysisPanel ? '隐藏面板' : '展开面板'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline v-if="showAnalysisPanel" points="15 18 9 12 15 6"/>
+            <polyline v-else points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
         <div class="panel-tabs">
           <button
             v-for="tab in tabs"
@@ -680,29 +681,29 @@ function fillPrompt(name: string, vars: Record<string, string>): { system: strin
 const readerBodyEl = ref<HTMLElement | null>(null)
 const articlePane = ref<HTMLElement | null>(null)
 const paraRefs = ref<HTMLElement[]>([])
-const leftWidth = ref(0)
-const rightWidth = ref(340)
 // 分析面板开关（localStorage 持久）
 const showAnalysisPanel = ref(loadPanelPref())
 function loadPanelPref(): boolean {
-  if (typeof window === 'undefined') return false  // SSR 默认隐藏
+  if (typeof window === 'undefined') return false
+  // 手机端默认隐藏
+  if (window.innerWidth < 768) return false
   try { const v = localStorage.getItem('analysis-panel-visible'); if (v === null) return false; return v === 'true' } catch { return false }
 }
 function toggleAnalysisPanel() {
   showAnalysisPanel.value = !showAnalysisPanel.value
   try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
-  applyPanelState()
 }
-const PANEL_WIDTH = 340
-function applyPanelState() {
-  if (showAnalysisPanel.value) {
-    rightWidth.value = PANEL_WIDTH
-    leftWidth.value = Math.floor(window.innerWidth * 0.6)
-  } else {
-    rightWidth.value = 0
-    leftWidth.value = window.innerWidth  // 文章占满
+// 缩小到移动端宽度时自动隐藏分析面板
+let wasPanelVisible = false
+watch(isMobile, (mobile) => {
+  if (mobile && showAnalysisPanel.value) {
+    wasPanelVisible = true
+    showAnalysisPanel.value = false
+  } else if (!mobile && wasPanelVisible) {
+    showAnalysisPanel.value = true
+    wasPanelVisible = false
   }
-}
+})
 // 记录哪些段落有问答历史（用于段落序号指示器）
 const paragraphsWithChats = reactive(new Set<string>())
 
@@ -993,21 +994,6 @@ function renderInlineMD(text: string): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// ---- 面板拖拽调整 ----
-let resizing = false
-function startResize(e: MouseEvent) {
-  resizing = true; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
-  const onMove = (ev: MouseEvent) => {
-    if (!(ev.buttons & 1)) { onUp(); return }  // 鼠标已松开（如 iframe 吞掉事件）→ 强制清理
-    if (!resizing || !showAnalysisPanel.value) return; const t = window.innerWidth
-    let l = ev.clientX; if (l < 320) l = 320; if (l > t - 340) l = t - 340
-    leftWidth.value = l; rightWidth.value = t - l - 6
-  }
-  const onUp = () => { resizing = false; document.body.style.cursor = ''; document.body.style.userSelect = ''
-    document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
-  document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp)
 }
 
 // ---- QA 区控制 ----
@@ -1483,8 +1469,6 @@ function focusChatInput() {
 
 // ---- 加载 ----
 onMounted(() => {
-  leftWidth.value = Math.floor(window.innerWidth * 0.6)
-  applyPanelState()
 })
 onMounted(async () => {
   loadPromptTemplates()
@@ -3066,6 +3050,27 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 /* 阅读区自适应 */
 .reader-body { display: flex; flex-direction: row; overflow: hidden; }
 .reader-article-pane { flex: 1; overflow-y: auto; min-width: 0; }
+.reader-panel { width: 40%; min-width: 320px; max-width: 500px; flex-shrink: 0; }
+
+/* 面板推拉按钮 */
+.reader-panel { position: relative; overflow: visible; }
+.reader-panel.hidden { width: 0 !important; min-width: 0 !important; max-width: 0 !important; overflow: visible; background: transparent; border: none; }
+.reader-panel.hidden > :not(.panel-toggle) { display: none; }
+.panel-toggle {
+  position: absolute; top: 8px; left: -12px; z-index: 210;
+  width: 24px; height: 24px;
+  display: flex !important; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 50%;
+  cursor: pointer; color: #8a8880; transition: all 0.2s;
+}
+.panel-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
+.reader-panel.hidden .panel-toggle { left: -24px; display: flex !important; }
+.reader-panel:not(.hidden) .panel-toggle { display: flex !important; }
+
+@media (max-width: 767px) {
+  .panel-toggle { display: flex !important; }
+  .reader-panel.hidden .panel-toggle { left: -24px; display: flex !important; }
+}
 
 /* ── 手机端适配 ── */
 @media (max-width: 767px) {
@@ -3081,9 +3086,14 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
     position: fixed; top: 0; right: 0; bottom: 0; z-index: 200;
     width: 100% !important; max-width: 100vw;
     border-radius: 0; box-shadow: -4px 0 24px rgba(0,0,0,0.15);
-    display: none;
+    width: 0 !important; min-width: 0 !important; max-width: 100vw;
+    border-radius: 0; background: transparent; border: none; overflow: visible;
   }
-  .reader-panel.panel-mobile-overlay { display: flex; }
+  .reader-panel.panel-mobile-overlay {
+    width: 100% !important; min-width: 100% !important;
+    background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.15); display: flex;
+  }
+  .reader-panel:not(.panel-mobile-overlay) > :not(.panel-toggle) { display: none; }
   .reader-header { padding: 10px 16px; }
   .reader-header h1 { font-size: 18px; }
   .page-header { padding: 10px 16px; }
