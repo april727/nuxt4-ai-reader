@@ -58,10 +58,10 @@ const renderedHtml = computed(() => {
     let md = props.content
     md = md.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[-: |]+\|)/g, '$1\n\n$2')
     md = normalizeTables(md)
-    // 扩展图片语法：![](url =300) → 固定宽，![](url =50%) → 百分比
-    md = md.replace(/!\[([^\]]*)\]\(([^) ]+)\s*=\s*(\d+%?)\)/g, (_, alt, src, size) => {
+    // 扩展图片语法：![alt](url =300) → 固定宽，![alt](url =50%) → 百分比
+    md = md.replace(/!\[([^\]]*)\]\(([^\n=]+)\s*=\s*(\d+%?)\)/g, (_, alt, src, size) => {
       const s = size.endsWith('%') ? `style="width:${size};max-width:100%"` : `width="${size}"`
-      return `<img src="${src}" alt="${alt}" ${s}>`
+      return `<img src="${src.trim()}" alt="${alt}" ${s}>`
     })
     return marked.parse(md, { breaks: true, gfm: true, html: true }) as string
   } catch {

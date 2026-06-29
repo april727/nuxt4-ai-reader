@@ -684,7 +684,10 @@ const leftWidth = ref(0)
 const rightWidth = ref(340)
 // 分析面板开关（localStorage 持久）
 const showAnalysisPanel = ref(loadPanelPref())
-function loadPanelPref(): boolean { try { return localStorage.getItem('analysis-panel-visible') === 'true' } catch { return false } }
+function loadPanelPref(): boolean {
+  if (typeof window === 'undefined') return false  // SSR 默认隐藏
+  try { const v = localStorage.getItem('analysis-panel-visible'); if (v === null) return false; return v === 'true' } catch { return false }
+}
 function toggleAnalysisPanel() {
   showAnalysisPanel.value = !showAnalysisPanel.value
   try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
