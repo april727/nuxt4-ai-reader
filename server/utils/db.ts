@@ -188,18 +188,24 @@ function scheduleSyncToTurso() {
   }, 30_000)
 }
 
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
 function saveDbSqljs() {
-  const data = sqljsDb.export()
-  if (existsSync(DB_PATH)) {
-    if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true })
-    writeFileSync(path.join(BACKUP_DIR, `reader-${Date.now()}.db`), readFileSync(DB_PATH))
-    try {
-      const files = readdirSync(BACKUP_DIR).filter(f => f.startsWith('reader-')).sort()
-      while (files.length > MAX_BACKUPS) unlinkSync(path.join(BACKUP_DIR, files.shift()!))
-    } catch {}
-  }
-  writeFileSync(DB_PATH, Buffer.from(data))
-  scheduleSyncToTurso()  // 写入后触发自动同步
+  // 防抖：5 秒内多次写入合并为一次落盘
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    const data = sqljsDb.export()
+    if (existsSync(DB_PATH)) {
+      if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true })
+      writeFileSync(path.join(BACKUP_DIR, `reader-${Date.now()}.db`), readFileSync(DB_PATH))
+      try {
+        const files = readdirSync(BACKUP_DIR).filter(f => f.startsWith('reader-')).sort()
+        while (files.length > MAX_BACKUPS) unlinkSync(path.join(BACKUP_DIR, files.shift()!))
+      } catch {}
+    }
+    writeFileSync(DB_PATH, Buffer.from(data))
+    scheduleSyncToTurso()
+  }, 5_000)
 }
 
 // ==========================================================
