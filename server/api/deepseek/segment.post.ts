@@ -1,6 +1,5 @@
 import type { Paragraph } from '#shared/types'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { PROMPTS } from '../../utils/prompts'
 
 type SegmentType = 'document' | 'subtitle'
 
@@ -81,8 +80,8 @@ function mergeTinyTails(segments: Paragraph[], minChars = 50): Paragraph[] {
   return segments
 }
 
-// 启动时加载 prompt 模板（一次读盘，常驻内存）
-const segmentTemplate = readFileSync(resolve('prompt/segment.md'), 'utf-8')
+// prompt 模板嵌入代码，Netlify Functions 可用
+const segmentTemplate = PROMPTS['segment']
 
 function buildPrompt(inputText: string, overrides?: { minSentences: number; maxSentences: number }): string {
   const sizeRule = overrides

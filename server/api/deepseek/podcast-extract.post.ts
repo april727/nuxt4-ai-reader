@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { PROMPTS } from '../../utils/prompts'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ text: string }>(event)
@@ -11,13 +10,7 @@ export default defineEventHandler(async (event) => {
 
   if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
 
-  // 读取 prompt 模板
-  const promptPath = resolve('prompt/podcast_extract.md')
-  let promptTemplate: string
-  try {
-    promptTemplate = readFileSync(promptPath, 'utf-8')
-  } catch {
-    throw createError({ statusCode: 500, message: 'prompt/podcast_extract.md 文件不存在' })
+  const promptTemplate = PROMPTS['podcast_extract']
   }
 
   // 截断输入，留足 token 给 prompt

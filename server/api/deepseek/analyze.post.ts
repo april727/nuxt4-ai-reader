@@ -1,9 +1,8 @@
 import type { AnalyzeRequest } from '#shared/types'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { PROMPTS } from '../../utils/prompts'
 
-// 启动时加载 prompt 模板
-const analyzeTemplate = readFileSync(resolve('prompt/analyze-article.md'), 'utf-8')
+// prompt 模板嵌入代码，Netlify Functions 可用
+const analyzeTemplate = PROMPTS['analyze-article']
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<AnalyzeRequest>(event)
