@@ -13,10 +13,11 @@ export default defineEventHandler(async (event) => {
   const password = process.env['SITE_PASSWORD']
   if (!password) return  // 未设置密码，跳过保护
 
-  const url = getRequestURL(event)
+  // 用 event.path 兼容 Netlify Functions 的路径格式
+  const p = (event as any).path || getRequestURL(event).pathname
 
   // 允许登录 API 和静态资源
-  if (url.pathname === '/api/auth/login' || url.pathname.startsWith('/_nuxt/')) return
+  if (p.startsWith('/api/auth/login') || p.startsWith('/_nuxt/') || p.startsWith('/__nuxt') || p.includes('/fonts/')) return
 
   // 检查 cookie 中的 token
   const token = getCookie(event, 'auth_token')
