@@ -11,7 +11,6 @@ export default defineEventHandler(async (event) => {
   if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
 
   const promptTemplate = PROMPTS['podcast_extract']
-  }
 
   // 截断输入，留足 token 给 prompt
   const maxTextChars = 12000
