@@ -69,6 +69,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" :class="{ 'spinning': syncing }"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
             {{ syncing ? '同步中…' : syncResult || '同步到云端' }}
           </button>
+          <button @click="handlePull" :disabled="pulling">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" :class="{ 'spinning': pulling }"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+            {{ pulling ? '拉取中…' : pullResult || '从云端同步' }}
+          </button>
         </div>
       </Transition>
     </div>
@@ -90,6 +94,8 @@ const showLearn = ref(false)
 const showAdd = ref(false)
 const syncing = ref(false)
 const syncResult = ref('')
+const pulling = ref(false)
+const pullResult = ref('')
 
 async function handleSync() {
   syncing.value = true
@@ -108,6 +114,23 @@ async function handleSync() {
     syncing.value = false
     showAdd.value = false
     setTimeout(() => { syncResult.value = '' }, 5000)
+  }
+}
+
+async function handlePull() {
+  pulling.value = true
+  pullResult.value = ''
+  try {
+    const res = await $fetch<{ totalInserted: number; totalSkipped: number; ok: boolean; error?: string }>('/api/sync/from-turso', { method: 'POST' })
+    if (res.ok) {
+      pullResult.value = res.totalInserted > 0 ? `已拉取 +${res.totalInserted} 条` : '已是最新'
+    }
+  } catch (e: any) {
+    pullResult.value = '拉取失败'
+  } finally {
+    pulling.value = false
+    showAdd.value = false
+    setTimeout(() => { pullResult.value = '' }, 5000)
   }
 }
 const learnRef = ref<HTMLElement | null>(null)
