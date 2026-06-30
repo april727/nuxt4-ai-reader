@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 export default defineEventHandler(async (event) => {
   // 尝试从 form POST 或 JSON 读取密码
   let password = ''
@@ -7,22 +5,31 @@ export default defineEventHandler(async (event) => {
     const body = await readBody(event)
     password = body?.password || ''
   } catch {
-    // 如果 readBody 失败（Netlify Functions 可能的问题），
-    // 尝试从 query string 读取
     password = getQuery(event).password as string || ''
   }
 
   const correct = process.env['SITE_PASSWORD']
 
   if (!correct || !password || password !== correct) {
-    const errHtml = loginPage('密码错误')
     setHeader(event, 'Content-Type', 'text/html; charset=utf-8')
     setResponseStatus(event, 401)
-    return errHtml
+    return loginPage('密码错误')
   }
 
-  // 正确 → 设置 cookie，30 天有效
-  const token = createHash('sha256').update(password).digest('hex')
+  // 正确 → 设置 cookie（用 Web Crypto API，Node.js 18+ 内置，无需 import）
+  let token = ''
+  try {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(password)
+    const buffer = await crypto.subtle.digest('SHA-256', data)
+    token = Array.from(new Uint8Array(buffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+  } catch {
+    // Web Crypto 不可用，降级用明文哈希
+    token = password.split('').reduce((a, c) => a + c.charCodeAt(0).toString(36), 'auth_')
+  }
+
   setCookie(event, 'auth_token', token, {
     maxAge: 30 * 24 * 60 * 60,
     httpOnly: true,
