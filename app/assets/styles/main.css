@@ -567,10 +567,9 @@ body {
 }
 
 .lib-empty-icon {
-  color: #c0bdb4;
+  border-radius: 14px;
   margin-bottom: 10px;
 }
-.lib-empty-icon svg { width: 56px; height: 56px; }
 
 .lib-empty-hint {
   font-size: 0.85em;

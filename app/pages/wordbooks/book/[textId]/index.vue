@@ -3,18 +3,46 @@
     <PageHeader :title="bookTitle" active="wordbooks" back-to="/wordbooks" back-label="单词本">
       <template #actions>
         <button class="wbk-hdr-btn" @click="goCards">学习</button>
-        <button class="wbk-hdr-btn wbk-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
-          <template v-if="batchRunning"><span class="wbk-spin"></span></template>
-          <template v-else>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
-          </template>
-        </button>
-        <button class="wbk-hdr-btn wbk-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
-          <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-        </button>
+
+        <!-- 宽屏直接显示，窄屏收到下拉菜单中 -->
+        <div class="wbk-actions-overflow">
+          <button class="wbk-hdr-btn wbk-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
+            <template v-if="batchRunning"><span class="wbk-spin"></span></template>
+            <template v-else>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+            </template>
+          </button>
+          <button class="wbk-hdr-btn wbk-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
+            <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+          <button class="wbk-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+        </div>
+
         <button class="wbk-hdr-btn wbk-btn-add" @click="showAdd = true">+</button>
-        <button class="wbk-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+
+        <!-- 窄屏：下拉菜单按钮 -->
+        <div class="wbk-menu-wrap" ref="wbkMenuRef">
+          <button class="wbk-menu-btn" @click.stop="wbkMenuOpen = !wbkMenuOpen" :aria-label="wbkMenuOpen ? '关闭操作菜单' : '打开操作菜单'" title="更多操作">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </button>
+          <Transition name="wbk-menu-fade">
+            <div v-if="wbkMenuOpen" class="wbk-menu-drop">
+              <button class="wbk-menu-item" :class="{ active: showDetails }" @click="toggleAllDetails(); wbkMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>{{ showDetails ? '隐藏释义' : '显示释义' }}</span>
+              </button>
+              <button class="wbk-menu-item" @click="enrichAll(); wbkMenuOpen = false" :disabled="batchRunning">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+                <span>{{ batchRunning ? '补全中...' : 'AI 补全' }}</span>
+              </button>
+              <button class="wbk-menu-item" @click="exportTxt(); wbkMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>导出</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
       </template>
     </PageHeader>
 
@@ -209,6 +237,22 @@ const selectedIds = ref<string[]>([])
 
 function toggleAllDetails() { showDetails.value = !showDetails.value }
 
+// ── 窄屏溢出操作下拉菜单 ──
+const wbkMenuOpen = ref(false)
+const wbkMenuRef = ref<HTMLDivElement>()
+function onWbkMenuDocClick(e: MouseEvent) {
+  if (wbkMenuRef.value && !wbkMenuRef.value.contains(e.target as Node)) {
+    wbkMenuOpen.value = false
+  }
+}
+watch(wbkMenuOpen, (v) => {
+  if (v) { document.addEventListener('click', onWbkMenuDocClick) }
+  else { document.removeEventListener('click', onWbkMenuDocClick) }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onWbkMenuDocClick)
+})
+
 function toggleWord(id: string) {
   const w = words.value.find(x => x.id === id)
   if (!w) return
@@ -345,6 +389,49 @@ onMounted(async () => {
 .wbk-btn-ai:disabled { opacity: 0.5; }
 .wbk-spin { display: inline-block; width: 12px; height: 12px; border: 1.5px solid #e0ddd5; border-top-color: #3d3591; border-radius: 50%; animation: wbkSpin 0.6s linear infinite; }
 @keyframes wbkSpin { to { transform: rotate(360deg); } }
+
+/* ── 窄屏溢出操作下拉菜单 ── */
+.wbk-actions-overflow { display: flex; align-items: center; gap: 6px; }
+.wbk-menu-wrap { display: none; position: relative; }
+
+.wbk-menu-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  border: 0.5px solid rgba(0,0,0,0.1); border-radius: 8px;
+  background: #fff; color: #6b6963; cursor: pointer;
+  transition: all 0.12s; flex-shrink: 0;
+}
+.wbk-menu-btn:hover { border-color: #3d3591; color: #3d3591; }
+
+.wbk-menu-drop {
+  position: absolute; top: 100%; right: 0; z-index: 200;
+  margin-top: 6px; min-width: 150px;
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+
+.wbk-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 14px; border-radius: 7px;
+  border: none; background: transparent;
+  font-size: 0.84rem; color: #6b6963; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; white-space: nowrap;
+  transition: all 0.1s;
+}
+.wbk-menu-item:hover { background: #f0efe9; color: #3d3591; }
+.wbk-menu-item:disabled { opacity: 0.4; cursor: default; }
+.wbk-menu-item.active { background: #edeafd; color: #3d3591; font-weight: 500; }
+
+.wbk-menu-fade-enter-active,
+.wbk-menu-fade-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.wbk-menu-fade-enter-from,
+.wbk-menu-fade-leave-to { opacity: 0; transform: translateY(-6px); }
+
+@media (max-width: 550px) {
+  .wbk-actions-overflow { display: none; }
+  .wbk-menu-wrap { display: block; }
+}
 
 /* ── Main body (constrained width) ── */
 .wbk-body {

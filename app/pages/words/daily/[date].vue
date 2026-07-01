@@ -3,7 +3,7 @@
     <PageHeader :title="`${formatDate(date)} ${dayOfWeek(date)}`" active="daily" back-to="/words/daily" back-label="每日">
       <template #actions>
         <button v-if="detail && detail.wordCount" class="dd-hdr-btn" @click="goCards">闪卡学习</button>
-        <button v-if="detail && detail.words.length" class="dd-hdr-btn" @click="exportTxt">导出 TXT</button>
+        <button v-if="detail && detail.words.length && !isMobile" class="dd-hdr-btn" @click="exportTxt">导出 TXT</button>
       </template>
     </PageHeader>
 
@@ -93,6 +93,7 @@ interface DayDetail {
 
 const route = useRoute()
 const date = route.params.date as string
+const isMobile = useIsMobile()
 
 const loading = ref(true)
 const detail = ref<DayDetail | null>(null)

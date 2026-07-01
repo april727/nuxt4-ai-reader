@@ -14,12 +14,13 @@ export interface ChatMessage {
 
 export type ParagraphAction = 'translate' | 'explain' | 'search'
 
-export type MarkType = 'word' | 'phrase' | 'sentence'
+export type MarkType = 'word' | 'phrase' | 'sentence' | 'note'
 
 export const MARK_COLORS: Record<MarkType, string> = {
   word: '#f59e0b',      // 黄
   phrase: '#10b981',    // 绿
   sentence: '#06b6d4',  // 青
+  note: '#f9a8d4',      // 粉（知识要点）
 }
 
 export interface Mark {

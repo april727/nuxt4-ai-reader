@@ -121,9 +121,12 @@ async function handlePull() {
   pulling.value = true
   pullResult.value = ''
   try {
-    const res = await $fetch<{ totalInserted: number; totalSkipped: number; ok: boolean; error?: string }>('/api/sync/from-turso', { method: 'POST' })
+    const res = await $fetch<{ totalInserted: number; totalUpdated: number; totalSkipped: number; ok: boolean; error?: string }>('/api/sync/from-turso', { method: 'POST' })
     if (res.ok) {
-      pullResult.value = res.totalInserted > 0 ? `已拉取 +${res.totalInserted} 条` : '已是最新'
+      const parts: string[] = []
+      if (res.totalInserted > 0) parts.push(`+${res.totalInserted}`)
+      if (res.totalUpdated > 0) parts.push(`~${res.totalUpdated}`)
+      pullResult.value = parts.length > 0 ? `已拉取 ${parts.join(' ')}` : '已是最新'
     }
   } catch (e: any) {
     pullResult.value = '拉取失败'

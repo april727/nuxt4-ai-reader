@@ -5,7 +5,11 @@
         <span class="mp-type">{{ typeLabel }}</span>
         <div class="mp-header-actions">
           <button class="mp-btn-icon mp-delete" @click.stop="handleDelete" title="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
-          <button class="mp-btn-icon" @click.stop="toggleExpand">{{ expanded ? '−' : '+' }}</button>
+          <button class="mp-btn-icon mp-expand-btn" @click.stop="toggleExpand">
+            <svg class="mp-chevron" :class="{ open: expanded }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
           <button class="mp-btn-icon mp-close-btn" @click.stop="close">×</button>
         </div>
       </div>
@@ -38,7 +42,7 @@ let playTimer: any = null
 
 const phonetic = computed(() => { if (!props.mark.detail) return ''; const m = props.mark.detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/); if (m) return m[1]; const m2 = props.mark.detail.match(/\/([^/\n]{2,40})\//); return m2 ? m2[0] : '' })
 const displayDetail = computed(() => { if (!props.mark.detail) return ''; let d = props.mark.detail; d = d.replace(/\[PHONETIC\]\s*\/[^/]+\/\s*\[\/PHONETIC\]\n?/gi, ''); d = d.replace(/###\s*音标\s*\n\s*\/[^/]+\/[^\n]*\n?/gi, ''); d = d.replace(/\[LEMMA[\s\S]*?\[\/LEMMA\]\n?/gi, ''); return d.trim() })
-const typeLabel = computed(() => ({ word: '生词', phrase: '短语', sentence: '句子' } as any)[props.mark.type] || '标记')
+const typeLabel = computed(() => ({ word: '生词', phrase: '短语', sentence: '句子', note: '摘抄' } as any)[props.mark.type] || '标记')
 
 watch(() => props.visible, (v) => { if (v) { popupX.value = Math.min(props.position.x, window.innerWidth - 400); popupY.value = Math.min(props.position.y, window.innerHeight - 440); localNote.value = props.mark.note || '' } })
 function doPronounce() { if (isPlaying.value) return; isPlaying.value = true; const w = props.mark.lemma || props.mark.text; emit('pronounce', w); playTimer = setTimeout(() => { isPlaying.value = false }, 2500) }
@@ -69,6 +73,9 @@ const popupStyle = computed(() => ({ left: `${popupX.value}px`, top: `${popupY.v
 .mp-btn-icon:hover { background: rgba(255,255,255,0.35); }
 .mp-delete:hover { background: rgba(239,68,68,0.5) !important; }
 .mp-close-btn:hover { background: rgba(239,68,68,0.5) !important; }
+.mp-expand-btn { font-size: 0; }
+.mp-chevron { transition: transform 0.2s ease; }
+.mp-chevron.open { transform: rotate(180deg); }
 .mp-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
 .mp-loading { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 13px; }
 .mp-word-row { display: flex; align-items: center; gap: 8px; border-left: 3px solid; padding-left: 10px; }

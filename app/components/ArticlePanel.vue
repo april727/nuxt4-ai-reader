@@ -155,7 +155,7 @@ function handleTextSelect(p: Paragraph) {
       return
     }
     const text = sel.toString().trim()
-    if (text.length < 2 || text.length > 300) { selToolbar.visible = false; return }
+    if (text.length < 2 || text.length > 2000) { selToolbar.visible = false; return }
 
     const range = sel.getRangeAt(0)
     const paraEl = (sel.anchorNode?.parentElement)?.closest('.paragraph-text')

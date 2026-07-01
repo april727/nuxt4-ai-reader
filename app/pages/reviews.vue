@@ -117,6 +117,9 @@
                 <span v-if="item.brief" class="rv-brief">{{ item.brief }}</span>
               </div>
             </div>
+            <svg class="rv-card-chevron" :class="{ open: expandedId === item.mark.id }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
           </div>
 
           <!-- 展开详情 -->
@@ -190,7 +193,7 @@ const filterTabs = [
 const typeMap: Record<string, string> = { word: '生词', phrase: '短语', sentence: '好句' }
 
 const counts = computed(() => {
-  const c: Record<string, number> = { all: items.value.length, word: 0, phrase: 0, sentence: 0 }
+  const c: Record<string, number> = { all: items.value.length, word: 0, phrase: 0, sentence: 0, note: 0 }
   for (const it of items.value) c[it.mark.type]++
   return c
 })
@@ -513,6 +516,14 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
 }
+
+.rv-card-chevron {
+  flex-shrink: 0;
+  color: #c0bdb4;
+  margin-top: 3px;
+  transition: transform 0.2s ease;
+}
+.rv-card-chevron.open { transform: rotate(180deg); }
 
 .rv-card-head {
   display: flex;

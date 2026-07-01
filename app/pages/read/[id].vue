@@ -63,7 +63,7 @@
               <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
             </svg>
             <div v-else class="btn-spinner-sm"></div>
-            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor" class="seg-chevron"><path d="M0 0l4 5 4-5z"/></svg>
+            <svg class="seg-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <Transition name="seg-drop">
             <div v-if="showSegSizeMenu" class="seg-size-menu">
@@ -298,8 +298,7 @@
           <div v-if="(para as any).images?.length" class="para-images" :class="`para-images--${paraImageSize(para.id)}`">
             <div class="para-images-bar">
               <button class="para-images-toggle" @click.stop="toggleParaImages(para.id)" :title="isParaImagesCollapsed(para.id) ? '展开图片' : '收起图片'">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                  :style="{ transform: isParaImagesCollapsed(para.id) ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }">
+                <svg class="pi-chevron" :class="{ open: !isParaImagesCollapsed(para.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
                 {{ (para as any).images.length }} 张
@@ -345,23 +344,50 @@
       <div class="panel-divider" :class="{ hidden: isMobile }"></div>
 
       <!-- 右侧面板 -->
-      <aside class="reader-panel" :class="{ hidden: !showAnalysisPanel, 'panel-mobile-overlay': isMobile && showAnalysisPanel }" :style="isMobile ? { width: '100%' } : {}">
-        <!-- 面板推拉按钮 -->
+      <aside class="reader-panel" :class="{ hidden: !isMobile && !showAnalysisPanel, 'panel-bottom': true, 'panel-bottom--expanded': panelExpanded }" :style="isMobile ? { width: '100%' } : {}">
+        <!-- 面板推拉按钮（宽屏用） -->
         <div class="panel-toggle" @click="toggleAnalysisPanel" :title="showAnalysisPanel ? '隐藏面板' : '展开面板'">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline v-if="showAnalysisPanel" points="15 18 9 12 15 6"/>
             <polyline v-else points="9 18 15 12 9 6"/>
           </svg>
         </div>
-        <div class="panel-tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            class="tab-btn"
-            :class="{ active: activeTab === tab.key }"
-            @click="activeTab = tab.key"
-          >{{ tab.label }}</button>
+
+        <!-- 窄屏底部横条 -->
+        <div
+          class="panel-bottom-bar"
+          @touchstart.passive="onPanelResizeStart"
+        >
+          <!-- 桌面端拖拽上边缘 -->
+          <div class="panel-drag-edge" @mousedown.prevent="onPanelResizeStart"></div>
+          <div class="panel-bottom-tabs">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              class="panel-bottom-tab"
+              :class="{ active: activeTab === tab.key }"
+              @click="activeTab = tab.key"
+            >{{ tab.label }}</button>
+          </div>
+          <div class="panel-bottom-right">
+            <div class="panel-bottom-chevron-wrap" @click="togglePanelExpand" :title="panelExpanded ? '收起面板' : '展开面板'">
+              <svg class="panel-bottom-chevron" :class="{ open: panelExpanded }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+          </div>
         </div>
+
+        <div class="panel-inner" :style="panelExpanded ? { height: panelHeight + 'px' } : {}">
+          <div class="panel-tabs">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              class="tab-btn"
+              :class="{ active: activeTab === tab.key }"
+              @click="activeTab = tab.key"
+            >{{ tab.label }}</button>
+          </div>
 
         <!-- 理解 Tab -->
         <div v-if="activeTab === 'understand'" class="panel-content qa-panel">
@@ -508,6 +534,7 @@
             </div>
           </div>
         </div>
+        </div><!-- /.panel-inner -->
       </aside>
     </div>
 
@@ -681,29 +708,93 @@ function fillPrompt(name: string, vars: Record<string, string>): { system: strin
 const readerBodyEl = ref<HTMLElement | null>(null)
 const articlePane = ref<HTMLElement | null>(null)
 const paraRefs = ref<HTMLElement[]>([])
-// 分析面板开关（localStorage 持久）
-const showAnalysisPanel = ref(loadPanelPref())
+// 分析面板开关（localStorage 持久，SSR 安全：服务端默认关闭，客户端 onMounted 后恢复）
+const showAnalysisPanel = ref(false)
 function loadPanelPref(): boolean {
   if (typeof window === 'undefined') return false
-  // 手机端默认隐藏
   if (window.innerWidth < 768) return false
   try { const v = localStorage.getItem('analysis-panel-visible'); if (v === null) return false; return v === 'true' } catch { return false }
 }
+onMounted(() => {
+  showAnalysisPanel.value = loadPanelPref()
+})
 function toggleAnalysisPanel() {
   showAnalysisPanel.value = !showAnalysisPanel.value
   try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
 }
-// 缩小到移动端宽度时自动隐藏分析面板
-let wasPanelVisible = false
+// 缩小到移动端宽度时自动处理面板状态
 watch(isMobile, (mobile) => {
-  if (mobile && showAnalysisPanel.value) {
-    wasPanelVisible = true
-    showAnalysisPanel.value = false
-  } else if (!mobile && wasPanelVisible) {
-    showAnalysisPanel.value = true
-    wasPanelVisible = false
+  if (mobile) {
+    // 切换到窄屏：显示底部横条，折叠面板内容
+    panelExpanded.value = false
+  } else {
+    // 切换回宽屏：恢复原有面板状态
+    panelExpanded.value = false
   }
 })
+
+// ── 窄屏底部面板：展开/折叠 + 拖拽调整高度 ──
+const panelExpanded = ref(false)
+const panelHeight = ref(300) // 初始默认（onMounted 后更新为半屏）
+const PANEL_MIN_HEIGHT = 120
+const PANEL_MAX_HEIGHT = typeof window !== 'undefined' ? Math.floor(window.innerHeight * 0.85) : 600
+const panelDragRef = ref<HTMLElement | null>(null)
+let panelDragStartY = 0
+let panelDragStartHeight = 0
+let panelHasMoved = false // 区分拖拽和点击
+let panelDragging = false
+
+function onPanelResizeStart(e: MouseEvent | TouchEvent) {
+  if (panelDragging) return // 防止 touch + mouse 重复触发
+  // 如果触摸到交互元素（tab 按钮、chevron），不启动拖拽
+  if ('touches' in e) {
+    const target = (e as TouchEvent).target as HTMLElement
+    if (target.closest('.panel-bottom-tab') || target.closest('.panel-bottom-chevron-wrap')) return
+  }
+  panelDragging = true
+  panelDragStartY = 'touches' in e ? e.touches[0].clientY : e.clientY
+  // 未展开时从 0 开始，拖拽边缘即面板顶部，实现 1:1 跟随鼠标
+  panelDragStartHeight = panelExpanded.value ? panelHeight.value : 0
+  panelHasMoved = false
+  document.addEventListener('mousemove', onPanelResizeMove)
+  document.addEventListener('mouseup', onPanelResizeEnd)
+  document.addEventListener('touchmove', onPanelResizeMove, { passive: false })
+  document.addEventListener('touchend', onPanelResizeEnd)
+}
+
+function onPanelResizeMove(e: MouseEvent | TouchEvent) {
+  e.preventDefault()
+  const clientY = 'touches' in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY
+  const delta = panelDragStartY - clientY // 向上拖 = 增加高度
+  if (Math.abs(delta) < 4 && !panelHasMoved) return // 防抖：小移动忽略
+  panelHasMoved = true
+  if (!panelExpanded.value) panelExpanded.value = true
+  // 允许拖到最小值以下（方便完全收起），松手时再判断
+  const newHeight = Math.min(PANEL_MAX_HEIGHT, panelDragStartHeight + delta)
+  panelHeight.value = Math.max(0, newHeight)
+}
+
+function onPanelResizeEnd() {
+  panelDragging = false
+  document.removeEventListener('mousemove', onPanelResizeMove)
+  document.removeEventListener('mouseup', onPanelResizeEnd)
+  document.removeEventListener('touchmove', onPanelResizeMove)
+  document.removeEventListener('touchend', onPanelResizeEnd)
+  // 松手时：高度低于阈值则完全收起
+  if (panelHeight.value < PANEL_MIN_HEIGHT) {
+    panelExpanded.value = false
+  }
+}
+
+function togglePanelExpand() {
+  panelExpanded.value = !panelExpanded.value
+  if (panelExpanded.value) {
+    // 展开时使用半屏高度
+    if (typeof window !== 'undefined') {
+      panelHeight.value = Math.floor(window.innerHeight * 0.5)
+    }
+  }
+}
 // 记录哪些段落有问答历史（用于段落序号指示器）
 const paragraphsWithChats = reactive(new Set<string>())
 
@@ -1081,7 +1172,7 @@ function handleTextSelect(p: Paragraph) {
       return
     }
     const text = sel.toString().trim()
-    if (text.length < 2 || text.length > 300) { selToolbar.visible = false; return }
+    if (text.length < 2 || text.length > 2000) { selToolbar.visible = false; return }
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     // 尝试从 DOM 获取粗略偏移作为搜索提示
@@ -2259,7 +2350,7 @@ function handleCreateNote(pid: string, text: string, startOffset: number, endOff
   // 在原文中创建视觉标记（粉色高亮，不影响 AI 系统）
   marks.value.push({
     id: noteId, paragraphId: pid, startOffset, endOffset, text,
-    type: 'word' as any, color: '#f9a8d4', detail: '', note: '', lemma: '',
+    type: 'note', color: MARK_COLORS.note, detail: '', note: '', lemma: '',
     createdAt: now,
   })
   saveMarks()
@@ -2464,6 +2555,8 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   padding: 2px 4px; border-radius: 3px;
 }
 .para-images-toggle:hover { color: #555; background: #f0efe9; }
+.pi-chevron { transition: transform 0.2s ease; }
+.pi-chevron.open { transform: rotate(180deg); }
 .para-images-size {
   display: flex; gap: 2px;
 }
@@ -2873,7 +2966,7 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 .seg-chevron {
   margin-left: 1px;
   opacity: 0.5;
-  transition: transform 0.15s;
+  transition: transform 0.2s ease;
 }
 .seg-size-menu {
   position: absolute;
@@ -3068,34 +3161,154 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 .reader-panel:not(.hidden) .panel-toggle { display: flex !important; }
 
 @media (max-width: 767px) {
-  .panel-toggle { display: flex !important; }
-  .reader-panel.hidden .panel-toggle { left: -24px; display: flex !important; }
+  /* panel-toggle removed — 窄屏使用底部横条 */
+}
+
+/* 窄屏底部横条：宽屏隐藏 */
+.panel-bottom-bar { display: none; }
+
+/* 面板内容包装器：宽屏正常流式 */
+.panel-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
 /* ── 手机端适配 ── */
 @media (max-width: 767px) {
   .reader-layout { flex-direction: column; min-height: 100dvh; }
   .reader-body { flex-direction: column; }
-  .reader-article-pane { flex: 1; width: 100% !important; max-width: 100% !important; padding: 0; }
+  .reader-article-pane { flex: 1; width: 100% !important; max-width: 100% !important; padding: 0; overflow-y: auto; }
   .article-body { font-size: 15px; line-height: 1.85; }
   .reader-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 4px; }
   .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }
   .panel-divider.hidden { display: none; }
   .panel-divider { display: none; }
-  .reader-panel {
-    position: fixed; top: 0; right: 0; bottom: 0; z-index: 200;
-    width: 100% !important; max-width: 100vw;
-    border-radius: 0; box-shadow: -4px 0 24px rgba(0,0,0,0.15);
-    width: 0 !important; min-width: 0 !important; max-width: 100vw;
-    border-radius: 0; background: transparent; border: none; overflow: visible;
-  }
-  .reader-panel.panel-mobile-overlay {
-    width: 100% !important; min-width: 100% !important;
-    background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.15); display: flex;
-  }
-  .reader-panel:not(.panel-mobile-overlay) > :not(.panel-toggle) { display: none; }
   .reader-header { padding: 10px 16px; }
   .reader-header h1 { font-size: 18px; }
   .page-header { padding: 10px 16px; }
+
+  /* 面板改为底部抽屉 */
+  .reader-panel {
+    position: relative; top: auto; right: auto; bottom: auto; z-index: 100;
+    width: 100% !important; min-width: 100% !important; max-width: 100% !important;
+    flex-shrink: 0; border-radius: 0; box-shadow: none; overflow: visible;
+    display: flex; flex-direction: column;
+    border-top: 1px solid rgba(0,0,0,0.08);
+    background: #fafaf8;
+  }
+  .reader-panel.hidden {
+    display: none !important;
+  }
+  .reader-panel.panel-mobile-overlay {
+    /* 不再使用 fixed overlay */
+    position: relative;
+    width: 100% !important; min-width: 100% !important;
+    background: #fafaf8; display: flex;
+  }
+
+  /* 隐藏宽屏元素 */
+  .reader-panel.panel-bottom .panel-toggle { display: none !important; }
+  .panel-tabs { display: none; }
+
+  /* 底部横条 */
+  .panel-bottom-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    gap: 8px;
+    flex-shrink: 0;
+    position: relative;
+    cursor: default;
+  }
+
+  /* 桌面端拖拽上边缘：一条不可见的细线 */
+  .panel-drag-edge {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    z-index: 1;
+  }
+
+  /* 底部 tab 按钮 */
+  .panel-bottom-tabs {
+    display: flex;
+    gap: 2px;
+  }
+  .panel-bottom-tab {
+    padding: 5px 12px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: #a09e97;
+    font-size: 12.5px;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .panel-bottom-tab.active {
+    background: rgba(61,53,145,0.08);
+    color: #3d3591;
+    font-weight: 500;
+  }
+
+  /* 右侧操作区 */
+  .panel-bottom-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  /* 展开/折叠 chevron */
+  .panel-bottom-chevron-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #c0bdb4;
+    transition: color 0.15s, background 0.15s;
+  }
+  .panel-bottom-chevron-wrap:hover {
+    color: #4a4a46;
+    background: rgba(0,0,0,0.06);
+  }
+  .panel-bottom-chevron {
+    transition: transform 0.2s ease;
+  }
+  .panel-bottom-chevron.open {
+    transform: rotate(180deg);
+  }
+
+  /* 面板内容区 */
+  .panel-inner {
+    display: none;
+    flex: none;
+    flex-direction: column;
+    overflow: hidden;
+    background: #ffffff;
+    border-top: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .panel-bottom--expanded .panel-inner {
+    display: flex;
+  }
+
+  /* 面板内容滚动区 */
+  .reader-panel .panel-content {
+    flex: 1;
+    overflow-y: auto;
+  }
+  .reader-panel .panel-scroll {
+    height: auto;
+    overflow: visible;
+  }
 }
 </style>

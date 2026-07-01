@@ -72,18 +72,13 @@
 
     <!-- 左侧文件夹 -->
     <aside class="lib-sidebar" :class="{ hidden: sidebarCollapsed }">
-      <div class="sidebar-toggle" @click="cycleSidebar" :title="sidebarCollapsed ? '展开书架' : '隐藏书架'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="toggle-arrow">
-          <polyline v-if="sidebarCollapsed" points="9 18 15 12 9 6"/>
-          <polyline v-else points="15 18 9 12 15 6"/>
-        </svg>
-      </div>
       <FolderSidebar
         ref="sidebarRef"
         :folders="folders"
         :active-folder="activeFolder"
         :counts="folderCounts"
         :collapsed="sidebarCollapsed"
+        @toggle="sidebarCollapsed = !sidebarCollapsed"
         @select="activeFolder = $event"
         @create="handleCreateFolder"
         @drop-on-folder="handleDropOnFolder"
@@ -92,12 +87,6 @@
         @rename-folder="handleRenameFolder"
         @refresh="loadFolders"
       />
-      <div class="lib-sidebar-footer">
-        <button class="lib-nav-btn" @click="navigateTo('/knowledge')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-          <span>知识要点</span>
-        </button>
-      </div>
     </aside>
 
     <!-- 右侧内容区 -->
@@ -183,11 +172,7 @@
         </template>
         <template v-else>
           <div class="lib-empty-illustration">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="lib-empty-icon">
-              <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
-              <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
-              <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
-            </svg>
+            <img :src="'/icon.png'" alt="AI Reader" class="lib-empty-icon" width="72" height="72" />
           </div>
           <p class="lib-empty-title">{{ sourceFilter === 'video' ? '还没有视频' : '书架是空的' }}</p>
           <p class="lib-empty-hint">开始你的阅读之旅</p>
@@ -358,8 +343,20 @@ const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncDa
 )
 
 const folderCounts = ref<Record<string, number>>({})
-const sidebarCollapsed = ref(loadSidebarPref())
-function loadSidebarPref(): boolean { try { return localStorage.getItem('sidebar-collapsed') === 'true' } catch { return false } }
+const sidebarCollapsed = ref(false)
+function loadSidebarPref(): boolean {
+  try {
+    return localStorage.getItem('sidebar-collapsed') === 'true'
+  } catch { return false }
+}
+onMounted(() => {
+  const stored = loadSidebarPref()
+  sidebarCollapsed.value = stored
+  // 移动端默认折叠
+  if (!localStorage.getItem('sidebar-collapsed') && window.innerWidth <= 767) {
+    sidebarCollapsed.value = true
+  }
+})
 function cycleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
 watch(sidebarCollapsed, v => { try { localStorage.setItem('sidebar-collapsed', String(v)) } catch {} })
 const showUpload = ref(false)
@@ -746,19 +743,8 @@ function stopAutoRefresh() {
   display: flex; flex-direction: column;
   overflow: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
-  background: #f0efe9;
+  background: #f9f8f6;
 }
-.lib-sidebar-footer {
-  padding: 10px 14px; border-top: 0.5px solid rgba(0,0,0,0.06); margin-top: auto;
-}
-.lib-nav-btn {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; padding: 8px 12px; border-radius: 8px; border: none;
-  background: transparent; color: #6b6963; font-size: 13px;
-  cursor: pointer; transition: all 0.15s; font-family: 'DM Sans', sans-serif;
-}
-.lib-nav-btn:hover { background: rgba(61,53,145,0.06); color: #3d3591; }
-
 .lib-main {
   flex: 1;
   display: flex;
@@ -773,12 +759,25 @@ function stopAutoRefresh() {
 }
 
 .lib-toolbar-row {
-  display: grid;
-  grid-template-columns: 260px 1fr auto;
+  display: flex;
   align-items: center;
   width: 100%;
   padding-bottom: 16px;
-  gap: 0 14px;
+  gap: 12px;
+}
+.lib-toolbar-left {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.lib-filter-bar {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  margin-left: 48px;
+}
+.lib-actions {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .lib-search-row {
   display: flex;
@@ -1001,7 +1000,7 @@ function stopAutoRefresh() {
   transform: rotate(calc((var(--i) - 2) * 3deg));
 }
 
-.lib-empty-icon { color: #d4d1c8; margin-bottom: 16px; }
+.lib-empty-icon { border-radius: 16px; margin-bottom: 16px; }
 .lib-empty-title {
   font-family: 'Lora', Georgia, serif;
   font-size: 1.1em;
@@ -1357,31 +1356,44 @@ function stopAutoRefresh() {
 }
 
 /* ── 侧栏收起/展开动画 ── */
-.sidebar-toggle {
-  position: absolute; top: 8px; right: -12px; z-index: 10;
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 50%;
-  cursor: pointer; color: #8a8880; transition: all 0.2s;
-}
-.sidebar-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
-.toggle-arrow { transition: transform 0.25s ease; }
-.lib-sidebar { position: relative; width: 220px; min-width: 220px; transition: width 0.25s ease, min-width 0.25s ease; overflow: visible; }
-.lib-sidebar.hidden { width: 0; min-width: 0; overflow: visible; border: none; }
-.lib-sidebar.hidden .sidebar-toggle { right: -24px; display: flex !important; }
-.lib-sidebar.hidden > :not(.sidebar-toggle) { display: none; }
+.lib-sidebar { position: relative; width: 220px; min-width: 220px; transition: width 0.25s ease, min-width 0.25s ease; overflow: hidden; }
+.lib-sidebar.hidden { width: 44px; min-width: 44px; overflow: hidden; border: none; }
 
-/* ── 手机端适配 ── */
+/* ── 手机端 / 窄屏适配 ── */
 @media (max-width: 767px) {
-  .library-layout { flex-direction: column; }
-  .lib-sidebar { display: none; }
+  .library-layout { flex-direction: row; }
+  .lib-sidebar { position: absolute; z-index: 50; height: 100vh; }
+  .lib-sidebar.hidden { background: rgba(249, 248, 246, 0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .lib-sidebar:not(.hidden) { box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
+  .lib-main { padding-left: 44px; }
   .sidebar-toggle { display: none; }
-  .lib-main { width: 100%; padding: 12px; }
-  .lib-toolbar { padding: 8px 0; }
-  .lib-toolbar-row { flex-wrap: wrap; gap: 8px; }
+  .lib-main { width: 100%; padding: 0; }
+
+  /* toolbar 区：改用 flex 换行，保证按钮不溢出 */
+  .lib-toolbar { padding: 12px 14px 0; }
+    .lib-title { font-size: 16px; }
+
+  /* 筛选条：窄屏隐藏 */
   .lib-filter-bar { display: none; }
   .lf-chip { font-size: 11px; padding: 4px 10px; white-space: nowrap; }
-  .lib-title { font-size: 16px; }
-  .book-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .lf-sep { display: none; }
+
+  /* 操作按钮 */
+  .lib-actions { flex-shrink: 0; }
+
+  /* 搜索条 */
+  .lib-search-row { padding: 8px 14px; }
+
+  /* 网格 */
+  .lib-grid {
+    padding: 16px 12px 24px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  /* 空态 */
+  .lib-empty { padding: 40px 20px; }
+  .lib-empty-actions { flex-direction: column; align-items: stretch; }
+  .lib-empty-btn { justify-content: center; }
 }
 </style>

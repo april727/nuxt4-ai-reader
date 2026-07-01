@@ -2,17 +2,18 @@
   <div class="folder-sidebar">
     <!-- 头部 -->
     <div class="fs-header">
-      <svg class="fs-logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-        <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
-        <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
-        <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
-      </svg>
-      <h2 class="fs-title" @click="handleTitleClick">书架</h2>
-      <span v-if="showPrivate" class="fs-private-indicator">·</span>
+      <img v-show="!collapsed" :src="'/icon+title.png'" alt="yu reader" class="fs-logo-icon" @click="handleTitleClick" />
+      <SidebarToggleButton :model-value="collapsed" :size="28" @update:model-value="emit('toggle')" />
     </div>
 
     <!-- 文件夹列表 -->
-    <div class="fs-section-label">文件夹</div>
+    <template v-if="!collapsed">
+    <div class="fs-section-label">
+      <span>文件夹</span>
+      <button class="fs-add-btn" @click="startCreate" title="新建文件夹">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
     <div class="fs-list">
       <template v-for="f in visibleFolders" :key="f.id">
         <!-- Card -->
@@ -81,23 +82,53 @@
         </div>
       </template>
 
-      <!-- 私密切换提示行 -->
-      <div v-if="hasPrivate && !showPrivate" class="fs-private-hint">
-        <span class="fs-private-dots">···</span>
-      </div>
+      <!-- 展开更多 / 私密提示 -->
+      <button
+        v-if="hiddenFolderCount > 0 && !showAllFolders"
+        class="fs-expand-btn"
+        @click="showAllFolders = true"
+      >展开全部 ({{ hiddenFolderCount }})</button>
+      <button
+        v-if="showAllFolders && hiddenFolderCount > 0"
+        class="fs-expand-btn"
+        @click="showAllFolders = false"
+      >收起</button>
 
-      <!-- 新建文件夹 -->
-      <div class="fs-card fs-new-card" v-if="!creating" @click="startCreate">
-        <div class="fsc-body" style="justify-content: center">
-          <div class="fsc-top" style="justify-content: center; gap: 6px; color: #b0aca0">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            <span class="fsc-name" style="font-size: 12.5px">新建文件夹</span>
-          </div>
-        </div>
-      </div>
-      <div class="fs-card fs-new-input" v-else>
+      <!-- 新建文件夹输入 -->
+      <div v-if="creating" class="fs-card fs-new-input">
         <input ref="newFolderInput" v-model="newFolderName" class="fs-input" :placeholder="creatingSub ? '子文件夹名称' : '文件夹名称'" @keydown.enter="createFolder" @keydown.escape="creating=false; newFolderName=''; creatingSub=''" @blur="creating=false; newFolderName=''; creatingSub=''" />
       </div>
+
+    </div>
+
+    <!-- 快捷导航 -->
+    <div class="fs-nav-divider"></div>
+    <div class="fs-nav-list">
+      <button class="fs-nav-btn" @click="navigateTo('/words/daily')">每日单词</button>
+      <button class="fs-nav-btn" @click="navigateTo('/words/analysis')">学习分析</button>
+      <button class="fs-nav-btn" @click="navigateTo('/reviews')">复习本</button>
+      <button class="fs-nav-btn" @click="navigateTo('/wordbooks')">单词本</button>
+      <button class="fs-nav-btn" @click="navigateTo('/knowledge')">知识要点</button>
+    </div>
+    </template>
+
+    <!-- 折叠态图标导航 -->
+    <div v-if="collapsed" class="fs-collapsed-nav">
+      <button class="fs-collapsed-btn" title="每日单词" @click="navigateTo('/words/daily')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="学习分析" @click="navigateTo('/words/analysis')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="复习本" @click="navigateTo('/reviews')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="单词本" @click="navigateTo('/wordbooks')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="知识要点" @click="navigateTo('/knowledge')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </button>
     </div>
 
     <!-- 右键菜单 -->
@@ -159,6 +190,7 @@ const emit = defineEmits<{
   addSub: [parentId: string]
   renameFolder: [id: string, name: string]
   refresh: []
+  toggle: []
 }>()
 
 // ── 右键菜单 ──
@@ -225,9 +257,18 @@ function getSubFolders(parentId: string) {
 // 可见文件夹：根级 + 过滤私密
 const rootFolders = computed(() => props.folders.filter((f: any) => !f.parent))
 
+const showAllFolders = ref(false)
+const FOLDER_LIMIT = 6
+
 const visibleFolders = computed(() => {
-  if (showPrivate.value) return rootFolders.value
-  return rootFolders.value.filter((f: any) => !f.isPrivate)
+  let list = showPrivate.value ? rootFolders.value : rootFolders.value.filter((f: any) => !f.isPrivate)
+  if (!showAllFolders.value && list.length > FOLDER_LIMIT) return list.slice(0, FOLDER_LIMIT)
+  return list
+})
+
+const hiddenFolderCount = computed(() => {
+  const total = showPrivate.value ? rootFolders.value.length : rootFolders.value.filter((f: any) => !f.isPrivate).length
+  return Math.max(0, total - FOLDER_LIMIT)
 })
 
 // ── 三击标题 ──
@@ -347,13 +388,15 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 .folder-sidebar {
   display: flex; flex-direction: column; height: 100%;
   background: transparent; font-family: 'DM Sans', sans-serif;
+  overflow-y: auto;
 }
 
 .fs-header {
-  display: flex; align-items: center; gap: 8px;
-  padding: 24px 16px 0 20px;
+  display: flex; align-items: center;
+  padding: 24px 8px 0 8px;
 }
-.fs-logo-icon { flex-shrink: 0; color: #1a1a18; }
+.fs-logo-icon { flex-shrink: 0; height: 26px; width: auto; border-radius: 6px; cursor: default; }
+.fs-header :deep(.sidebar-toggle-btn) { margin-left: auto; flex-shrink: 0; }
 .fs-title {
   font-family: 'Lora', Georgia, serif; font-size: 22px; font-weight: 500;
   color: #1a1a18; cursor: default; user-select: none; margin: 0;
@@ -364,16 +407,51 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 
 /* ── Section label ── */
 .fs-section-label {
+  display: flex; align-items: center; justify-content: space-between;
   font-size: 10px; font-weight: 500; color: #b0aca0;
   letter-spacing: 0.07em; text-transform: uppercase;
-  padding: 22px 16px 8px 22px;
+  padding: 14px 10px 4px 22px;
 }
+.fs-add-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: none; border-radius: 5px;
+  background: transparent; color: #b0aca0; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.fs-add-btn:hover { background: rgba(0,0,0,0.06); color: #5a5850; }
+
+.fs-nav-divider {
+  height: 1px; background: rgba(0,0,0,0.1); margin: 0 14px 4px;
+}
+.fs-nav-list {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 0 8px;
+}
+.fs-nav-btn {
+  display: flex; align-items: center;
+  width: 100%; padding: 7px 14px;
+  border: none; border-radius: 8px; background: transparent;
+  color: #7a7760; font-size: 13px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.fs-nav-btn:hover { background: rgba(0,0,0,0.04); color: #3d3591; }
+
+.fs-collapsed-nav {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 62px 0 0;
+}
+.fs-collapsed-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border: none; border-radius: 8px;
+  background: transparent; color: #8a8678; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.fs-collapsed-btn:hover { background: rgba(0,0,0,0.06); color: #3d3591; }
 
 /* ── List / Cards ── */
 .fs-list {
-  flex: 1; overflow-y: auto;
-  padding: 0 10px 10px;
-  display: flex; flex-direction: column; gap: 4px;
+  padding: 0 10px 0;
+  display: flex; flex-direction: column; gap: 2px;
 }
 
 /* ── Card ── */
@@ -383,7 +461,7 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
   background: transparent; cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   position: relative; overflow: hidden;
-  min-height: 52px;
+  min-height: 38px;
 }
 
 .fs-card:hover {
@@ -402,8 +480,8 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 /* ── Card body ── */
 .fsc-body {
   flex: 1; min-width: 0;
-  padding: 8px 0 8px 10px;
-  display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  padding: 5px 0 5px 10px;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
 }
 
 .fsc-top {
@@ -447,7 +525,7 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
 }
 
 /* ── 子文件夹缩进 ── */
-.fs-sub-card { margin-left: 16px; min-height: 40px; }
+.fs-sub-card { margin-left: 16px; min-height: 32px; }
 .fs-sub-card .fsc-icon { width: 16px; height: 16px; }
 .fs-sub-card .fsc-name { font-size: 12.5px; }
 .fs-sub-card .fsc-count-right { font-size: 10px; }
@@ -465,13 +543,16 @@ defineExpose({ startSubCreate(parentId: string) { creatingSub.value = parentId; 
   transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* ── 私密切换提示 ── */
-.fs-private-hint { text-align: center; padding: 6px 0; }
-.fs-private-dots { color: #d4d1c8; font-size: 16px; letter-spacing: 3px; }
+/* ── 展开更多按钮 ── */
+.fs-expand-btn {
+  display: block; width: 100%; padding: 4px 0 4px; margin: 0 0 8px;
+  border: none; background: transparent; color: #8a8880;
+  font-size: 12px; cursor: pointer; border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.fs-expand-btn:hover { background: rgba(0,0,0,0.04); color: #5a5850; }
 
 /* ── 新建文件夹 ── */
-.fs-new-card { opacity: 0.55; }
-.fs-new-card:hover { opacity: 0.8; }
 .fs-new-input { padding: 2px; min-height: auto; }
 .fs-input {
   width: 100%; padding: 8px 10px; border: 1px solid #3d3591; border-radius: 8px;

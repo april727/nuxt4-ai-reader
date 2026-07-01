@@ -105,6 +105,9 @@ async function getSqljsDb(): Promise<any> {
         }
       } catch { /* Turso 不可达，跳过 */ }
     }
+
+    // 启动定时拉取：每 60 秒从 Turso 检查新数据
+    schedulePullFromTurso()
   })
 
   return sqljsInitPromise
@@ -174,18 +177,60 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null
 /** 写入后 30 秒自动同步到 Turso（多次写入合并为一次） */
 function scheduleSyncToTurso() {
   if (USE_TURSO) return  // Turso 模式下不需要这个
+  if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
   if (syncTimer) clearTimeout(syncTimer)
   syncTimer = setTimeout(async () => {
     try {
       const { syncToTurso } = await import('./sync-turso')
       const result = await syncToTurso()
       if (result.totalInserted > 0 || result.totalUpdated > 0) {
-        console.log(`[auto-sync] +${result.totalInserted} ~${result.totalUpdated}`)
+        const parts = Object.entries(result.tables)
+          .filter(([, v]) => v.inserted > 0 || v.updated > 0)
+          .map(([t, v]) => `${t}(+${v.inserted} ~${v.updated})`)
+          .join(', ')
+        console.log(`[auto-sync] 总计 +${result.totalInserted} ~${result.totalUpdated} | ${parts}`)
       }
     } catch (e: any) {
-      // 同步失败不阻塞主流程（可能 Turso 未配置或网络不通）
+      console.error(`[auto-sync] 同步失败: ${e.message}`)
     }
   }, 30_000)
+}
+
+let pullTimer: ReturnType<typeof setInterval> | null = null
+
+/** 每 60 秒从 Turso 拉取新数据到本地 */
+function schedulePullFromTurso() {
+  if (USE_TURSO) return  // Turso 模式下不需要
+  if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
+  if (pullTimer) return  // 已经在运行
+
+  pullTimer = setInterval(async () => {
+    try {
+      // 拿到主应用的数据库实例（不重新加载磁盘文件）
+      const mainDb = await getSqljsDb()
+      // 先把待保存的改动刷到磁盘，避免同步覆盖
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      if (existsSync(DB_PATH)) {
+        const data = mainDb.export()
+        writeFileSync(DB_PATH, Buffer.from(data))
+      }
+      // 直接操作主数据库实例，拉取结果立即可见
+      const { syncFromTurso } = await import('./sync-from-turso')
+      const result = await syncFromTurso(mainDb)
+      // 同步完成后写盘
+      if (result.totalInserted > 0 || result.totalUpdated > 0) {
+        const data = mainDb.export()
+        writeFileSync(DB_PATH, Buffer.from(data))
+        const parts = Object.entries(result.tables)
+          .filter(([, v]) => v.inserted > 0 || v.updated > 0)
+          .map(([t, v]) => `${t}(+${v.inserted} ~${v.updated})`)
+          .join(', ')
+        console.log(`[auto-pull] 总计 +${result.totalInserted} ~${result.totalUpdated} | ${parts}`)
+      }
+    } catch (e: any) {
+      console.error(`[auto-pull] 拉取失败: ${e.message}`)
+    }
+  }, 60_000)
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -204,7 +249,6 @@ function saveDbSqljs() {
       } catch {}
     }
     writeFileSync(DB_PATH, Buffer.from(data))
-    scheduleSyncToTurso()
   }, 5_000)
 }
 
@@ -226,6 +270,7 @@ export async function runQuery(sql: string, params?: any[]) {
   }
   const result = (await getSqljsDb()).run(sql, params)
   saveDbSqljs()  // 每次写操作后立即持久化到磁盘
+  scheduleSyncToTurso()  // 每次写操作后安排云端同步（独立于存盘防抖）
   return result
 }
 
@@ -251,4 +296,15 @@ export async function queryAll(sql: string, params?: any[]): Promise<any[]> {
 export async function queryOne(sql: string, params?: any[]): Promise<any | null> {
   const rows = await queryAll(sql, params)
   return rows[0] || null
+}
+
+/** 获取主应用的 sql.js 数据库实例（供同步模块直连用） */
+export async function getSqljsHandle(): Promise<any> {
+  return getSqljsDb()
+}
+
+/** 强制主应用下次查询时从磁盘重新加载数据库 */
+export function reloadSqljsDb() {
+  sqljsDb = null
+  sqljsInitPromise = null
 }

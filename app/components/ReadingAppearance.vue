@@ -10,7 +10,7 @@
               <button type="button" class="font-trigger" @click="fontMenuOpen = !fontMenuOpen">
                 <span class="font-icon" aria-hidden="true"><span class="font-icon-small">A</span><span class="font-icon-large">A</span></span>
                 <span class="font-name" :style="{ fontFamily: currentFontStack }">{{ currentFontLabel }}</span>
-                <svg class="chevron" :class="{ rotated: fontMenuOpen }" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 6L8 10.5L12.5 6" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg class="chevron" :class="{ open: fontMenuOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
               <ul v-if="fontMenuOpen" class="font-menu" role="listbox">
                 <li v-for="f in fonts" :key="f.key" role="option" :class="{ selected: font === f.key }" class="font-option" :style="{ fontFamily: f.stack }" @click="selectFont(f.key)">{{ f.label }}</li>
@@ -165,7 +165,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutside))
 .font-icon-large { font-size: 15px; }
 .font-name { flex: 1; text-align: left; }
 .chevron { width: 14px; height: 14px; color: #555; flex-shrink: 0; transition: transform 0.15s; }
-.chevron.rotated { transform: rotate(180deg); }
+.chevron.open { transform: rotate(180deg); }
 .font-menu {
   position: absolute; top: calc(100% + 4px); left: 0; right: 0;
   background: #fff; border: 1px solid #e2e2e2; border-radius: 8px;

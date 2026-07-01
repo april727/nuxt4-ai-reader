@@ -41,6 +41,27 @@ function extractLemma(mark: any): string {
   return m?.[1]?.trim() || ''
 }
 
+// 同步已删除的标记：从 words 表中删除对应单词
+async function cleanupDeletedMarks(textId: string, oldMarksJson: string, newMarksJson: string) {
+  let oldMarks: any[] = []
+  let newMarks: any[] = []
+  try { oldMarks = JSON.parse(oldMarksJson) } catch {}
+  try { newMarks = JSON.parse(newMarksJson) } catch {}
+
+  const newIds = new Set(newMarks.map((m: any) => m.id).filter(Boolean))
+  const deleted = oldMarks.filter((m: any) => m.id && !newIds.has(m.id))
+  if (!deleted.length) return
+
+  for (const mark of deleted) {
+    const lemma = extractLemma(mark)
+    const wordText = lemma || (mark.text || '').trim()
+    if (!wordText) continue
+    const bookId = MARK_TO_BOOK[mark.type]
+    if (!bookId) continue
+    await runQuery('DELETE FROM words WHERE bookId=? AND source=? AND LOWER(word)=LOWER(?)', [bookId, textId, wordText])
+  }
+}
+
 // 同步新增标记到对应的默认单词本
 async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMarksJson: string) {
   let oldMarks: any[] = []
@@ -124,6 +145,7 @@ export default defineEventHandler(async (event) => {
   // markers 变更时，自动同步新增标记到对应单词本
   if (marksChanged) {
     await syncMarksToWordbooks(body.id, existing.marks || '[]', marks)
+    await cleanupDeletedMarks(body.id, existing.marks || '[]', marks)
   }
 
   return { ok: true }

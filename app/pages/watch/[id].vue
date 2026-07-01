@@ -150,9 +150,9 @@
           <div v-if="showNotes" class="panel-divider" @mousedown="startNotesResize"></div>
           <div class="notes-panel" :class="{ hidden: !showNotes }" :style="{ width: showNotes ? notesSidebarWidth + 'px' : '0px' }">
             <div class="notes-toggle" @click="showNotes = !showNotes" :title="showNotes ? '隐藏笔记' : '展开笔记'">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline v-if="showNotes" points="15 18 9 12 15 6"/>
-                <polyline v-else points="9 18 15 12 9 6"/>
+              <span class="notes-toggle-label">笔记</span>
+              <svg class="notes-chevron" :class="{ open: showNotes }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
               </svg>
             </div>
             <div class="notes-header" :class="{ collapsed: !showNotes }">
@@ -329,6 +329,11 @@ onMounted(async () => {
 
     loaded.value = true
     loadNotes()
+
+    // 窄屏默认隐藏笔记面板
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      showNotes.value = false
+    }
 
     // 字幕为空时不再自动获取，用户可手动点击「获取字幕」或「上传字幕」
   } catch (e: any) {
@@ -901,6 +906,9 @@ function startNotesResize(e: MouseEvent) {
 }
 .notes-toggle:hover { color: #3d3591; border-color: rgba(61,53,145,0.3); }
 .notes-panel.hidden .notes-toggle { left: -24px; }
+.notes-toggle-label { display: none; }
+.notes-chevron { display: none; flex-shrink: 0; transition: transform 0.2s ease; }
+.notes-chevron.open { transform: rotate(180deg); }
 .notes-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 12px; border-bottom: 0.5px solid rgba(0,0,0,0.06);
@@ -969,18 +977,128 @@ function startNotesResize(e: MouseEvent) {
 }
 .notes-textarea::placeholder { color: #ccc; }
 
-/* ── 手机端适配 ── */
+/* ── 窄屏 / 手机端适配 ── */
 @media (max-width: 767px) {
-  .watch-body { flex-direction: column; }
-  .watch-player-col { width: 100%; max-height: 50vh; margin-bottom: 12px; }
-  .watch-player-col.expanded { max-height: none; }
-  .watch-panel { width: 100%; }
-  .watch-topbar { padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
-  .watch-topbar-center h1 { font-size: 15px; max-width: 60vw; }
-  .watch-topbar-right { gap: 6px; }
+  /* 顶部栏 */
+  .watch-topbar {
+    padding: 8px 12px;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .watch-title-center { flex: 1; text-align: center; overflow: hidden; }
+  .watch-doc-title { font-size: 0.8rem; }
+  .watch-topbar-right { gap: 6px; flex-shrink: 0; }
   .watch-learn-btn { padding: 6px 10px; font-size: 11px; }
-  .audio-subtitles-col { width: 100% !important; }
-  .notes-panel { width: 100% !important; max-width: 100%; }
   .mode-switcher button { padding: 5px 8px; }
+
+  /* 视频模式：上下布局 —— 视频在上、字幕在下 */
+  .watch-body { flex-direction: column; }
+  .watch-player-col {
+    width: 100%;
+    max-height: 40vh;
+    margin-bottom: 0;
+    padding: 8px;
+  }
+  .watch-player-col.expanded { max-height: none; }
+  .watch-body > .panel-divider { display: none; }
+
+  /* 视频模式侧栏 → 底部字幕区 */
+  .watch-sidebar {
+    width: 100% !important;
+    flex: 1;
+    border-left: none;
+    border-top: 0.5px solid rgba(0,0,0,0.08);
+    overflow-y: auto;
+  }
+  .watch-sidebar.hidden { display: none; }
+  .subs-toggle { display: none; } /* 窄屏始终显示字幕，隐藏切换按钮 */
+  :deep(.sl-header) { display: none; } /* 窄屏隐藏 "字幕 347 句" 标题行 */
+
+  /* 音频模式：竖排 */
+  .audio-mode-wrap { flex: 1; min-height: 0; }
+  .audio-layout {
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .audio-subtitles-col {
+    width: 100% !important;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* 音频模式：笔记面板默认折叠，展开时占满宽度 */
+  .audio-layout .panel-divider { display: none; }
+  .audio-layout .notes-panel {
+    width: 100% !important;
+    min-width: 100%;
+    flex-shrink: 0;
+    border-top: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .audio-layout .notes-panel.hidden {
+    width: 0 !important;
+    min-width: 0;
+    overflow: visible;
+    border-top: none;
+  }
+  /* 笔记面板砖块化 */
+  .audio-layout .notes-toggle {
+    position: relative;
+    top: 0; left: 0; right: auto;
+    width: 100%; height: auto;
+    border-radius: 0;
+    border: none;
+    background: #fafaf8;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #4a4a46;
+  }
+  .audio-layout .notes-panel.hidden .notes-toggle {
+    position: relative;
+    width: 100%; height: auto;
+    border-radius: 0;
+    box-shadow: none;
+    background: #fafaf8;
+    color: #6b6963;
+    left: auto; right: auto; bottom: auto;
+  }
+  .notes-toggle-label {
+    display: inline;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .notes-chevron { display: block; }
+  .notes-chevron.open { transform: rotate(180deg); }
+
+  /* 窄屏砖块式折叠区域（精听/AI讨论/笔记） */
+  .watch-sidebar :deep(.practice-list),
+  .audio-subtitles-col :deep(.practice-list) {
+    border-top: 0.5px solid rgba(0,0,0,0.06);
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    margin-top: 2px;
+  }
+  .watch-sidebar :deep(.sc-wrap),
+  .audio-subtitles-col :deep(.sc-wrap) {
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+  }
+  .watch-sidebar :deep(.sc-toggle),
+  .audio-subtitles-col :deep(.sc-toggle) {
+    padding: 10px 14px;
+    font-size: 12px;
+    background: #fafaf8;
+    border-bottom: none;
+  }
+  /* 折叠砖块中共用的 chevron 样式 */
+  :deep(.sc-chevron) { transition: transform 0.2s ease; }
+  :deep(.sc-chevron.open) { transform: rotate(180deg); }
+
+  /* 笔记面板展开时高度限制 */
+  .audio-layout .notes-panel:not(.hidden) {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
 }
 </style>

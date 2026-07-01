@@ -42,7 +42,7 @@
           class="cards-stage"
           :style="stageStyle"
           @mousedown="startDrag"
-          @touchstart.prevent="startTouchDrag"
+          @touchstart="startTouchDrag"
         >
           <div class="card" :class="{ flipped }" @click="onCardClick">
             <!-- 正面：单词 -->
@@ -119,6 +119,7 @@
 
 <script setup lang="ts">
 import { nextTick, computed } from 'vue'
+import { usePronunciation } from '~/composables/usePronunciation'
 const route = useRoute()
 const bookId = route.params.id as string
 const sourceTextId = (route.query.source as string) || ''
@@ -204,6 +205,7 @@ function startTouchDrag(e: TouchEvent) {
   isDragging.value = true
 
   const onMove = (ev: TouchEvent) => {
+    ev.preventDefault() // 阻止滚动，仅在拖拽时
     if (!ev.touches.length) return
     const t2 = ev.touches[0]
     const dx = t2.clientX - dragStartX
@@ -219,6 +221,10 @@ function startTouchDrag(e: TouchEvent) {
 
   const onEnd = () => {
     isDragging.value = false
+    // 短触后延迟重置 dragMoved，避免 click 事件误判为拖拽
+    if (!dragMoved) {
+      setTimeout(() => { dragMoved = false }, 100)
+    }
     document.removeEventListener('touchmove', onMove)
     document.removeEventListener('touchend', onEnd)
   }
@@ -226,6 +232,8 @@ function startTouchDrag(e: TouchEvent) {
   document.addEventListener('touchmove', onMove, { passive: false })
   document.addEventListener('touchend', onEnd)
 }
+
+const { pronounceSimple } = usePronunciation()
 
 const currentWord = computed(() => queue.value[currentIdx.value] || null)
 const isAllMastered = computed(() => words.value.length > 0 && words.value.every(w => w.phase === 'mastered'))
@@ -279,13 +287,7 @@ function phaseLabel(p: string) {
 
 function pronounceCurrent() {
   if (!currentWord.value) return
-  const w = currentWord.value.word.replace(/[^a-zA-Z]/g, '').toLowerCase()
-  const audio = new Audio(`https://audio.beingfine.cn/speeches/UK/UK-speech/${w}.mp3`)
-  audio.play().catch(() => {
-    const u = new SpeechSynthesisUtterance(currentWord.value!.word)
-    u.lang = 'en-GB'; u.rate = 0.85
-    speechSynthesis.speak(u)
-  })
+  pronounceSimple(currentWord.value.word)
 }
 
 const enrichLoading = ref(false)
