@@ -45,6 +45,12 @@
     <!-- card stage -->
     <div class="fc-stage" v-if="queue.length && currentWord">
       <div class="fc-peek" />
+      <button class="fc-side-arrow fc-side-left" @click.stop="prevCard" :disabled="currentIdx <= 0" aria-label="上一个">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <button class="fc-side-arrow fc-side-right" @click.stop="nextCard" :disabled="currentIdx >= queue.length - 1" aria-label="下一个">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
       <div
         class="fc-flip-card"
         :class="{ flipped: flipped && !storyOpen }"
@@ -55,7 +61,7 @@
         <div class="fc-flip-inner">
           <!-- front face -->
           <div class="fc-face fc-front" :style="{ '--accent': accentColor, '--accent-soft': accentSoft }">
-            <div class="fc-stamp">{{ stampChar }}</div>
+            <button class="fc-stamp" @click.stop="killCard" title="斩杀 · 不再出现" aria-label="斩杀">✕</button>
             <div class="fc-catalog">NO. {{ pad(currentWord.__index || currentIdx + 1) }}</div>
             <div class="fc-front-content">
               <div
@@ -79,7 +85,7 @@
 
           <!-- back face -->
           <div class="fc-face fc-back" :style="{ '--accent': accentColor, '--accent-soft': accentSoft }">
-            <div class="fc-stamp">{{ stampChar }}</div>
+            <button class="fc-stamp" @click.stop="killCard" title="斩杀 · 不再出现" aria-label="斩杀">✕</button>
             <div class="fc-catalog">NO. {{ pad(currentWord.__index || currentIdx + 1) }}</div>
             <div class="fc-back-content">
               <!-- word type -->
@@ -223,15 +229,6 @@
       <span :class="{ active: storyOpen }" />
     </div>
 
-    <!-- deck nav -->
-    <div v-if="queue.length" class="fc-nav">
-      <button class="fc-nav-btn" @click="prevCard" :disabled="currentIdx <= 0">←</button>
-      <div class="fc-review-actions">
-        <button class="fc-review-btn fc-again" @click="rate('again')">🔁 再练一次</button>
-        <button class="fc-review-btn fc-known" @click="rate('good')">✓ 记住了</button>
-      </div>
-      <button class="fc-nav-btn" @click="nextCard" :disabled="currentIdx >= queue.length - 1">→</button>
-    </div>
 
     <!-- toast -->
     <div class="fc-toast" :class="{ show: toastMsg }">{{ toastMsg }}</div>
@@ -509,6 +506,40 @@ async function resetQueue() {
   await loadWords()
 }
 
+// ── 斩杀（标记为已掌握，从学习队列移除，单词本中保留） ──
+async function killCard() {
+  if (!currentWord.value) return
+  const w = currentWord.value
+
+  await $fetch(`/api/wordbooks/${w.bookId || bookId}/words/${w.id}`, {
+    method: 'PATCH',
+    body: { phase: 'mastered' },
+  })
+  w.phase = 'mastered'
+
+  // 从 words 列表中也更新
+  const idx = words.value.findIndex(x => x.id === w.id)
+  if (idx >= 0) words.value[idx].phase = 'mastered'
+
+  showToast(`已斩杀「${w.word}」`)
+
+  // 从队列移除当前卡片
+  queue.value.splice(currentIdx.value, 1)
+
+  if (queue.value.length === 0) {
+    buildQueue()
+    showToast(queue.value.length ? '进入下一轮' : '全部掌握！')
+    return
+  }
+
+  if (currentIdx.value >= queue.value.length) {
+    currentIdx.value = queue.value.length - 1
+  }
+  flipped.value = false
+  storyOpen.value = false
+  enrichError.value = false
+}
+
 // keyboard
 function onKey(e: KeyboardEvent) {
   if (showSettings.value) return
@@ -518,10 +549,6 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'ArrowRight') { e.preventDefault(); nextCard(); return }
   if (e.key === 'Escape' && storyOpen.value) { closeStory(); return }
   if (!flipped.value) return
-  if (e.key === '1') rate('again')
-  if (e.key === '2') rate('hard')
-  if (e.key === '3') rate('good')
-  if (e.key === '4') rate('easy')
 }
 
 onMounted(() => { loadWords(); window.addEventListener('keydown', onKey); document.addEventListener('click', () => { showSettings.value = false }) })
@@ -649,6 +676,21 @@ body.fc-page::before {
 /* ── stage ── */
 .fc-stage { position: relative; width: 100%; height: clamp(400px, 58vh, 500px); overflow: hidden; }
 
+/* side arrows (absolute, overlaying card edges) */
+.fc-side-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid rgba(233,223,196,.12);
+  background: rgba(27,20,15,.55); color: #e9dfc4;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background .15s, opacity .15s, border-color .15s;
+}
+.fc-side-arrow:hover { background: rgba(27,20,15,.75); border-color: rgba(233,223,196,.3); }
+.fc-side-arrow:disabled { opacity: .12; cursor: default; pointer-events: none; }
+.fc-side-left { left: 6px; }
+.fc-side-right { right: 6px; }
+
 .fc-peek {
   position: absolute; inset: 10px 6px -10px 6px; border-radius: var(--radius);
   background: var(--paper-back); opacity: .5; transform: rotate(2.4deg) scale(.97);
@@ -690,19 +732,28 @@ body.fc-page::before {
   mask-image: linear-gradient(to bottom, transparent 0 58px, black 90px);
 }
 
-/* stamp badge */
+/* stamp / slay button */
 .fc-stamp {
   position: absolute; top: 14px; left: 16px; z-index: 2;
-  width: 40px; height: 40px; border-radius: 50%;
-  border: 2px solid var(--accent); color: var(--accent);
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 2px solid #b5554a; color: #b5554a;
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-weight: 700; font-size: 15px;
-  transform: rotate(-9deg); opacity: .85;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.02);
+  font-family: var(--serif); font-weight: 700; font-size: 13px;
+  transform: rotate(-9deg); opacity: .7;
+  background: transparent; cursor: pointer;
+  transition: opacity .15s, border-color .15s, color .15s, transform .15s;
 }
+.fc-stamp:hover {
+  opacity: 1; border-color: #d44a3a; color: #d44a3a;
+  transform: rotate(-9deg) scale(1.08);
+}
+.fc-stamp:active { transform: rotate(-9deg) scale(.94); }
 .fc-stamp::after {
-  content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1px dashed var(--accent); opacity: .5;
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  border: 1px dashed #b5554a; opacity: .4; pointer-events: none;
+  transition: border-color .15s, opacity .15s;
 }
+.fc-stamp:hover::after { border-color: #d44a3a; opacity: .6; }
 
 .fc-catalog {
   position: absolute; top: 18px; right: 18px; z-index: 2;
@@ -829,27 +880,6 @@ body.fc-page::before {
 .fc-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(233,223,196,.2); transition: background .2s, transform .2s; }
 .fc-dots span.active { background: var(--gold); transform: scale(1.3); }
 
-/* deck nav */
-.fc-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.fc-nav-btn {
-  width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(233,223,196,.18);
-  background: rgba(255,255,255,.03); color: #e9dfc4; font-size: 16px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .15s;
-}
-.fc-nav-btn:hover { background: rgba(255,255,255,.08); }
-.fc-nav-btn:disabled { opacity: .3; cursor: default; }
-
-.fc-review-actions { display: flex; gap: 8px; flex: 1; }
-.fc-review-btn {
-  flex: 1; border: none; border-radius: 11px; padding: 11px 8px;
-  font-family: var(--sans); font-size: 12.5px; font-weight: 600; cursor: pointer;
-  transition: transform .12s, filter .12s;
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-}
-.fc-review-btn:active { transform: scale(.96); }
-.fc-again { background: rgba(138,58,46,.18); color: #e2a493; border: 1px solid rgba(138,58,46,.4); }
-.fc-known { background: rgba(58,90,69,.22); color: #9fcaad; border: 1px solid rgba(58,90,69,.45); }
-
 /* toast */
 .fc-toast {
   position: fixed; bottom: 22px; left: 50%; z-index: 30;
@@ -870,5 +900,6 @@ body.fc-page::before {
   .fc-app { gap: 10px; }
   .fc-headword { font-size: clamp(26px, 9vw, 34px); }
   .fc-face { padding: 22px 18px 18px; }
+  .fc-side-arrow { width: 28px; height: 28px; }
 }
 </style>
