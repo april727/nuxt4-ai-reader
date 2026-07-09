@@ -53,5 +53,8 @@ export default defineNuxtConfig({
         '@vue/devtools-kit',
       ],
     },
+    ssr: {
+      noExternal: ['@libsql/client'],
+    },
   },
 })
