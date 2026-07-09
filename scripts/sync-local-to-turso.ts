@@ -29,6 +29,8 @@ const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
   { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'createdAt', 'updatedAt'] },
   { name: 'daily_insights', pkIdx: 0, columns: ['date', 'content', 'createdAt'] },
+  { name: 'marks', pkIdx: 0, columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt'] },
+  { name: 'knowledge_pages', pkIdx: 0, columns: ['id', 'groupId', 'title', 'content', 'createdAt', 'updatedAt'] },
 ]
 
 async function main() {
