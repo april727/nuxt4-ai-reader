@@ -27,7 +27,7 @@ const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'stats', pkIdx: 0, columns: ['textId', 'readCount', 'lastReadAt', 'markCount'] },
   { name: 'knowledge_points', pkIdx: 0, columns: ['id', 'content', 'note', 'sourceId', 'sourceTitle', 'sourceType', 'sourceContext', 'customGroup', 'tags', 'chatHistory', 'sortOrder', 'createdAt', 'updatedAt'] },
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
-  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'createdAt', 'updatedAt'] },
+  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'createdAt', 'updatedAt'] },
   { name: 'daily_insights', pkIdx: 0, columns: ['date', 'content', 'createdAt'] },
 ]
 
