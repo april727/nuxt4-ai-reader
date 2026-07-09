@@ -8,7 +8,6 @@ export default defineEventHandler(async (event) => {
   const cacheKey = `texts:${folder}`
   const cached = getCached(cacheKey)
   if (cached) {
-    setResponseHeader(event, 'Cache-Control', 'public, max-age=15, stale-while-revalidate=60')
     return cached
   }
 
@@ -39,13 +38,7 @@ export default defineEventHandler(async (event) => {
     if (thumbnail) {
       thumbnail = thumbnail.startsWith('http') ? thumbnail : `/api/file/${thumbnail}`
     }
-    let aiSegmented = false
-    if (r.segments) {
-      try {
-        const segs = JSON.parse(r.segments)
-        aiSegmented = Array.isArray(segs) && segs.length > 0 && segs[0]?.id?.startsWith('p-')
-      } catch {}
-    }
+    const aiSegmented = !!(r.segments && typeof r.segments === 'string' && r.segments.includes('"id":"p-'))
     return {
       id: r.id, title: r.title || '未命名', source: r.source || 'paste', folder: r.folder || r.folder,
       excerpt: r.excerpt || '', createdAt: r.createdAt, completedAt: r.completedAt || null,
@@ -56,6 +49,5 @@ export default defineEventHandler(async (event) => {
   })
 
   setCache(cacheKey, result)
-  setResponseHeader(event, 'Cache-Control', 'public, max-age=15, stale-while-revalidate=60')
   return result
 })

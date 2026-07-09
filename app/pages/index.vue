@@ -477,11 +477,22 @@ async function handleRenameFolder(id: string, name: string) {
 
 async function handleDropOnFolder(folderId: string) {
   if (!dragBookId || folderId === activeFolder.value) return
+  const movedId = dragBookId
+  const movedBook = books.value.find(b => b.id === movedId)
+  // 乐观更新：立即从列表中移除
+  if (movedBook) {
+    books.value = books.value.filter(b => b.id !== movedId)
+    counts()
+  }
+  dragBookId = ''
   try {
-    await $fetch('/api/text/move', { method: 'POST', body: { id: dragBookId, folder: folderId } })
+    await $fetch('/api/text/move', { method: 'POST', body: { id: movedId, folder: folderId } })
+    // 后台刷新确保数据一致
     await loadBooks()
-    dragBookId = ''
-  } catch (e: any) {}
+  } catch (e: any) {
+    // 失败时回滚：重新加载完整列表
+    await loadBooks()
+  }
 }
 
 function openBook(id: string) {
@@ -659,10 +670,17 @@ async function doRename() {
 
 async function deleteBook() {
   if (!confirm('确定删除这本书？所有标记和笔记将一并删除。')) return
+  const deletedId = contextMenu.bookId
+  contextMenu.show = false
+  // 乐观更新：立即从列表中移除
+  books.value = books.value.filter(b => b.id !== deletedId)
+  counts()
   try {
-    await $fetch('/api/text/delete', { method: 'POST', body: { id: contextMenu.bookId } })
-    contextMenu.show = false; await loadBooks()
-  } catch (e: any) {}
+    await $fetch('/api/text/delete', { method: 'POST', body: { id: deletedId } })
+    await loadBooks() // 后台确认
+  } catch (e: any) {
+    await loadBooks() // 失败回滚
+  }
 }
 
 function isVideoSource(source: string) {
@@ -671,13 +689,17 @@ function isVideoSource(source: string) {
 
 async function toggleComplete() {
   try {
+    const now = new Date().toISOString()
+    const book = books.value.find(b => b.id === contextMenu.bookId)
     if (contextMenu.completedAt) {
       await $fetch('/api/text/uncomplete', { method: 'POST', body: { id: contextMenu.bookId } })
+      if (book) book.completedAt = ''
     } else {
       await $fetch('/api/text/complete', { method: 'POST', body: { id: contextMenu.bookId } })
+      if (book) book.completedAt = now
     }
     contextMenu.show = false
-    await loadBooks()
+    counts()
   } catch (e: any) {}
 }
 

@@ -1,42 +1,40 @@
 import { queryAll } from '../../utils/db'
 
 export default defineEventHandler(async () => {
-  // 从 texts.marks 中按日期聚合统计
-  const dailyMap = new Map<string, { word: number; phrase: number; sentence: number; total: number; texts: Set<string> }>()
-
+  // 从 marks 表按日期 + 类型聚合统计
   const rows = await queryAll(
-    `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
+    `SELECT date(createdAt) as d, type,
+            COUNT(*) as cnt,
+            COUNT(DISTINCT textId) as textCnt
+     FROM marks
+     GROUP BY date(createdAt), type
+     ORDER BY d DESC`
   )
 
+  // 合并同一天的 word/phrase/sentence 统计
+  const dayMap = new Map<string, { word: number; phrase: number; sentence: number; total: number; textCount: number }>()
   for (const row of rows) {
-    let marks: any[] = []
-    try { marks = JSON.parse(row.marks) } catch { continue }
+    const d = row.d as string
+    const type = row.type as string
+    const cnt = Number(row.cnt)
+    const tc = Number(row.textCnt)
 
-    for (const m of marks) {
-      if (!m.id || !m.createdAt) continue
-      const date = (m.createdAt as string).slice(0, 10) // YYYY-MM-DD
-      if (!dailyMap.has(date)) {
-        dailyMap.set(date, { word: 0, phrase: 0, sentence: 0, total: 0, texts: new Set() })
-      }
-      const entry = dailyMap.get(date)!
-      if (m.type === 'word') entry.word++
-      else if (m.type === 'phrase') entry.phrase++
-      else if (m.type === 'sentence') entry.sentence++
-      entry.total++
-      entry.texts.add(row.id as string)
+    if (!dayMap.has(d)) {
+      dayMap.set(d, { word: 0, phrase: 0, sentence: 0, total: 0, textCount: 0 })
     }
+    const entry = dayMap.get(d)!
+    if (type === 'word') entry.word += cnt
+    else if (type === 'phrase') entry.phrase += cnt
+    else if (type === 'sentence') entry.sentence += cnt
+    entry.total += cnt
+    // textCount 取当天各类型中最大的（同一天跨文章写作）
+    if (tc > entry.textCount) entry.textCount = tc
   }
 
-  // 转为数组并按日期降序
-  const days = Array.from(dailyMap.entries()).map(([date, data]) => ({
+  const days = Array.from(dayMap.entries()).map(([date, data]) => ({
     date,
-    word: data.word,
-    phrase: data.phrase,
-    sentence: data.sentence,
-    total: data.total,
-    textCount: data.texts.size,
+    ...data,
   }))
-  days.sort((a, b) => b.date.localeCompare(a.date))
 
   return { days }
 })

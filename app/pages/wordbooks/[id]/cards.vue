@@ -1,453 +1,501 @@
 <template>
-  <div class="cards-page">
-    <PageHeader title="闪卡学习" active="wordbooks" :back-to="backUrl" back-label="返回">
-      <template #actions>
-        <span class="cards-progress">{{ currentIdx + 1 }} / {{ queue.length }}</span>
-        <button class="cards-settings-btn" @click="showSettings = !showSettings" title="设置">⚙</button>
-      </template>
-    </PageHeader>
-
-    <!-- 设置面板 -->
-    <div v-if="showSettings" class="cards-settings" @click.self="showSettings = false">
-      <div class="cards-settings-card">
-        <label><input type="checkbox" v-model="settings.randomOrder"> 随机顺序</label>
-        <label><input type="checkbox" v-model="settings.autoPlay"> 自动播放</label>
-        <label><input type="checkbox" v-model="settings.spellMode"> 拼写模式</label>
-        <div v-if="settings.autoPlay" class="cards-settings-row">
-          <span>间隔秒数</span>
-          <input type="number" v-model.number="settings.autoDelay" min="2" max="10" style="width:50px" />
-        </div>
-        <div v-if="settings.autoPlay" class="cards-settings-row">
-          <span>读音次数</span>
-          <input type="number" v-model.number="settings.pronounceCount" min="1" max="5" style="width:50px" />
-        </div>
-        <button @click="showSettings = false">关闭</button>
+  <div class="fc-app">
+    <!-- header -->
+    <header class="fc-header">
+      <NuxtLink :to="backUrl" class="fc-back-btn" aria-label="返回">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
+      </NuxtLink>
+      <div class="fc-brand">
+        <div class="fc-mark">卡</div>
+        <div class="fc-title">闪忆卡片<small>FLASHCARD ARCHIVE</small></div>
       </div>
+      <div style="position:relative;">
+        <button class="fc-settings-btn" @click="showSettings = !showSettings" aria-label="设置">⚙</button>
+        <div v-if="showSettings" class="fc-settings-pop" @click.stop>
+          <div class="fc-settings-row" @click="settings.autoSpeak = !settings.autoSpeak">
+            <span>自动发音</span>
+            <div class="fc-toggle" :class="{ on: settings.autoSpeak }" />
+          </div>
+          <div class="fc-settings-row" @click="settings.showZh = !settings.showZh">
+            <span>显示例句翻译</span>
+            <div class="fc-toggle" :class="{ on: settings.showZh }" />
+          </div>
+          <button class="fc-settings-close" @click="showSettings = false">关闭</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- type tabs -->
+    <div class="fc-tabs">
+      <button
+        v-for="t in typeOptions"
+        :key="t.key"
+        :data-type="t.key"
+        :class="{ active: cardType === t.key }"
+        @click="switchType(t.key)"
+      >{{ t.label }}</button>
     </div>
 
-    <!-- 空状态 -->
-    <div v-if="!queue.length && !loading" class="cards-empty">
-      <div class="cards-empty-icon">🎉</div>
-      <p>{{ isAllMastered ? '全部掌握！' : '当前没有需要学习的单词' }}</p>
-      <button @click="resetQueue">重新开始</button>
+    <!-- deck info -->
+    <div class="fc-deck-info">
+      <span class="fc-cat-label">{{ catLabel }}</span>
+      <span class="fc-count" v-if="queue.length">{{ pad(currentIdx + 1) }} / {{ pad(queue.length) }}</span>
     </div>
 
-    <!-- 卡片 -->
-    <div v-if="queue.length && currentWord" class="cards-body">
-      <div class="cards-card-area">
-        <button class="cards-arrow cards-arrow--left" @click.stop="prevWord" :disabled="currentIdx <= 0" title="上一个 (←)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <div
-          class="cards-stage"
-          :style="stageStyle"
-          @mousedown="startDrag"
-          @touchstart="startTouchDrag"
-        >
-          <div class="card" :class="{ flipped }" @click="onCardClick">
-            <!-- 正面：单词 -->
-            <div class="card-face card-front">
-              <div v-if="!settings.spellMode" class="card-content">
-                <div class="card-word">
-                  {{ currentWord.word }}
-                  <span v-if="currentWord.pos" class="card-pos-badge">{{ currentWord.pos }}</span>
-                </div>
-                <button class="card-flip-btn front-flip-btn" @click.stop="onCardClick">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><polyline points="9 10 6 12 9 14"/><polyline points="15 10 18 12 15 14"/></svg>
-                  查看释义
-                </button>
-                <button class="card-enrich-btn" @click.stop="enrichCurrent" :disabled="enrichLoading">
-                  <template v-if="enrichLoading">⋯</template>
-                  <template v-else>AI 释义</template>
-                </button>
-              </div>
-              <div v-else class="card-content">
-                <div class="card-meaning-big">{{ currentWord.meaning }}</div>
-                <input ref="spellInput" v-model="spellAnswer" class="card-spell-input" placeholder="拼写单词…" @keydown.enter="checkSpell" />
-                <button class="card-spell-btn" @click.stop="checkSpell">确认</button>
-              </div>
+    <!-- card stage -->
+    <div class="fc-stage" v-if="queue.length && currentWord">
+      <div class="fc-peek" />
+      <div
+        class="fc-flip-card"
+        :class="{ flipped: flipped && !storyOpen }"
+        tabindex="0" role="button"
+        @click="onCardClick"
+        @keydown.enter.space.prevent="onCardClick"
+      >
+        <div class="fc-flip-inner">
+          <!-- front face -->
+          <div class="fc-face fc-front" :style="{ '--accent': accentColor, '--accent-soft': accentSoft }">
+            <div class="fc-stamp">{{ stampChar }}</div>
+            <div class="fc-catalog">NO. {{ pad(currentWord.__index || currentIdx + 1) }}</div>
+            <div class="fc-front-content">
+              <div
+                class="fc-headword"
+                :class="{
+                  'fc-headword--phrase': effectiveType === 'phrase',
+                  'fc-headword--sentence': effectiveType === 'sentence',
+                }"
+              >{{ currentWord.word }}</div>
+              <button
+                v-if="effectiveType === 'word'"
+                class="fc-speak-btn"
+                :style="{ '--accent': accentColor }"
+                :class="{ speaking: isSpeaking }"
+                @click.stop="pronounceCurrent"
+                aria-label="发音"
+              >🔊</button>
+              <div class="fc-tap-hint">点击卡片翻转 · 查看释义</div>
             </div>
+          </div>
 
-            <!-- 背面：释义 -->
-            <div class="card-face card-back">
-              <div class="card-content">
-                <div class="card-word-row">
-                  <span class="card-word">{{ currentWord.word }}</span>
-                  <span v-if="currentWord.pos" class="card-pos-badge">{{ currentWord.pos }}</span>
-                  <span v-if="currentWord.phase" class="card-phase" :class="'card-phase--' + currentWord.phase">
-                    {{ phaseLabel(currentWord.phase) }}
-                  </span>
-                  <button v-if="!isSentenceBook" class="card-pronounce-btn" @click.stop="pronounceCurrent" title="发音">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                    </svg>
-                  </button>
+          <!-- back face -->
+          <div class="fc-face fc-back" :style="{ '--accent': accentColor, '--accent-soft': accentSoft }">
+            <div class="fc-stamp">{{ stampChar }}</div>
+            <div class="fc-catalog">NO. {{ pad(currentWord.__index || currentIdx + 1) }}</div>
+            <div class="fc-back-content">
+              <!-- word type -->
+              <template v-if="effectiveType === 'word'">
+                <div class="fc-bc-head">
+                  <span class="fc-bc-word">{{ currentWord.word }}</span>
+                  <span class="fc-bc-ipa">{{ currentWord.phonetic }}</span>
                 </div>
-                <div v-if="!isSentenceBook" class="card-phonetic">{{ currentWord.phonetic }}</div>
-                <div class="card-meaning-big">{{ currentWord.meaning }}</div>
-                <div v-if="currentWord.example" class="card-example">"{{ currentWord.example }}"</div>
-              </div>
+                <div class="fc-bc-meaning">{{ currentWord.meaning }}</div>
+                <div v-if="currentWord.example" class="fc-bc-section">
+                  <span class="fc-bc-label">例句</span>
+                  <div class="fc-bc-example">
+                    {{ currentWord.example }}
+                    <span v-if="settings.showZh && enhData?.exampleZh" class="fc-bc-example-zh">{{ enhData.exampleZh }}</span>
+                  </div>
+                </div>
+                <!-- AI enrichment loading -->
+                <div v-if="enrichLoading" class="fc-enrich-loading">
+                  <span class="fc-enrich-spinner" />
+                  <span>AI 解析中…</span>
+                </div>
+                <!-- AI enrichment retry -->
+                <button v-else-if="!enhData && enrichError" class="fc-enrich-btn" @click.stop="enrichCurrent">
+                  🔄 重新解析
+                </button>
+                <!-- AI enrichment content -->
+                <template v-else-if="enhData">
+                  <div v-if="enhData.roots?.length" class="fc-bc-section">
+                    <span class="fc-bc-label">词根拆解</span>
+                    <div class="fc-root-parts">
+                      <span v-for="r in enhData.roots" :key="r.part" class="fc-root-chip">
+                        <b>{{ r.part }}</b> — {{ r.note }}
+                      </span>
+                    </div>
+                    <div v-if="enhData.rootNote" class="fc-root-note">{{ enhData.rootNote }}</div>
+                  </div>
+                  <div v-if="enhData.related?.length" class="fc-bc-section">
+                    <span class="fc-bc-label">同词根词汇</span>
+                    <div class="fc-related-words">
+                      <span v-for="w in enhData.related" :key="w" class="fc-related-word">{{ w }}</span>
+                    </div>
+                  </div>
+                  <div v-if="enhData.similar?.length" class="fc-bc-section">
+                    <span class="fc-bc-label">相近词</span>
+                    <div class="fc-related-words">
+                      <span v-for="w in enhData.similar" :key="w" class="fc-related-word">{{ w }}</span>
+                    </div>
+                  </div>
+                  <button v-if="enhData.funFact" class="fc-story-tab" @click.stop="openStory">📖 查看趣味知识</button>
+                </template>
+              </template>
+
+              <!-- phrase type -->
+              <template v-else-if="effectiveType === 'phrase'">
+                <div class="fc-bc-head"><span class="fc-bc-word">{{ currentWord.word }}</span></div>
+                <div class="fc-bc-meaning">{{ currentWord.meaning }}</div>
+                <div v-if="currentWord.example" class="fc-bc-section">
+                  <span class="fc-bc-label">例句</span>
+                  <div class="fc-bc-example">
+                    {{ currentWord.example }}
+                    <span v-if="settings.showZh && enhData?.exampleZh" class="fc-bc-example-zh">{{ enhData.exampleZh }}</span>
+                  </div>
+                </div>
+                <!-- AI enrichment loading -->
+                <div v-if="enrichLoading" class="fc-enrich-loading">
+                  <span class="fc-enrich-spinner" />
+                  <span>AI 解析中…</span>
+                </div>
+                <!-- AI enrichment retry -->
+                <button v-else-if="!enhData && enrichError" class="fc-enrich-btn" @click.stop="enrichCurrent">
+                  🔄 重新解析
+                </button>
+                <!-- AI enrichment content -->
+                <template v-else-if="enhData">
+                  <div v-if="enhData.similar?.length" class="fc-bc-section">
+                    <span class="fc-bc-label">相近短语</span>
+                    <div class="fc-related-words">
+                      <span v-for="w in enhData.similar" :key="w" class="fc-related-word">{{ w }}</span>
+                    </div>
+                  </div>
+                  <button v-if="enhData.funFact" class="fc-story-tab" @click.stop="openStory">📖 查看趣味知识</button>
+                </template>
+              </template>
+
+              <!-- sentence type -->
+              <template v-else-if="effectiveType === 'sentence'">
+                <div class="fc-translation-block">
+                  <span class="fc-trans-en">{{ currentWord.word }}</span>
+                  <span class="fc-trans-zh">{{ currentWord.meaning }}</span>
+                </div>
+                <!-- AI enrichment loading -->
+                <div v-if="enrichLoading" class="fc-enrich-loading">
+                  <span class="fc-enrich-spinner" />
+                  <span>AI 解析中…</span>
+                </div>
+                <!-- AI enrichment retry -->
+                <button v-else-if="!enhData && enrichError" class="fc-enrich-btn" @click.stop="enrichCurrent">
+                  🔄 重新解析
+                </button>
+                <!-- AI enrichment content -->
+                <template v-else-if="enhData">
+                  <div v-if="enhData.similar?.length" class="fc-bc-section">
+                    <span class="fc-bc-label">相近表达</span>
+                    <div class="fc-related-words">
+                      <span v-for="w in enhData.similar" :key="w" class="fc-related-word">{{ w }}</span>
+                    </div>
+                  </div>
+                  <button v-if="enhData.funFact" class="fc-story-tab" @click.stop="openStory">📖 查看趣味知识</button>
+                </template>
+              </template>
+
             </div>
           </div>
         </div>
-        <button class="cards-arrow cards-arrow--right" @click.stop="nextWord" :disabled="currentIdx >= queue.length - 1" title="下一个 (→)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-      </div>
 
-      <!-- 评级按钮 (翻面后显示) -->
-      <div v-if="flipped" class="cards-rating">
-        <button class="rate-btn rate-again" @click="rate('again')">
-          <span class="rate-key">1</span> 忘记
-        </button>
-        <button class="rate-btn rate-hard" @click="rate('hard')">
-          <span class="rate-key">2</span> 困难
-        </button>
-        <button class="rate-btn rate-good" @click="rate('good')">
-          <span class="rate-key">3</span> 良好
-        </button>
-        <button class="rate-btn rate-easy" @click="rate('easy')">
-          <span class="rate-key">4</span> 简单
-        </button>
+        <!-- story panel -->
+        <div
+          class="fc-story-panel"
+          :class="{ open: storyOpen }"
+          :style="{ '--accent': accentColor }"
+        >
+          <button class="fc-story-close" @click.stop="closeStory" aria-label="关闭">×</button>
+          <div class="fc-story-eyebrow">趣味知识</div>
+          <div class="fc-story-title">{{ enhData?.funFact?.title || '' }}</div>
+          <div class="fc-story-body">{{ enhData?.funFact?.body || '' }}</div>
+        </div>
       </div>
     </div>
 
-    <!-- 自动播放计时器 -->
-    <div v-if="settings.autoPlay && autoTimer > 0" class="cards-timer">{{ autoTimer }}s</div>
+    <!-- empty state -->
+    <div v-if="!queue.length && !loading" class="fc-empty">
+      <div class="fc-empty-icon">🎉</div>
+      <p>{{ isAllMastered ? '全部掌握！' : '当前没有需要学习的卡片' }}</p>
+      <button @click="resetQueue">重新开始</button>
+    </div>
+
+    <!-- face dots -->
+    <div v-if="queue.length" class="fc-dots">
+      <span :class="{ active: !flipped && !storyOpen }" />
+      <span :class="{ active: flipped && !storyOpen }" />
+      <span :class="{ active: storyOpen }" />
+    </div>
+
+    <!-- deck nav -->
+    <div v-if="queue.length" class="fc-nav">
+      <button class="fc-nav-btn" @click="prevCard" :disabled="currentIdx <= 0">←</button>
+      <div class="fc-review-actions">
+        <button class="fc-review-btn fc-again" @click="rate('again')">🔁 再练一次</button>
+        <button class="fc-review-btn fc-known" @click="rate('good')">✓ 记住了</button>
+      </div>
+      <button class="fc-nav-btn" @click="nextCard" :disabled="currentIdx >= queue.length - 1">→</button>
+    </div>
+
+    <!-- toast -->
+    <div class="fc-toast" :class="{ show: toastMsg }">{{ toastMsg }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, computed } from 'vue'
 import { usePronunciation } from '~/composables/usePronunciation'
+
+// Apply flashcard page classes to html/body (required by global CSS)
+useHead({
+  htmlAttrs: { class: 'fc-page' },
+  bodyAttrs: { class: 'fc-page' },
+})
+
 const route = useRoute()
 const bookId = route.params.id as string
-const sourceTextId = (route.query.source as string) || ''
-const sourceType = (route.query.type as string) || ''
-const dailyDate = (route.query.dailyDate as string) || ''
-const dailyType = (route.query.dailyType as string) || 'word'
-
 const backUrl = computed(() =>
-  dailyDate ? `/words/daily/${dailyDate}` : `/wordbooks/${bookId}`
+  sourceFromQuery ? `/wordbooks/book/${sourceFromQuery}` : `/wordbooks/${bookId}`
 )
 
-interface Word { id: string; word: string; phonetic: string; meaning: string; example: string; phase: string; learnCorrect: number; ease: number; interval: number; repetitions: number; nextReview: string; pos: string; bookId?: string }
+interface Word {
+  id: string; word: string; phonetic: string; meaning: string; example: string
+  phase: string; learnCorrect: number; ease: number; interval: number; repetitions: number
+  nextReview: string; pos: string; bookId?: string; enhancement?: string
+  cardType?: string; __index?: number
+}
+
+interface EnhData {
+  phonetic?: string; meaning?: string; example?: string; exampleZh?: string
+  roots?: Array<{ part: string; note: string }>; rootNote?: string
+  related?: string[]; similar?: string[]; translation?: string
+  funFact?: { title: string; body: string }; pos?: string
+}
+
+const typeOptions = [
+  { key: 'word', label: '单词' },
+  { key: 'phrase', label: '短语' },
+  { key: 'sentence', label: '句子' },
+  { key: 'mixed', label: '混合' },
+]
+
+const catMeta: Record<string, { label: string; stamp: string; accent: string; accentSoft: string }> = {
+  word: { label: 'WORD · 词汇卡', stamp: '词', accent: '#5668a8', accentSoft: '#8a95cc' },
+  phrase: { label: 'PHRASE · 短语卡', stamp: '语', accent: '#a04a3a', accentSoft: '#c88070' },
+  sentence: { label: 'SENTENCE · 句子卡', stamp: '句', accent: '#4a7a5a', accentSoft: '#7aaa8a' },
+  mixed: { label: 'MIXED · 综合卡', stamp: '卡', accent: '#b89230', accentSoft: '#d4b860' },
+}
 
 const words = ref<Word[]>([])
 const queue = ref<Word[]>([])
 const currentIdx = ref(0)
 const flipped = ref(false)
+const storyOpen = ref(false)
 const loading = ref(true)
-const spellAnswer = ref('')
-const spellInput = ref<HTMLInputElement>()
+const cardType = ref('word')
 const showSettings = ref(false)
-const autoTimer = ref(0)
-let autoInterval: any = null
+const enrichLoading = ref(false)
+const enrichError = ref(false)
+const isSpeaking = ref(false)
+const toastMsg = ref('')
+let toastTimer: any = null
 
-const settings = reactive({
-  randomOrder: false,
-  autoPlay: false,
-  spellMode: false,
-  autoDelay: 4,
-  pronounceCount: 1,
-})
-
-// ── 卡片拖拽 ──
-const cardX = ref(0)
-const cardY = ref(0)
-const isDragging = ref(false)
-let dragStartX = 0
-let dragStartY = 0
-let dragMoved = false
-const DRAG_THRESHOLD = 4
-
-const stageStyle = computed(() => ({
-  transform: `translate(${cardX.value}px, ${cardY.value}px)`,
-  cursor: isDragging.value ? 'grabbing' : 'grab',
-}))
-
-function startDrag(e: MouseEvent) {
-  if (settings.spellMode) { flip(); return }
-  dragStartX = e.clientX
-  dragStartY = e.clientY
-  dragMoved = false
-  isDragging.value = true
-
-  const onMove = (ev: MouseEvent) => {
-    const dx = ev.clientX - dragStartX
-    const dy = ev.clientY - dragStartY
-    if (!dragMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
-      dragMoved = true
-    }
-    if (dragMoved) {
-      cardX.value += ev.movementX
-      cardY.value += ev.movementY
-    }
-  }
-
-  const onUp = () => {
-    isDragging.value = false
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onUp)
-  }
-
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onUp)
-}
-
-function startTouchDrag(e: TouchEvent) {
-  if (settings.spellMode) { flip(); return }
-  if (!e.touches.length) return
-  const t = e.touches[0]
-  dragStartX = t.clientX
-  dragStartY = t.clientY
-  dragMoved = false
-  isDragging.value = true
-
-  const onMove = (ev: TouchEvent) => {
-    ev.preventDefault() // 阻止滚动，仅在拖拽时
-    if (!ev.touches.length) return
-    const t2 = ev.touches[0]
-    const dx = t2.clientX - dragStartX
-    const dy = t2.clientY - dragStartY
-    if (!dragMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
-      dragMoved = true
-    }
-    if (dragMoved) {
-      cardX.value = t2.clientX - dragStartX
-      cardY.value = t2.clientY - dragStartY
-    }
-  }
-
-  const onEnd = () => {
-    isDragging.value = false
-    // 短触后延迟重置 dragMoved，避免 click 事件误判为拖拽
-    if (!dragMoved) {
-      setTimeout(() => { dragMoved = false }, 100)
-    }
-    document.removeEventListener('touchmove', onMove)
-    document.removeEventListener('touchend', onEnd)
-  }
-
-  document.addEventListener('touchmove', onMove, { passive: false })
-  document.addEventListener('touchend', onEnd)
-}
-
+const settings = reactive({ autoSpeak: false, showZh: true })
 const { pronounceSimple } = usePronunciation()
 
+const effectiveType = computed(() => currentWord.value?.cardType || cardType.value)
+const catLabel = computed(() => catMeta[effectiveType.value]?.label || '')
+const stampChar = computed(() => catMeta[effectiveType.value]?.stamp || '')
+const accentColor = computed(() => catMeta[effectiveType.value]?.accent || '#5668a8')
+const accentSoft = computed(() => catMeta[effectiveType.value]?.accentSoft || '#8a95cc')
 const currentWord = computed(() => queue.value[currentIdx.value] || null)
 const isAllMastered = computed(() => words.value.length > 0 && words.value.every(w => w.phase === 'mastered'))
-const isSentenceBook = computed(() => bookId === 'wb_sentences')
+
+const enhData = computed<EnhData | null>(() => {
+  if (!currentWord.value?.enhancement) return null
+  try { return JSON.parse(currentWord.value.enhancement) } catch { return null }
+})
+
+function pad(n: number) { return String(n).padStart(3, '0').slice(-2) }
+
+function showToast(msg: string) {
+  toastMsg.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, 1400)
+}
+
+// ── data loading ──
+const dailyDate = (route.query.dailyDate as string) || ''
+const sourceFromQuery = (route.query.source as string) || ''
+const queryType = (route.query.type as string) || 'word'
+
+// 初始 tab：优先用 URL 的 type 参数（从文字本进入时传 type=phrase 等）
+if (queryType && ['word', 'phrase', 'sentence', 'mixed'].includes(queryType)) {
+  cardType.value = queryType
+}
+
+function sourceBookId(type: string) {
+  return ({
+    word: 'wb_default',
+    phrase: 'wb_phrases',
+    sentence: 'wb_sentences',
+  })[type] || 'wb_default'
+}
+
+// 从文字本进入时，bookId 随 tab 类型变化
+const effectiveBookId = computed(() =>
+  sourceFromQuery ? sourceBookId(cardType.value) : bookId
+)
+
+async function loadWords() {
+  loading.value = true
+  try {
+    const params = new URLSearchParams({ type: cardType.value })
+    if (dailyDate) {
+      params.set('dailyDate', dailyDate)
+      params.set('dailyType', cardType.value)
+    } else {
+      params.set('bookId', effectiveBookId.value)
+      if (sourceFromQuery) params.set('source', sourceFromQuery)
+    }
+    const data = await $fetch<{ words: Word[] }>(`/api/wordbooks/flashcard-words?${params}`)
+    words.value = data.words.map((w, i) => ({ ...w, __index: i + 1 }))
+  } catch { words.value = [] }
+  loading.value = false
+  buildQueue()
+}
 
 function buildQueue() {
   let list = words.value.filter(w => w.phase !== 'mastered')
-  // 优先未学习的
   list.sort((a, b) => {
     if (a.phase === 'learn' && b.phase !== 'learn') return -1
     if (b.phase === 'learn' && a.phase !== 'learn') return 1
     return 0
   })
-  if (settings.randomOrder) list = shuffle(list)
   queue.value = list
   currentIdx.value = 0
   flipped.value = false
+  storyOpen.value = false
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
+async function switchType(type: string) {
+  cardType.value = type
+  await loadWords()
 }
 
+// ── card actions ──
 function onCardClick() {
-  if (settings.spellMode) return
-  if (dragMoved) { dragMoved = false; return }
-  if (flipped.value) {
-    skipWord()
-    return
+  if (storyOpen.value) { closeStory(); return }
+  flipped.value = !flipped.value
+  if (flipped.value && settings.autoSpeak && effectiveType.value === 'word') {
+    setTimeout(() => pronounceCurrent(), 350)
   }
-  flipped.value = true
-  if (flipped.value && settings.autoPlay) startAutoTimer()
-}
-
-function flip() { onCardClick() } // 供外部调用
-
-async function skipWord() {
-  await nextCard()
-}
-
-function phaseLabel(p: string) {
-  if (p === 'learn' || p === 'lear') return '学习中'
-  if (p === 'review') return '复习中'
-  if (p === 'mastered') return '已掌握'
-  return ''
+  // 翻到背面时自动触发 AI 解析
+  if (flipped.value && !enhData.value && !enrichLoading.value) {
+    enrichCurrent()
+  }
 }
 
 function pronounceCurrent() {
-  if (!currentWord.value) return
+  if (!currentWord.value || effectiveType.value !== 'word') return
+  isSpeaking.value = true
   pronounceSimple(currentWord.value.word)
+  setTimeout(() => { isSpeaking.value = false }, 1500)
 }
 
-const enrichLoading = ref(false)
+function openStory() {
+  if (!enhData.value?.funFact) return
+  storyOpen.value = true
+}
+
+function closeStory() {
+  storyOpen.value = false
+}
+
 async function enrichCurrent() {
   if (enrichLoading.value || !currentWord.value) return
   enrichLoading.value = true
+  enrichError.value = false
   try {
-    const res = await $fetch<{ phonetic: string; meaning: string; example: string; note: string }>(
-      `/api/wordbooks/${currentWord.value.bookId || bookId}/words/enrich`,
-      { method: 'POST', body: { wordId: currentWord.value.id } }
+    const res = await $fetch<EnhData & { wordId: string }>(
+      `/api/wordbooks/${currentWord.value.bookId || bookId}/words/flashcard-enrich`,
+      { method: 'POST', body: { wordId: currentWord.value.id, type: effectiveType.value } }
     )
     if (currentWord.value) {
-      currentWord.value.phonetic = res.phonetic
-      currentWord.value.meaning = res.meaning
-      currentWord.value.example = res.example
+      currentWord.value.enhancement = JSON.stringify(res)
+      const idx = words.value.findIndex(w => w.id === currentWord.value!.id)
+      if (idx >= 0) words.value[idx].enhancement = currentWord.value.enhancement
     }
-  } catch {}
+  } catch {
+    enrichError.value = true
+    showToast('AI 解析失败，可点击重试')
+  }
   finally { enrichLoading.value = false }
 }
 
-function checkSpell() {
-  if (!currentWord.value) return
-  const correct = spellAnswer.value.trim().toLowerCase() === currentWord.value.word.toLowerCase()
-  if (correct) {
-    rate('good')
-  } else {
-    alert(`正确答案: ${currentWord.value.word}`)
-    rate('again')
-  }
-  spellAnswer.value = ''
+// ── navigation ──
+function prevCard() {
+  if (currentIdx.value <= 0) return
+  currentIdx.value--
+  flipped.value = false
+  storyOpen.value = false
+  enrichError.value = false
 }
 
+function nextCard() {
+  if (currentIdx.value >= queue.value.length - 1) return
+  currentIdx.value++
+  flipped.value = false
+  storyOpen.value = false
+  enrichError.value = false
+}
+
+// ── rating ──
 async function rate(grade: 'again' | 'hard' | 'good' | 'easy') {
   if (!currentWord.value) return
   const w = currentWord.value
 
   let phase = w.phase
   let learnCorrect = w.learnCorrect
-  let learnTotal = w.learnTotal + 1
-  let learnWrong = w.learnWrong
+  let learnTotal = (w as any).learnTotal || 0
+  let learnWrong = (w as any).learnWrong || 0
   let ease = w.ease || 2.5
   let interval = w.interval || 0
   let repetitions = w.repetitions || 0
   let nextReview = ''
 
+  learnTotal++
+
   if (grade === 'again') {
     learnWrong++
     learnCorrect = 0
-    if (phase === 'review') {
-      interval = 1
-      ease = Math.max(1.3, ease - 0.2)
-    }
+    if (phase === 'review') { interval = 1; ease = Math.max(1.3, ease - 0.2) }
   } else {
     learnCorrect++
-    if (grade === 'hard') {
-      interval = Math.max(1, Math.round(interval * 1.2))
-    } else if (grade === 'good') {
-      interval = Math.max(1, Math.round((interval || 1) * ease))
-    } else {
-      interval = Math.max(1, Math.round((interval || 1) * ease * 1.3))
-      ease = Math.min(3.0, ease + 0.15)
-    }
+    if (grade === 'hard') { interval = Math.max(1, Math.round(interval * 1.2)) }
+    else if (grade === 'good') { interval = Math.max(1, Math.round((interval || 1) * ease)) }
+    else { interval = Math.max(1, Math.round((interval || 1) * ease * 1.3)); ease = Math.min(3.0, ease + 0.15) }
     repetitions++
   }
 
-  // 学习阶段：连续 3 次正确 → 进入复习
-  if (phase === 'learn' && learnCorrect >= 3) {
-    phase = 'review'
-    interval = 1
-  }
-
-  // 复习阶段：设置下次复习时间
+  if (phase === 'learn' && learnCorrect >= 3) { phase = 'review'; interval = 1 }
   if (phase === 'review' && grade !== 'again') {
-    const d = new Date()
-    d.setDate(d.getDate() + interval)
-    nextReview = d.toISOString()
+    const d = new Date(); d.setDate(d.getDate() + interval); nextReview = d.toISOString()
   }
+  if (phase === 'review' && grade === 'easy' && interval >= 21) { phase = 'mastered' }
 
-  // 标记掌握
-  if (phase === 'review' && grade === 'easy' && interval >= 21) {
-    phase = 'mastered'
-  }
-
-  // 更新 DB
   await $fetch(`/api/wordbooks/${w.bookId || bookId}/words/${w.id}`, {
     method: 'PATCH',
     body: { phase, learnCorrect, learnTotal, learnWrong, ease, interval, repetitions, nextReview },
   })
 
-  // 更新本地
   w.phase = phase; w.learnCorrect = learnCorrect
   w.ease = ease; w.interval = interval; w.repetitions = repetitions; w.nextReview = nextReview
 
-  // 切换到下一个
-  await nextCard()
-}
+  showToast(grade === 'again' ? '已加入复习队列' : '太棒了，已标记为「记住了」')
 
-async function nextCard() {
-  flipped.value = false
-  cardX.value = 0; cardY.value = 0
-  clearAutoTimer()
-  // 前进到下一词
-  currentIdx.value++
-  // 队列耗尽则重建（排除已掌握的）
-  if (currentIdx.value >= queue.value.length) {
+  if (currentIdx.value < queue.value.length - 1) {
+    nextCard()
+  } else {
     buildQueue()
-  }
-  // 自动播放模式：自动翻到背面，启动读音+计时
-  if (settings.autoPlay && queue.value.length > 0) {
-    await nextTick()
-    flipped.value = true
-    startAutoTimer()
+    showToast(queue.value.length ? '进入下一轮' : '全部掌握！')
   }
 }
-
-function prevWord() {
-  if (currentIdx.value <= 0) return
-  flipped.value = false
-  cardX.value = 0; cardY.value = 0
-  clearAutoTimer()
-  currentIdx.value--
-}
-
-async function nextWord() {
-  if (currentIdx.value >= queue.value.length - 1) return
-  flipped.value = false
-  cardX.value = 0; cardY.value = 0
-  clearAutoTimer()
-  currentIdx.value++
-  if (settings.autoPlay) {
-    await nextTick()
-    flipped.value = true
-    startAutoTimer()
-  }
-}
-
-function startAutoTimer() {
-  clearAutoTimer()
-  autoTimer.value = settings.autoDelay
-  let pronCount = 0
-
-  // 首次发音
-  pronounceCurrent()
-  pronCount++
-
-  autoInterval = setInterval(() => {
-    // 剩余读音
-    if (pronCount < settings.pronounceCount) {
-      pronounceCurrent()
-      pronCount++
-    }
-    // 倒计时
-    autoTimer.value--
-    if (autoTimer.value <= 0) {
-      clearAutoTimer()
-      rate('good')
-    }
-  }, 1000)
-}
-function clearAutoTimer() { if (autoInterval) { clearInterval(autoInterval); autoInterval = null }; autoTimer.value = 0 }
 
 async function resetQueue() {
   for (const w of words.value) {
@@ -458,38 +506,17 @@ async function resetQueue() {
       })
     }
   }
-  await load()
+  await loadWords()
 }
 
-async function load() {
-  loading.value = true
-  try {
-    let url: string
-    if (dailyDate) {
-      url = `/api/words/daily-cards?date=${dailyDate}&type=${dailyType}`
-    } else if (sourceTextId) {
-      url = `/api/wordbooks/book/${sourceTextId}/words?type=${sourceType}`
-    } else {
-      url = `/api/wordbooks/${bookId}/words`
-    }
-    const data = await $fetch<{ words: Word[]; posCounts: Record<string, number> }>(url)
-    words.value = data.words
-  } catch {}
-  loading.value = false
-  buildQueue()
-}
-
-// 键盘快捷键
+// keyboard
 function onKey(e: KeyboardEvent) {
   if (showSettings.value) return
-  if (e.key === ' ' || e.key === 'Space' || e.code === 'Space' || e.keyCode === 32) {
-    e.preventDefault()
-    onCardClick()
-    return
-  }
+  if (e.key === ' ' || e.key === 'Space') { e.preventDefault(); onCardClick(); return }
   if (e.key === 'Enter') { e.preventDefault(); onCardClick(); return }
-  if (e.key === 'ArrowLeft') { e.preventDefault(); prevWord(); return }
-  if (e.key === 'ArrowRight') { e.preventDefault(); nextWord(); return }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prevCard(); return }
+  if (e.key === 'ArrowRight') { e.preventDefault(); nextCard(); return }
+  if (e.key === 'Escape' && storyOpen.value) { closeStory(); return }
   if (!flipped.value) return
   if (e.key === '1') rate('again')
   if (e.key === '2') rate('hard')
@@ -497,131 +524,351 @@ function onKey(e: KeyboardEvent) {
   if (e.key === '4') rate('easy')
 }
 
-onMounted(() => { load(); window.addEventListener('keydown', onKey) })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); clearAutoTimer() })
+onMounted(() => { loadWords(); window.addEventListener('keydown', onKey); document.addEventListener('click', () => { showSettings.value = false }) })
+onUnmounted(() => { window.removeEventListener('keydown', onKey) })
 </script>
 
-<style scoped>
-.cards-page { height: 100vh; display: flex; flex-direction: column; background: #f7f6f3; color: #1a1a18; }
+<style>
+/* ── global: dark bg + CSS variables + all card styles (no scoped, matching flashcard.html) ── */
 
-.cards-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 20px; height: 50px; flex-shrink: 0;
+:root {
+  --bg: #1b140f; --bg-2: #241b14;
+  --paper: #ffffff; --paper-back: #f5f5f5; --paper-edge: #d0d0d0;
+  --text-dark: #000000; --text-muted: #666666;
+  --story-bg: #152137; --story-bg-2: #1c2c47;
+  --gold: #c9a24b; --gold-soft: #e3c789;
+  --radius: 14px;
+  --mono: 'JetBrains Mono', 'DM Mono', monospace;
+  --serif: 'Noto Serif SC', 'Lora', Georgia, serif;
+  --sans: 'Noto Sans SC', 'DM Sans', sans-serif;
+  --accent: #5668a8; --accent-soft: #8a95cc;
 }
-.cards-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #8a877c; text-decoration: none; font-family: 'DM Sans', sans-serif; }
-.cards-back:hover { color: #3d3591; }
 
-.cards-nav-links { display: flex; gap: 6px; margin-left: 12px; }
-.cards-nav-link {
-  font-size: 0.7rem; color: #6b6963; text-decoration: none;
-  padding: 3px 8px; border-radius: 5px;
-  border: 0.5px solid rgba(0,0,0,0.08);
+html.fc-page, body.fc-page {
+  min-height: 100vh; margin: 0;
+  background:
+    radial-gradient(1200px 800px at 15% -10%, #2a2016 0%, transparent 60%),
+    radial-gradient(900px 700px at 110% 10%, #241a12 0%, transparent 55%),
+    var(--bg);
+  font-family: var(--sans);
+  color: #e9dfc4;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 20px 16px 40px;
 }
-.cards-nav-link:hover { background: #f0efe9; color: #3d3591; }
-.cards-progress { font-size: 13px; color: #a09e97; font-family: 'DM Mono', monospace; }
-.cards-settings-btn { border: none; background: none; font-size: 18px; cursor: pointer; color: #c4c1ba; }
-.cards-settings-btn:hover { color: #3d3591; }
 
-.cards-settings {
-  position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.5);
+/* subtle desk grain */
+body.fc-page::before {
+  content:""; position:fixed; inset:0; pointer-events:none; opacity:.05; mix-blend-mode:overlay; z-index:0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.fc-app {
+  width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 14px; z-index: 1;
+}
+
+/* ── header ── */
+.fc-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fc-back-btn {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(233,223,196,.18);
+  background: rgba(255,255,255,.03); color: #e9dfc4;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+  transition: background .15s; text-decoration: none;
+}
+.fc-back-btn:hover { background: rgba(255,255,255,.08); }
+.fc-brand { display: flex; align-items: center; gap: 9px; flex: 1; }
+.fc-mark {
+  width: 30px; height: 30px; border-radius: 7px;
+  background: linear-gradient(155deg, var(--paper), var(--paper-back));
   display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-weight: 900; color: var(--text-dark); font-size: 14px;
+  box-shadow: 0 2px 0 rgba(0,0,0,.25), inset 0 0 0 1px rgba(0,0,0,.08);
+  transform: rotate(-4deg);
 }
-.cards-settings-card {
-  background: #ffffff; border-radius: 12px; padding: 24px; width: 280px;
+.fc-title { font-family: var(--serif); font-weight: 700; font-size: 16.5px; letter-spacing: .3px; color: #e9dfc4; }
+.fc-title small { display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: 2.5px; color: var(--gold-soft); font-weight: 500; margin-top: 1px; }
+
+.fc-settings-btn {
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(233,223,196,.18);
+  background: rgba(255,255,255,.03); color: #e9dfc4; font-size: 15px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.fc-settings-btn:hover { background: rgba(255,255,255,.07); }
+
+.fc-settings-pop {
+  position: absolute; top: 42px; right: 0; z-index: 20;
+  background: var(--story-bg-2); border: 1px solid rgba(233,223,196,.15);
+  border-radius: 12px; padding: 14px 16px; width: 200px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 10px; font-size: 13px;
+}
+.fc-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+.fc-settings-row span { color: #e9dfc4; opacity: .9; }
+.fc-toggle {
+  width: 38px; height: 22px; border-radius: 20px; background: rgba(233,223,196,.2);
+  position: relative; cursor: pointer; flex-shrink: 0; transition: background .2s;
+}
+.fc-toggle.on { background: var(--gold); }
+.fc-toggle::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; transition: transform .2s;
+}
+.fc-toggle.on::after { transform: translateX(16px); }
+.fc-settings-close {
+  margin-top: 4px; padding: 6px 12px; border: none; border-radius: 8px;
+  background: rgba(255,255,255,.08); color: #e9dfc4; cursor: pointer; font-size: 12px; font-family: var(--sans);
+}
+
+/* ── type tabs ── */
+.fc-tabs { display: flex; gap: 6px; background: rgba(255,255,255,.03); padding: 4px; border-radius: 11px; border: 1px solid rgba(233,223,196,.1); }
+.fc-tabs button {
+  flex: 1; border: none; background: transparent; color: #e9dfc4; opacity: .55;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 8px 10px; border-radius: 8px;
+  cursor: pointer; transition: all .2s; letter-spacing: .3px;
+}
+.fc-tabs button.active { opacity: 1; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(233,223,196,.12); }
+.fc-tabs button[data-type="word"].active { color: #a9b6ef; }
+.fc-tabs button[data-type="phrase"].active { color: #e2a493; }
+.fc-tabs button[data-type="sentence"].active { color: #9fcaad; }
+.fc-tabs button[data-type="mixed"].active { color: #d4b860; }
+
+/* ── deck info ── */
+.fc-deck-info { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+.fc-cat-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); opacity: .8; text-transform: uppercase; letter-spacing: 1.5px; }
+.fc-count { font-family: var(--mono); font-size: 12px; color: var(--gold-soft); letter-spacing: .5px; }
+
+/* ── empty ── */
+.fc-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 60px 20px; }
+.fc-empty-icon { font-size: 48px; }
+.fc-empty p { font-family: var(--sans); font-size: 14px; color: #a09e97; margin: 0; }
+.fc-empty button {
+  padding: 10px 24px; border: 1px solid rgba(233,223,196,.15); border-radius: 8px;
+  background: rgba(255,255,255,.04); color: #e9dfc4; cursor: pointer; font-size: 14px; font-family: var(--sans);
+}
+.fc-empty button:hover { background: rgba(255,255,255,.08); }
+
+/* ── stage ── */
+.fc-stage { position: relative; width: 100%; height: clamp(400px, 58vh, 500px); overflow: hidden; }
+
+.fc-peek {
+  position: absolute; inset: 10px 6px -10px 6px; border-radius: var(--radius);
+  background: var(--paper-back); opacity: .5; transform: rotate(2.4deg) scale(.97);
+  box-shadow: 0 10px 24px rgba(0,0,0,.35);
+}
+.fc-peek::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: repeating-linear-gradient(0deg, transparent 0 27px, rgba(0,0,0,.035) 27px 28px);
+}
+
+/* ── 3D flip card ── */
+.fc-flip-card {
+  position: absolute; inset: 0; perspective: 1600px; cursor: pointer; outline: none;
+}
+.fc-flip-inner {
+  position: relative; width: 100%; height: 100%;
+  transition: transform .55s cubic-bezier(.4,.2,.2,1);
+  transform-style: preserve-3d;
+}
+.fc-flip-card.flipped .fc-flip-inner { transform: rotateY(180deg); }
+
+.fc-face {
+  position: absolute; inset: 0;
+  -webkit-backface-visibility: hidden; backface-visibility: hidden;
+  border-radius: var(--radius); background: var(--paper);
+  box-shadow: 0 4px 0 var(--paper-edge), 0 18px 34px rgba(0,0,0,.4);
+  padding: 26px 24px 22px; display: flex; flex-direction: column;
+  overflow-y: auto; scrollbar-width: thin;
+}
+.fc-face::-webkit-scrollbar { width: 5px; }
+.fc-face::-webkit-scrollbar-thumb { background: rgba(0,0,0,.15); border-radius: 6px; }
+.fc-back { transform: rotateY(180deg); background: var(--paper-back); }
+
+/* ruled paper texture */
+.fc-face::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0 30px, rgba(0,0,0,.028) 30px 31px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0 58px, black 90px);
+  mask-image: linear-gradient(to bottom, transparent 0 58px, black 90px);
+}
+
+/* stamp badge */
+.fc-stamp {
+  position: absolute; top: 14px; left: 16px; z-index: 2;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 2px solid var(--accent); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-weight: 700; font-size: 15px;
+  transform: rotate(-9deg); opacity: .85;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.02);
+}
+.fc-stamp::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1px dashed var(--accent); opacity: .5;
+}
+
+.fc-catalog {
+  position: absolute; top: 18px; right: 18px; z-index: 2;
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); letter-spacing: 1px;
+}
+
+/* front content */
+.fc-front-content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding-top: 20px; }
+.fc-headword {
+  font-family: var(--serif); font-weight: 900; font-size: clamp(30px, 8vw, 42px); color: var(--text-dark); line-height: 1.15;
+}
+.fc-headword--phrase, .fc-headword--sentence { font-size: clamp(21px, 6vw, 27px); font-weight: 700; line-height: 1.4; max-width: 340px; }
+
+.fc-speak-btn {
+  width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--accent);
+  background: rgba(255,255,255,.4); color: var(--accent); font-size: 18px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: transform .15s, background .15s;
+}
+.fc-speak-btn:active { transform: scale(.92); }
+.fc-speak-btn.speaking { background: var(--accent); color: #fff; }
+
+.fc-tap-hint { font-family: var(--sans); font-size: 11.5px; color: var(--text-muted); letter-spacing: .4px; margin-top: 2px; }
+
+/* back content */
+.fc-back-content { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-top: 26px; }
+.fc-bc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.fc-bc-word { font-family: var(--serif); font-weight: 800; font-size: 22px; color: var(--text-dark); }
+.fc-bc-ipa { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.fc-bc-meaning { font-family: var(--sans); font-size: 14.5px; color: var(--text-dark); font-weight: 600; }
+
+.fc-bc-section { display: flex; flex-direction: column; gap: 5px; }
+.fc-bc-label {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--accent); opacity: .85; font-weight: 600;
+}
+.fc-bc-example { font-family: var(--sans); font-size: 13.5px; color: var(--text-dark); line-height: 1.55; font-style: italic; }
+.fc-bc-example-zh { display: block; font-style: normal; color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }
+
+.fc-root-parts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fc-root-chip {
+  font-family: var(--mono); font-size: 11.5px; padding: 4px 9px; border-radius: 7px;
+  background: rgba(0,0,0,.05); border: 1px solid rgba(0,0,0,.08); color: var(--text-dark);
+}
+.fc-root-chip b { color: var(--accent); }
+.fc-root-note { font-family: var(--sans); font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+
+.fc-related-words { display: flex; flex-wrap: wrap; gap: 7px; }
+.fc-related-word {
+  font-family: var(--serif); font-size: 13px; font-weight: 600; color: var(--accent);
+  padding: 4px 10px; border-radius: 20px; border: 1px solid var(--accent); opacity: .85;
+}
+
+.fc-translation-block { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding: 10px 6px; }
+.fc-trans-en { font-family: var(--sans); font-size: 12px; color: var(--text-muted); font-style: italic; }
+.fc-trans-zh { font-family: var(--serif); font-size: 22px; font-weight: 700; color: var(--text-dark); line-height: 1.5; }
+
+/* enrich loading / retry */
+.fc-enrich-loading {
+  margin-top: auto; align-self: center;
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--sans); font-size: 12.5px; color: var(--text-muted);
+  padding: 8px 0;
+}
+.fc-enrich-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(0,0,0,.12); border-top-color: var(--accent);
+  animation: fc-spin .7s linear infinite;
+}
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+
+.fc-enrich-btn {
+  margin-top: auto; align-self: center;
+  padding: 8px 16px; border-radius: 20px; border: 1px solid rgba(0,0,0,.12);
+  background: rgba(255,255,255,.4); color: var(--text-dark);
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: transform .15s;
+}
+.fc-enrich-btn:hover { filter: brightness(.95); }
+
+/* story tab button */
+.fc-story-tab {
+  margin-top: auto; align-self: center;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--story-bg); color: var(--gold-soft);
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+  padding: 8px 16px; border-radius: 20px; cursor: pointer; border: none;
+  box-shadow: 0 6px 14px rgba(0,0,0,.25);
+  transition: transform .15s;
+}
+.fc-story-tab:active { transform: scale(.96); }
+
+/* story panel */
+.fc-story-panel {
+  position: absolute; inset: 0; border-radius: var(--radius);
+  background:
+    radial-gradient(500px 300px at 100% 0%, var(--story-bg-2) 0%, transparent 60%),
+    var(--story-bg);
+  color: #e9dfc4;
+  padding: 24px 24px 20px;
   display: flex; flex-direction: column; gap: 12px;
-  font-size: 14px; font-family: 'DM Sans', sans-serif; color: #1a1a18;
+  transform: translateX(105%);
+  transition: transform .45s cubic-bezier(.4,.15,.2,1);
+  box-shadow: 0 18px 34px rgba(0,0,0,.45);
+  z-index: 5;
 }
-.cards-settings-card label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.cards-settings-row { display: flex; align-items: center; gap: 8px; }
-.cards-settings-row input { padding: 4px; border: 1px solid #e0ddd5; border-radius: 4px; background: #fafaf8; color: #1a1a18; }
-.cards-settings-card button { margin-top: 8px; padding: 8px; border: none; border-radius: 8px; background: #3d3591; color: #fff; cursor: pointer; }
-
-.cards-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; font-family: 'DM Sans', sans-serif; color: #a09e97; }
-.cards-empty-icon { font-size: 48px; }
-.cards-empty button { padding: 10px 24px; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; background: #fff; color: #6b6963; cursor: pointer; font-size: 14px; }
-.cards-empty button:hover { color: #3d3591; border-color: rgba(61,53,145,0.2); }
-
-.cards-body { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-
-/* ── 卡片区域（箭头 + 卡片） ── */
-.cards-card-area { display: flex; align-items: center; justify-content: center; width: 100%; flex: 1; position: relative; }
-
-/* ── 卡片导航箭头 ── */
-.cards-arrow {
-  position: absolute; top: 50%; transform: translateY(-50%);
-  z-index: 10;
-  width: 44px; height: 64px;
-  border: none; border-radius: 10px;
-  background: rgba(0,0,0,0.05);
-  color: #a09e97;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+.fc-story-panel.open { transform: translateX(0); }
+.fc-story-close {
+  position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(233,223,196,.25); background: rgba(255,255,255,.04); color: #e9dfc4;
+  cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;
 }
-.cards-arrow:hover { background: rgba(0,0,0,0.1); color: #3d3591; }
-.cards-arrow:disabled { opacity: 0.2; cursor: default; background: transparent; }
-.cards-arrow--left { left: -6px; }
-.cards-arrow--right { right: -6px; }
-
-/* ── 3D 卡片翻转 ── */
-.cards-stage { perspective: 1200px; width: 100%; max-width: 440px; margin: auto; }
-.card { position: relative; width: 100%; aspect-ratio: 3/2; transition: transform 0.5s; transform-style: preserve-3d; }
-.card.flipped { transform: rotateY(180deg); }
-.card-face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 20px; display: flex; align-items: center; justify-content: center; }
-.card-front { background: #ffffff; border: 1.5px solid rgba(0,0,0,0.06); box-shadow: 0 4px 32px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04); }
-.card-back { background: #faf9fe; border: 1.5px solid rgba(61,53,145,0.08); box-shadow: 0 4px 32px rgba(61,53,145,0.08), 0 1px 4px rgba(0,0,0,0.04); transform: rotateY(180deg); }
-.card-content { text-align: center; padding: 32px; }
-.card-word { font-size: 52px; font-weight: 600; font-family: 'Lora', serif; letter-spacing: 0.02em; color: #1a1a18; }
-.card-pos-badge {
-  display: inline-block; vertical-align: middle;
-  font-family: 'DM Mono', monospace;
-  font-size: 0.35em; font-weight: 500;
-  color: #6b6963; background: #f0efe9;
-  padding: 2px 8px; border-radius: 6px;
-  margin-left: 8px;
+.fc-story-eyebrow {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 2px;
+  color: var(--gold); text-transform: uppercase;
 }
-.card-flip-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 24px; padding: 10px 24px;
-  border: 1.5px solid rgba(61,53,145,0.2); border-radius: 10px;
-  background: #faf9fe; color: #3d3591;
-  font-size: 14px; font-family: 'DM Sans', sans-serif;
-  cursor: pointer; transition: all 0.15s;
+.fc-story-eyebrow::before { content: ""; width: 16px; height: 1px; background: var(--gold); }
+.fc-story-title { font-family: var(--serif); font-weight: 700; font-size: 19px; line-height: 1.4; padding-right: 24px; }
+.fc-story-body { font-family: var(--sans); font-size: 13.5px; line-height: 1.8; opacity: .92; overflow-y: auto; }
+
+/* face dots */
+.fc-dots { display: flex; justify-content: center; gap: 6px; }
+.fc-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(233,223,196,.2); transition: background .2s, transform .2s; }
+.fc-dots span.active { background: var(--gold); transform: scale(1.3); }
+
+/* deck nav */
+.fc-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fc-nav-btn {
+  width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(233,223,196,.18);
+  background: rgba(255,255,255,.03); color: #e9dfc4; font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .15s;
 }
-.card-flip-btn:hover { background: #edeafd; border-color: rgba(61,53,145,0.35); }
-.card-word-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.card-phase { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-family: 'DM Sans', sans-serif; font-weight: 500; flex-shrink: 0; }
-.card-phase--learn, .card-phase--lear { background: #fff3cd; color: #856404; }
-.card-phase--review { background: #d1ecf1; color: #0c5460; }
-.card-phase--mastered { background: #d4edda; color: #155724; }
-.card-pronounce-btn { width: 32px; height: 32px; border: 1.5px solid #e0ddd5; border-radius: 50%; background: #fff; color: #3d3591; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s; }
-.card-pronounce-btn:hover { background: #edeafd; border-color: #3d3591; }
-.card-enrich-btn { margin-top: 16px; padding: 6px 16px; border: 1px solid rgba(61,53,145,0.15); border-radius: 8px; background: #faf9fe; color: #3d3591; font-size: 13px; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all 0.15s; }
-.card-enrich-btn:hover { background: #edeafd; border-color: rgba(61,53,145,0.3); }
-.card-enrich-btn:disabled { opacity: 0.5; cursor: default; }
-.card-phonetic { font-size: 17px; color: #7c77a6; font-family: 'DM Mono', monospace; margin: 10px 0; }
-.card-meaning-big { font-size: 28px; color: #1a1a18; margin: 16px 0; font-family: 'DM Sans', sans-serif; font-weight: 500; }
-.card-example { font-size: 15px; color: #8a877c; font-style: italic; margin-top: 12px; line-height: 1.5; }
-.card-spell-input { width: 80%; padding: 12px; border: 1px solid #e0ddd5; border-radius: 8px; background: #fafaf8; color: #1a1a18; font-size: 18px; text-align: center; outline: none; font-family: 'Lora', serif; }
-.card-spell-input:focus { border-color: #3d3591; }
-.card-spell-btn { margin-top: 12px; padding: 8px 24px; border: none; border-radius: 8px; background: #3d3591; color: #fff; cursor: pointer; font-size: 14px; }
+.fc-nav-btn:hover { background: rgba(255,255,255,.08); }
+.fc-nav-btn:disabled { opacity: .3; cursor: default; }
 
-/* ── 评级按钮 ── */
-.cards-rating { position: absolute; bottom: 40px; left: 0; right: 0; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-.rate-btn { padding: 10px 16px; border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-family: 'DM Sans', sans-serif; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 70px; }
-.rate-key { font-size: 11px; opacity: 0.5; }
-.rate-again { background: #c0392b; }
-.rate-hard { background: #e67e22; }
-.rate-good { background: #27ae60; }
-.rate-easy { background: #2980b9; }
-.rate-btn:hover { filter: brightness(1.1); }
+.fc-review-actions { display: flex; gap: 8px; flex: 1; }
+.fc-review-btn {
+  flex: 1; border: none; border-radius: 11px; padding: 11px 8px;
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: transform .12s, filter .12s;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.fc-review-btn:active { transform: scale(.96); }
+.fc-again { background: rgba(138,58,46,.18); color: #e2a493; border: 1px solid rgba(138,58,46,.4); }
+.fc-known { background: rgba(58,90,69,.22); color: #9fcaad; border: 1px solid rgba(58,90,69,.45); }
 
-.cards-timer { text-align: center; font-size: 24px; color: #c4c1ba; font-family: 'DM Mono', monospace; padding-bottom: 20px; }
+/* toast */
+.fc-toast {
+  position: fixed; bottom: 22px; left: 50%; z-index: 30;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--story-bg-2); color: #e9dfc4;
+  font-family: var(--sans); font-size: 13px;
+  padding: 10px 18px; border-radius: 20px;
+  opacity: 0; transition: opacity .25s, transform .25s;
+  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(0,0,0,.4); border: 1px solid rgba(233,223,196,.12);
+}
+.fc-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-@media (max-width: 480px) {
-  .cards-stage { max-width: 100%; }
-  .card-word { font-size: 40px; }
-  .card-meaning-big { font-size: 22px; }
-  .rate-btn { padding: 10px 14px; font-size: 13px; min-width: 64px; }
+/* ── responsive ── */
+
+/* mobile compact */
+@media (max-width: 420px) {
+  .fc-app { gap: 10px; }
+  .fc-headword { font-size: clamp(26px, 9vw, 34px); }
+  .fc-face { padding: 22px 18px 18px; }
 }
 </style>

@@ -5,25 +5,17 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const parent = (query.parent as string) || ''
 
-  // 顶层文件夹列表（无 parent 参数）走缓存，因为变化频率低
+  // 顶层文件夹列表走缓存（创建/删除/重命名/移动时会自动失效）
   if (!parent) {
     const cached = getCachedFolders()
     if (cached) return cached
   }
 
-  // 兼容旧表无 parent 列
-  let hasParent = true
-  try { await queryAll("SELECT parent FROM folders LIMIT 1") } catch { hasParent = false }
-
   let rows: any[]
-  if (hasParent) {
-    if (parent) {
-      rows = await queryAll('SELECT * FROM folders WHERE parent=? ORDER BY createdAt', [parent])
-    } else {
-      rows = await queryAll("SELECT * FROM folders WHERE (parent='' OR parent IS NULL) ORDER BY createdAt")
-    }
+  if (parent) {
+    rows = await queryAll('SELECT * FROM folders WHERE parent=? ORDER BY createdAt', [parent])
   } else {
-    rows = await queryAll('SELECT * FROM folders ORDER BY createdAt')
+    rows = await queryAll("SELECT * FROM folders WHERE (parent='' OR parent IS NULL) ORDER BY createdAt")
   }
 
   if (rows.length === 0 && !parent) {

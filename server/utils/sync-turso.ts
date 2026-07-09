@@ -16,8 +16,10 @@ const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'stats', pkIdx: 0, columns: ['textId', 'readCount', 'lastReadAt', 'markCount'] },
   { name: 'knowledge_points', pkIdx: 0, columns: ['id', 'content', 'note', 'sourceId', 'sourceTitle', 'sourceType', 'sourceContext', 'customGroup', 'tags', 'chatHistory', 'sortOrder', 'createdAt', 'updatedAt'] },
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
-  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'createdAt', 'updatedAt'] },
+  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'createdAt', 'updatedAt'] },
   { name: 'daily_insights', pkIdx: 0, columns: ['date', 'content', 'createdAt'] },
+  { name: 'marks', pkIdx: 0, columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt'] },
+  { name: 'knowledge_pages', pkIdx: 0, columns: ['id', 'groupId', 'title', 'content', 'createdAt', 'updatedAt'] },
 ]
 
 export interface SyncResult {
@@ -40,6 +42,15 @@ export async function syncToTurso(): Promise<SyncResult> {
   const localDb = new SQL.Database(buf)
 
   const turso = createClient({ url, authToken: token })
+
+  // 确保 Turso 表存在（本地模式新增表时，Turso 侧可能尚未创建）
+  for (const { name, columns } of TABLES) {
+    const colDefs = columns.map(c => `${c} TEXT`).join(',')
+    try { await turso.execute(`CREATE TABLE IF NOT EXISTS ${name} (${colDefs})`) } catch {}
+  }
+
+  // 确保 Turso 表新增列存在（ALTER TABLE 补全）
+  try { await turso.execute("ALTER TABLE words ADD COLUMN enhancement TEXT DEFAULT ''") } catch {}
 
   const tables: SyncResult['tables'] = {}
   let totalInserted = 0, totalUpdated = 0, totalSkipped = 0

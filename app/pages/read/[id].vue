@@ -450,9 +450,18 @@
                 v-for="(msg, i) in currentParagraphChat"
                 :key="i"
                 class="chat-msg"
-                :class="msg.role"
+                :class="[msg.role, { 'has-bookmark': msg.role === 'assistant' }]"
               >
                 <div class="chat-bubble"><MarkdownRenderer :content="msg.content" /></div>
+                <button
+                  v-if="msg.role === 'assistant'"
+                  class="chat-bookmark-btn"
+                  :class="{ saved: savedMessages.has(i) }"
+                  @click.stop="saveAiMessage(msg.content, i)"
+                  :title="savedMessages.has(i) ? '已收藏' : '收藏此回答'"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                </button>
               </div>
               <!-- 流式输出中 -->
               <div v-if="chatTyping" class="chat-msg ai">
@@ -667,6 +676,7 @@ const typingChatContent = computed(() => tcc.value)
 const activeTab = ref('understand')
 const chatInput = ref('')
 const chatLoading = ref(false)
+const savedMessages = reactive(new Set<number>())
 const quickQuestions = [
   { label: '解释段落', prompt: '请用中文详细解释当前段落的内容和含义。' },
   { label: '总结要点', prompt: '请用中文简要总结当前段落的核心要点。' },
@@ -2471,6 +2481,23 @@ function saveChats() {
   const chats = article.getAllParagraphChats()
   if (Object.keys(chats).length === 0) return
   $fetch('/api/text/update', { method: 'POST', body: { id, paragraphChats: chats } }).catch(() => {})
+}
+
+async function saveAiMessage(content: string, msgIndex: number) {
+  if (!content.trim() || savedMessages.has(msgIndex)) return
+  try {
+    await $fetch('/api/knowledge/create', {
+      method: 'POST',
+      body: {
+        content: content.trim(),
+        sourceId: id,
+        sourceTitle: title.value || article.analysis.value?.title || '',
+        sourceType: 'ai-chat',
+      },
+    })
+    savedMessages.add(msgIndex)
+    setTimeout(() => { savedMessages.delete(msgIndex) }, 2000)
+  } catch { /* 静默 */ }
 }
 
 function sendQuick(prompt: string) {

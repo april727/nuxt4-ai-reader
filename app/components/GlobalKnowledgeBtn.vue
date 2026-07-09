@@ -48,7 +48,7 @@ function onMouseUp() {
     }
 
     const text = sel.toString().trim()
-    if (text.length < 2 || text.length > 500) { visible.value = false; return }
+    if (text.length < 2) { visible.value = false; return }
 
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()

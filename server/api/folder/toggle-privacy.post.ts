@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { queryOne, runQuery } from '../../utils/db'
+import { invalidateFolderCache } from '../../utils/folderCache'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ id: string; password?: string }>(event)
@@ -13,6 +14,7 @@ export default defineEventHandler(async (event) => {
   if (currentlyPrivate) {
     // 取消私密
     await runQuery('UPDATE folders SET isPrivate=0, passwordHash=\'\' WHERE id=?', [body.id])
+    invalidateFolderCache()
     return { ok: true, isPrivate: false }
   }
 
@@ -23,5 +25,6 @@ export default defineEventHandler(async (event) => {
 
   const hash = createHash('sha256').update(body.password).digest('hex')
   await runQuery('UPDATE folders SET isPrivate=1, passwordHash=? WHERE id=?', [hash, body.id])
+  invalidateFolderCache()
   return { ok: true, isPrivate: true }
 })

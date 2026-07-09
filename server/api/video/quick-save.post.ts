@@ -95,18 +95,30 @@ async function fetchMetaInBackground(id: string, url: string, videoId: string, v
       await runCmd('yt-dlp --version', 5000)
 
       const cookiesPath = path.resolve('server/data/youtube-cookies.txt')
-      const cookieFlag = existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : ''
+      const cookieFlags: string[] = []
+      if (existsSync(cookiesPath)) {
+        cookieFlags.push(`--cookies "${cookiesPath}"`)
+      }
+      cookieFlags.push(
+        '--cookies-from-browser edge',
+        '--cookies-from-browser chrome',
+        '--cookies-from-browser firefox',
+        '',
+      )
 
-      try {
-        const result = await runCmd(
-          `yt-dlp --dump-json --no-warnings --ignore-no-formats-error ${cookieFlag} "${url}"`,
-          20000
-        )
-        const meta = JSON.parse(result.stdout.trim().split('\n')[0])
-        fetchedTitle = meta.title || videoId
-        fetchedDuration = meta.duration || 0
-        fetchedThumbnail = meta.thumbnail || ''
-      } catch { /* 静默 */ }
+      for (const flag of cookieFlags) {
+        try {
+          const result = await runCmd(
+            `yt-dlp --dump-json --no-warnings --ignore-no-formats-error ${flag} "${url}"`,
+            20000
+          )
+          const meta = JSON.parse(result.stdout.trim().split('\n')[0])
+          fetchedTitle = meta.title || videoId
+          fetchedDuration = meta.duration || 0
+          fetchedThumbnail = meta.thumbnail || ''
+          break
+        } catch { /* 尝试下一个策略 */ }
+      }
 
       // 下载 yt-dlp 返回的封面（可能比直接下载的分辨率更高）
       if (fetchedThumbnail) {

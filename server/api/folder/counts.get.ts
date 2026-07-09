@@ -1,7 +1,11 @@
 import { queryAll } from '../../utils/db'
+import { getCached, setCache } from '../../utils/cache'
 
 export default defineEventHandler(async () => {
-  // 一次性查询所有文件夹的文章数量
+  const cacheKey = 'folder-counts'
+  const cached = getCached(cacheKey)
+  if (cached) return cached
+
   const rows = await queryAll(
     'SELECT folder, COUNT(*) as count FROM texts GROUP BY folder'
   )
@@ -10,5 +14,6 @@ export default defineEventHandler(async () => {
     counts[row.folder as string] = row.count as number
   }
 
+  setCache(cacheKey, counts, 30_000)
   return counts
 })

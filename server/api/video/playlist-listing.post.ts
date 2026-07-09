@@ -28,30 +28,40 @@ export default defineEventHandler(async (event) => {
   try {
     await runCmd('yt-dlp --version', 5000)
   } catch {
-    throw createError({ statusCode: 500, message: 'yt-dlp 未安装' })
+    throw createError({
+      statusCode: 500,
+      message: 'yt-dlp 未安装。请运行 pip install yt-dlp 安装后再试。',
+    })
   }
 
-  // Cookie 尝试链
+  // 构建所有 cookie 尝试方案（全部尝试，不提前终止）
   const cookiesPath = path.resolve('server/data/youtube-cookies.txt')
-  const cookieAttempts: string[] = []
+  const cookieAttempts: Array<{ flag: string; label: string }> = []
 
   if (existsSync(cookiesPath)) {
-    cookieAttempts.push(`--cookies "${cookiesPath}"`)
-  } else {
-    cookieAttempts.push('--cookies-from-browser edge', '--cookies-from-browser chrome', '--cookies-from-browser firefox')
+    cookieAttempts.push({ flag: `--cookies "${cookiesPath}"`, label: 'cookies 文件' })
   }
-  cookieAttempts.push('')
 
-  let lastError: any = null
+  // 浏览器 cookie 和文件 cookie 独立尝试，互不排斥
+  cookieAttempts.push(
+    { flag: '--cookies-from-browser edge', label: 'Edge 浏览器' },
+    { flag: '--cookies-from-browser chrome', label: 'Chrome 浏览器' },
+    { flag: '--cookies-from-browser firefox', label: 'Firefox 浏览器' },
+  )
 
-  for (const cookieFlag of cookieAttempts) {
+  // 无 cookie 兜底
+  cookieAttempts.push({ flag: '', label: '无认证' })
+
+  const errors: string[] = []
+
+  for (const attempt of cookieAttempts) {
     try {
-      const cmd = `yt-dlp --flat-playlist --dump-json --no-warnings --ignore-no-formats-error ${cookieFlag} "${url}"`
+      const cmd = `yt-dlp --flat-playlist --dump-json --no-warnings --ignore-no-formats-error ${attempt.flag} "${url}"`
       const result = await runCmd(cmd, 30000)
 
       const lines = result.stdout.trim().split('\n').filter(Boolean)
       if (lines.length === 0) {
-        lastError = { message: '播放列表为空' }
+        errors.push(`${attempt.label}: 播放列表为空`)
         continue
       }
 
@@ -68,7 +78,12 @@ export default defineEventHandler(async (event) => {
         }
       }).filter(Boolean) as Array<{ id: string; title: string; url: string }>
 
-      // 第一行可能有 playlist 标题信息
+      if (videos.length === 0) {
+        errors.push(`${attempt.label}: 未解析到视频条目`)
+        continue
+      }
+
+      // 提取播放列表标题
       let playlistTitle = ''
       try {
         const first = JSON.parse(lines[0])
@@ -81,13 +96,26 @@ export default defineEventHandler(async (event) => {
         videos,
       }
     } catch (e: any) {
-      const stderr = e.stderr?.slice(0, 200) || e.message?.slice(0, 200) || ''
-      lastError = { message: stderr || `exit code ${e.code}` }
+      const msg = e.stderr?.slice(0, 300) || e.message?.slice(0, 300) || `exit code ${e.code}`
+      errors.push(`${attempt.label}: ${msg}`)
     }
   }
 
-  throw createError({
-    statusCode: 502,
-    message: `获取播放列表失败: ${lastError?.message?.slice(0, 200) || '未知错误'}`,
-  })
+  // 所有尝试均失败，给出明确指引
+  const errorSummary = errors.join('\n')
+  const isAuthIssue = errorSummary.includes('403') || errorSummary.includes('Sign in') || errorSummary.includes('login')
+
+  let helpMsg = `获取播放列表失败，所有认证方式均未通过：\n${errorSummary.slice(0, 400)}`
+
+  if (isAuthIssue) {
+    helpMsg += '\n\nYouTube 要求登录认证。解决方法：\n'
+    helpMsg += '1. 在浏览器中登录 YouTube\n'
+    helpMsg += '2. 使用浏览器扩展导出 cookies 为 Netscape 格式\n'
+    helpMsg += '3. 保存到 server/data/youtube-cookies.txt\n'
+    helpMsg += '4. 重试导入'
+  } else {
+    helpMsg += '\n\n请检查：yt-dlp 是否为最新版（pip install -U yt-dlp）、链接是否有效、网络是否正常。'
+  }
+
+  throw createError({ statusCode: 502, message: helpMsg })
 })

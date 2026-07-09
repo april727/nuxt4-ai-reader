@@ -1,62 +1,50 @@
 import { queryAll } from '../../utils/db'
 
+const TYPE_COLORS: Record<string, string> = {
+  word: '#f59e0b',
+  phrase: '#10b981',
+  sentence: '#06b6d4',
+  note: '#f9a8d4',
+}
+
 export default defineEventHandler(async (event) => {
   const date = getQuery(event).date as string
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw createError({ statusCode: 400, message: '需要 date 参数 (YYYY-MM-DD)' })
   }
 
-  // 预加载 words 表的 pos 索引
+  // 从 words 表加载词性索引
   const posIndex = new Map<string, string>()
   const posRows = await queryAll('SELECT LOWER(word) as w, pos FROM words WHERE pos IS NOT NULL AND pos != \'\'')
   for (const r of posRows) {
     if (!posIndex.has(r.w as string)) posIndex.set(r.w as string, r.pos as string)
   }
 
-  const textRows = await queryAll(
-    `SELECT id, title, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
+  // 从 marks 表读取指定日期的标记
+  const rows = await queryAll(
+    'SELECT * FROM marks WHERE date(createdAt) = ? ORDER BY createdAt DESC',
+    [date]
   )
 
-  const marks: Array<{
-    id: string
-    text: string
-    type: string
-    pos: string
-    detail: string
-    textId: string
-    textTitle: string
-    phonetic: string
-    brief: string
-  }> = []
-
-  for (const row of textRows) {
-    let rawMarks: any[] = []
-    try { rawMarks = JSON.parse(row.marks) } catch { continue }
-
-    for (const m of rawMarks) {
-      if (!m.id || !m.createdAt) continue
-      if ((m.createdAt as string).slice(0, 10) !== date) continue
-
-      const pos = posIndex.get((m.text || '').trim().toLowerCase()) || ''
-      const phonetic = m.detail
-        ? (m.detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/) || [])[1] || ''
-        : ''
-
-      marks.push({
-        id: m.id,
-        text: m.text || '',
-        type: m.type || 'word',
-        pos,
-        detail: m.detail || '',
-        textId: row.id as string,
-        textTitle: row.title as string,
-        phonetic,
-        brief: extractBrief(m.detail),
-      })
+  const marks = rows.map((row: any) => {
+    const pos = posIndex.get((row.text || '').trim().toLowerCase()) || ''
+    const phonetic = row.detail
+      ? (row.detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/) || [])[1] || ''
+      : ''
+    return {
+      id: row.id,
+      text: row.text || '',
+      type: row.type || 'word',
+      color: TYPE_COLORS[row.type] || '#a09e97',
+      pos,
+      detail: row.detail || '',
+      textId: row.textId,
+      textTitle: row.textTitle,
+      phonetic,
+      brief: extractBrief(row.detail || ''),
     }
-  }
+  })
 
-  // 按类型分组统计
   const wordMarks = marks.filter(m => m.type === 'word')
   const posCounts: Record<string, number> = {}
   for (const m of wordMarks) {

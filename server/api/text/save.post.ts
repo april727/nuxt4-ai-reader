@@ -1,5 +1,7 @@
 import { queryAll, runQuery } from '../../utils/db'
 import { LEGACY_UPLOADS, moveToFinal } from '../../utils/storage'
+import { clearCache } from '../../utils/cache'
+import { invalidateFolderCache } from '../../utils/folderCache'
 import { writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -36,5 +38,7 @@ export default defineEventHandler(async (event) => {
 
   await runQuery('INSERT INTO texts (id,title,text,source,folder,excerpt,filePath,createdAt) VALUES (?,?,?,?,?,?,?,?)',
     [id, title, body.text.slice(0, 100000), body.source || 'paste', folderId, excerpt, finalPath, new Date().toISOString()])
+  clearCache()
+  invalidateFolderCache()
   return { id, title, createdAt: new Date().toISOString() }
 })

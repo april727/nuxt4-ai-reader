@@ -1,5 +1,7 @@
 import { queryOne, runQuery } from '../../utils/db'
 import { moveToTrash } from '../../utils/storage'
+import { clearCache } from '../../utils/cache'
+import { invalidateFolderCache } from '../../utils/folderCache'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ id: string }>(event)
@@ -13,8 +15,14 @@ export default defineEventHandler(async (event) => {
   // 移动文件到垃圾箱
   moveToTrash(folderId, body.id, title)
 
+  // 删除关联的 marks 表数据
+  await runQuery('DELETE FROM marks WHERE textId=?', [body.id])
+
   // 删除数据库记录
   await runQuery('DELETE FROM texts WHERE id=?', [body.id])
+
+  clearCache()
+  invalidateFolderCache()
 
   return { ok: true }
 })

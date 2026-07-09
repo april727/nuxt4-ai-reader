@@ -287,7 +287,7 @@ async function handleAdd() {
   } catch { alert('添加失败') }
 }
 
-function goCards() { window.location.href = `/wordbooks/${bookId}/cards` }
+function goCards() { navigateTo(`/wordbooks/${bookId}/cards`) }
 
 function exportTxt() {
   const text = posFilteredWords.value.map(w => w.word).join('\n')

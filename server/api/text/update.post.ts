@@ -41,6 +41,39 @@ function extractLemma(mark: any): string {
   return m?.[1]?.trim() || ''
 }
 
+// 同步 marks 独立表（新增 + 删除）
+async function syncMarksTable(textId: string, title: string, folder: string, oldMarksJson: string, newMarksJson: string) {
+  let oldMarks: any[] = []
+  let newMarks: any[] = []
+  try { oldMarks = oldMarksJson ? JSON.parse(oldMarksJson) : [] } catch {}
+  try { newMarks = JSON.parse(newMarksJson) } catch {}
+
+  const oldIds = new Set(oldMarks.map((m: any) => m.id).filter(Boolean))
+  const newIds = new Set(newMarks.map((m: any) => m.id).filter(Boolean))
+
+  // 删除
+  const deleted = oldMarks.filter((m: any) => m.id && !newIds.has(m.id))
+  for (const mark of deleted) {
+    await runQuery('DELETE FROM marks WHERE id=?', [mark.id])
+  }
+
+  // 新增
+  const added = newMarks.filter((m: any) => m.id && !oldIds.has(m.id))
+  if (!added.length) return
+
+  const now = new Date().toISOString()
+  for (const mark of added) {
+    const lemma = (mark.lemma || '').trim()
+    const type = mark.type || 'word'
+    const text = (mark.text || '').trim()
+    const createdAt = mark.createdAt || now
+    await runQuery(
+      'INSERT OR IGNORE INTO marks (id,textId,textTitle,textFolder,type,text,lemma,detail,note,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [mark.id, textId, title, folder, type, text, lemma, mark.detail || '', mark.note || '', createdAt]
+    )
+  }
+}
+
 // 同步已删除的标记：从 words 表中删除对应单词
 async function cleanupDeletedMarks(textId: string, oldMarksJson: string, newMarksJson: string) {
   let oldMarks: any[] = []
@@ -142,8 +175,9 @@ export default defineEventHandler(async (event) => {
   await runQuery(`UPDATE texts SET title=?,analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,paragraphNotes=?,updatedAt=? WHERE id=?`,
     [title, analysis, segments, explanations, marks, readingPosition, paragraphChats, paragraphNotes, new Date().toISOString(), body.id])
 
-  // markers 变更时，自动同步新增标记到对应单词本
+  // markers 变更时，同步 marks 独立表 + 单词本
   if (marksChanged) {
+    await syncMarksTable(body.id, title, existing.folder || 'default', existing.marks || '[]', marks)
     await syncMarksToWordbooks(body.id, existing.marks || '[]', marks)
     await cleanupDeletedMarks(body.id, existing.marks || '[]', marks)
   }

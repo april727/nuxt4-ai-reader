@@ -1,5 +1,5 @@
 import initSqlJs from 'sql.js'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 
 const USE_TURSO = process.env['USE_TURSO'] === 'true'
@@ -33,15 +33,22 @@ async function createTablesTurso() {
   await db.execute(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY,readCount INTEGER DEFAULT 0,lastReadAt TEXT,markCount INTEGER DEFAULT 0)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS knowledge_points (id TEXT PRIMARY KEY,content TEXT NOT NULL,note TEXT DEFAULT '',sourceId TEXT DEFAULT '',sourceTitle TEXT DEFAULT '',sourceType TEXT DEFAULT 'selection',sourceContext TEXT DEFAULT '',customGroup TEXT DEFAULT '',tags TEXT DEFAULT '[]',chatHistory TEXT DEFAULT '[]',sortOrder INTEGER DEFAULT 0,createdAt TEXT,updatedAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS wordbooks (id TEXT PRIMARY KEY,name TEXT NOT NULL,isDefault INTEGER DEFAULT 0,sortOrder INTEGER DEFAULT 0,createdAt TEXT)`)
-  await db.execute(`CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY,bookId TEXT NOT NULL,word TEXT NOT NULL,phonetic TEXT DEFAULT '',meaning TEXT DEFAULT '',example TEXT DEFAULT '',note TEXT DEFAULT '',phase TEXT DEFAULT 'learn',learnCorrect INTEGER DEFAULT 0,learnTotal INTEGER DEFAULT 0,learnWrong INTEGER DEFAULT 0,ease REAL DEFAULT 2.5,interval INTEGER DEFAULT 0,repetitions INTEGER DEFAULT 0,nextReview TEXT DEFAULT '',source TEXT DEFAULT '',pos TEXT DEFAULT '',createdAt TEXT,updatedAt TEXT)`)
+  await db.execute(`CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY,bookId TEXT NOT NULL,word TEXT NOT NULL,phonetic TEXT DEFAULT '',meaning TEXT DEFAULT '',example TEXT DEFAULT '',note TEXT DEFAULT '',phase TEXT DEFAULT 'learn',learnCorrect INTEGER DEFAULT 0,learnTotal INTEGER DEFAULT 0,learnWrong INTEGER DEFAULT 0,ease REAL DEFAULT 2.5,interval INTEGER DEFAULT 0,repetitions INTEGER DEFAULT 0,nextReview TEXT DEFAULT '',source TEXT DEFAULT '',pos TEXT DEFAULT '',enhancement TEXT DEFAULT '',createdAt TEXT,updatedAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS daily_insights (date TEXT PRIMARY KEY,content TEXT,createdAt TEXT)`)
+  await db.execute(`CREATE TABLE IF NOT EXISTS marks (id TEXT PRIMARY KEY,textId TEXT NOT NULL,textTitle TEXT DEFAULT '',textFolder TEXT DEFAULT 'default',type TEXT NOT NULL,text TEXT NOT NULL,lemma TEXT DEFAULT '',detail TEXT DEFAULT '',note TEXT DEFAULT '',createdAt TEXT NOT NULL)`)
+  await db.execute(`CREATE TABLE IF NOT EXISTS knowledge_pages (id TEXT PRIMARY KEY,groupId TEXT NOT NULL,title TEXT NOT NULL,content TEXT DEFAULT '',createdAt TEXT,updatedAt TEXT)`)
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_kp_groupId ON knowledge_pages(groupId)') } catch {}
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_createdAt ON marks(createdAt DESC)') } catch {}
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_textId ON marks(textId)') } catch {}
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_type ON marks(type)') } catch {}
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_date ON marks(date(createdAt))') } catch {}
 
   // 迁移兜底列
   for (const [table, col, def] of [
     ['folders','parent',"TEXT DEFAULT ''"],['folders','isPrivate','INTEGER DEFAULT 0'],['folders','passwordHash',"TEXT DEFAULT ''"],
     ['texts','paragraphChats',"TEXT DEFAULT ''"],['texts','videoMeta',"TEXT DEFAULT ''"],['texts','videoSubtitles',"TEXT DEFAULT ''"],
     ['texts','subtitlePractice',"TEXT DEFAULT ''"],['texts','completedAt','TEXT DEFAULT NULL'],['texts','notes',"TEXT DEFAULT ''"],
-    ['texts','paragraphNotes',"TEXT DEFAULT '[]'"],['words','pos',"TEXT DEFAULT ''"],
+    ['texts','paragraphNotes',"TEXT DEFAULT '[]'"],['words','pos',"TEXT DEFAULT ''"],['words','enhancement',"TEXT DEFAULT ''"],
     ['knowledge_points','customGroup',"TEXT DEFAULT ''"],['knowledge_points','chatHistory',"TEXT DEFAULT '[]'"],
   ]) {
     try { await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`) } catch {}
@@ -53,6 +60,34 @@ async function createTablesTurso() {
   const now = new Date().toISOString()
   for (const [id, name, o] of [['wb_default','默认单词本',0],['wb_phrases','默认短语本',1],['wb_sentences','默认句子本',2]]) {
     if (!ids.has(id)) await db.execute({sql:'INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,?,?)',args:[id,name,o,now]})
+  }
+
+  // 迁移 marks 表数据（从 texts.marks JSON）
+  try {
+    const mr = await db.execute('SELECT COUNT(*) as c FROM marks')
+    if (Number(mr.rows[0]?.[0] ?? 0) === 0) {
+      const tr = await db.execute("SELECT id, title, folder, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'")
+      let count = 0
+      for (const row of tr.rows) {
+        let marks: any[] = []
+        try { marks = JSON.parse(row.marks) } catch { continue }
+        for (const m of marks) {
+          if (!m.id) continue
+          const lemma = (m.lemma || '').trim()
+          const type = m.type || 'word'
+          const text = (m.text || '').trim()
+          const createdAt = m.createdAt || now
+          await db.execute({
+            sql: 'INSERT OR IGNORE INTO marks (id,textId,textTitle,textFolder,type,text,lemma,detail,note,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            args: [m.id, row.id, row.title || '', row.folder || 'default', type, text, lemma, m.detail || '', m.note || '', createdAt],
+          })
+          count++
+        }
+      }
+      if (count > 0) console.log(`[migrate:turso] marks 表初始化完成，迁移 ${count} 条标记`)
+    }
+  } catch (e: any) {
+    console.warn('[migrate:turso] marks 迁移跳过:', e.message)
   }
 }
 
@@ -75,6 +110,7 @@ async function getSqljsDb(): Promise<any> {
       const buf = readFileSync(DB_PATH)
       sqljsDb = new SQL.Database(buf)
       createTablesSqljs()
+      migrateMarksFromTexts()
       saveDbSqljs()
     } else {
       sqljsDb = new SQL.Database()
@@ -131,8 +167,9 @@ function createTablesSqljs() {
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN customGroup TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN chatHistory TEXT DEFAULT '[]'") } catch {}
   try { sqljsDb.run("ALTER TABLE words ADD COLUMN pos TEXT DEFAULT ''") } catch {}
+  try { sqljsDb.run("ALTER TABLE words ADD COLUMN enhancement TEXT DEFAULT ''") } catch {}
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS wordbooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, isDefault INTEGER DEFAULT 0, sortOrder INTEGER DEFAULT 0, createdAt TEXT)`)
-  sqljsDb.run(`CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY, bookId TEXT NOT NULL, word TEXT NOT NULL, phonetic TEXT DEFAULT '', meaning TEXT DEFAULT '', example TEXT DEFAULT '', note TEXT DEFAULT '', phase TEXT DEFAULT 'learn', learnCorrect INTEGER DEFAULT 0, learnTotal INTEGER DEFAULT 0, learnWrong INTEGER DEFAULT 0, ease REAL DEFAULT 2.5, interval INTEGER DEFAULT 0, repetitions INTEGER DEFAULT 0, nextReview TEXT DEFAULT '', source TEXT DEFAULT '', pos TEXT DEFAULT '', createdAt TEXT, updatedAt TEXT)`)
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY, bookId TEXT NOT NULL, word TEXT NOT NULL, phonetic TEXT DEFAULT '', meaning TEXT DEFAULT '', example TEXT DEFAULT '', note TEXT DEFAULT '', phase TEXT DEFAULT 'learn', learnCorrect INTEGER DEFAULT 0, learnTotal INTEGER DEFAULT 0, learnWrong INTEGER DEFAULT 0, ease REAL DEFAULT 2.5, interval INTEGER DEFAULT 0, repetitions INTEGER DEFAULT 0, nextReview TEXT DEFAULT '', source TEXT DEFAULT '', pos TEXT DEFAULT '', enhancement TEXT DEFAULT '', createdAt TEXT, updatedAt TEXT)`)
   const stmt = sqljsDb.prepare('SELECT id FROM wordbooks WHERE isDefault=1')
   const existingIds = new Set<string>()
   while (stmt.step()) existingIds.add(stmt.getAsObject().id as string)
@@ -142,6 +179,46 @@ function createTablesSqljs() {
   if (!existingIds.has('wb_phrases')) sqljsDb.run('INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,1,?)', ['wb_phrases','默认短语本',now])
   if (!existingIds.has('wb_sentences')) sqljsDb.run('INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,1,2,?)', ['wb_sentences','默认句子本',now])
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS daily_insights (date TEXT PRIMARY KEY, content TEXT, createdAt TEXT)`)
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS marks (id TEXT PRIMARY KEY, textId TEXT NOT NULL, textTitle TEXT DEFAULT '', textFolder TEXT DEFAULT 'default', type TEXT NOT NULL, text TEXT NOT NULL, lemma TEXT DEFAULT '', detail TEXT DEFAULT '', note TEXT DEFAULT '', createdAt TEXT NOT NULL)`)
+  try { sqljsDb.run('CREATE INDEX IF NOT EXISTS idx_marks_createdAt ON marks(createdAt DESC)') } catch {}
+  try { sqljsDb.run('CREATE INDEX IF NOT EXISTS idx_marks_textId ON marks(textId)') } catch {}
+  try { sqljsDb.run('CREATE INDEX IF NOT EXISTS idx_marks_type ON marks(type)') } catch {}
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS knowledge_pages (id TEXT PRIMARY KEY, groupId TEXT NOT NULL, title TEXT NOT NULL, content TEXT DEFAULT '', createdAt TEXT, updatedAt TEXT)`)
+  try { sqljsDb.run('CREATE INDEX IF NOT EXISTS idx_kp_groupId ON knowledge_pages(groupId)') } catch {}
+}
+
+function migrateMarksFromTexts() {
+  try {
+    const countStmt = sqljsDb.prepare('SELECT COUNT(*) as c FROM marks')
+    if (countStmt.step() && (countStmt.getAsObject().c as number) > 0) {
+      countStmt.free()
+      return
+    }
+    countStmt.free()
+
+    const stmt = sqljsDb.prepare("SELECT id, title, folder, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'")
+    const insertStmt = sqljsDb.prepare('INSERT OR IGNORE INTO marks (id,textId,textTitle,textFolder,type,text,lemma,detail,note,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    let count = 0
+    while (stmt.step()) {
+      const row = stmt.getAsObject()
+      let marks: any[] = []
+      try { marks = JSON.parse(row.marks) } catch { continue }
+      for (const m of marks) {
+        if (!m.id) continue
+        const lemma = (m.lemma || '').trim()
+        const type = m.type || 'word'
+        const text = (m.text || '').trim()
+        const createdAt = m.createdAt || new Date().toISOString()
+        insertStmt.run([m.id, row.id, row.title || '', row.folder || 'default', type, text, lemma, m.detail || '', m.note || '', createdAt])
+        count++
+      }
+    }
+    stmt.free()
+    insertStmt.free()
+    if (count > 0) console.log(`[migrate] marks 表初始化完成，迁移 ${count} 条标记`)
+  } catch (e: any) {
+    console.warn('[migrate] marks 迁移跳过:', e.message)
+  }
 }
 
 function migrateFromJson() {
@@ -168,9 +245,6 @@ function migrateFromJson() {
     try { require('fs').unlinkSync(path.join(DB_DIR, 'folders.json')) } catch {}
   } catch {}
 }
-
-const BACKUP_DIR = path.join(DB_DIR, 'backups')
-const MAX_BACKUPS = 10
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -236,20 +310,12 @@ function schedulePullFromTurso() {
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 function saveDbSqljs() {
-  // 防抖：5 秒内多次写入合并为一次落盘
+  // 防抖：8 秒内多次写入合并为一次落盘（不创建备份——有 Turso 作为云备份）
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     const data = sqljsDb.export()
-    if (existsSync(DB_PATH)) {
-      if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true })
-      writeFileSync(path.join(BACKUP_DIR, `reader-${Date.now()}.db`), readFileSync(DB_PATH))
-      try {
-        const files = readdirSync(BACKUP_DIR).filter(f => f.startsWith('reader-')).sort()
-        while (files.length > MAX_BACKUPS) unlinkSync(path.join(BACKUP_DIR, files.shift()!))
-      } catch {}
-    }
     writeFileSync(DB_PATH, Buffer.from(data))
-  }, 5_000)
+  }, 8_000)
 }
 
 // ==========================================================

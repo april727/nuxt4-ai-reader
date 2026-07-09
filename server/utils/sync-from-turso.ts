@@ -29,6 +29,8 @@ const TABLES: TableDef[] = [
   { name: 'wordbooks', timeCol: 'createdAt' },
   { name: 'words', timeCol: 'updatedAt' },
   { name: 'daily_insights', timeCol: 'createdAt' },
+  { name: 'marks', timeCol: 'createdAt' },
+  { name: 'knowledge_pages', timeCol: 'updatedAt' },
 ]
 
 export interface PullResult {

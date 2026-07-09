@@ -27,56 +27,51 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{ date: string; force?: boolean }>(event)
   if (!body?.date) throw createError({ statusCode: 400 })
 
-  // 检查缓存（非强制刷新时）
+  // 检查缓存
   if (!body.force) {
     const cached = await queryOne('SELECT content FROM daily_insights WHERE date=?', [body.date])
     if (cached?.content) return { content: cached.content }
   }
 
-  // 预加载 pos 索引
+  // 从 words 表加载词性索引
   const posIndex = new Map<string, string>()
   const posRows = await queryAll('SELECT LOWER(word) as w, pos FROM words WHERE pos IS NOT NULL AND pos != \'\'')
   for (const r of posRows) {
     if (!posIndex.has(r.w as string)) posIndex.set(r.w as string, r.pos as string)
   }
 
-  // 收集当日所有标记
+  // 从 marks 表读取当日所有标记
+  const rows = await queryAll(
+    'SELECT text, type, detail, textTitle FROM marks WHERE date(createdAt) = ? ORDER BY type, text',
+    [body.date]
+  )
+
+  if (!rows.length) {
+    throw createError({ statusCode: 404, message: '当天无标记记录' })
+  }
+
   const words: string[] = []
   const phrases: string[] = []
   const sentences: string[] = []
   const textTitles = new Set<string>()
   const wordDetails: string[] = []
 
-  const textRows = await queryAll(
-    `SELECT id, title, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
-  )
+  for (const row of rows) {
+    const text = (row.text as string).trim()
+    const type = row.type as string
+    const title = row.textTitle as string
+    if (title) textTitles.add(title)
 
-  for (const row of textRows) {
-    let marks: any[] = []
-    try { marks = JSON.parse(row.marks) } catch { continue }
-
-    for (const m of marks) {
-      if (!m.id || !m.createdAt) continue
-      if ((m.createdAt as string).slice(0, 10) !== body.date) continue
-
-      textTitles.add(row.title as string)
-      const text = (m.text || '').trim()
-
-      if (m.type === 'word') {
-        const pos = posIndex.get(text.toLowerCase()) || ''
-        const meaning = extractBriefMeaning(m.detail)
-        words.push(text)
-        wordDetails.push(`${text}${pos ? ` (${pos})` : ''}${meaning ? ` — ${meaning}` : ''}`)
-      } else if (m.type === 'phrase') {
-        phrases.push(text)
-      } else if (m.type === 'sentence') {
-        sentences.push(text)
-      }
+    if (type === 'word') {
+      const pos = posIndex.get(text.toLowerCase()) || ''
+      const meaning = extractBriefMeaning(row.detail as string)
+      words.push(text)
+      wordDetails.push(`${text}${pos ? ` (${pos})` : ''}${meaning ? ` — ${meaning}` : ''}`)
+    } else if (type === 'phrase') {
+      phrases.push(text)
+    } else if (type === 'sentence') {
+      sentences.push(text)
     }
-  }
-
-  if (!words.length && !phrases.length && !sentences.length) {
-    throw createError({ statusCode: 404, message: '当天无标记记录' })
   }
 
   const uniqueWords = [...new Set(words)]
@@ -123,7 +118,6 @@ ${sourceList}
       { role: 'system', content: '你是一位风趣的英语学习导师。用轻松的中文写作，像朋友聊天。' },
       { role: 'user', content: prompt },
     ])
-    // 持久化保存
     await runQuery('INSERT OR REPLACE INTO daily_insights (date, content, createdAt) VALUES (?,?,?)', [
       body.date, content, new Date().toISOString(),
     ])
