@@ -34,6 +34,9 @@
     "pdfjs-dist": "^4.0.379",
     "sql.js": "^1.14.1"
   },
+  "engines": {
+    "node": ">=18.0.0 <21.0.0"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0"
   }
