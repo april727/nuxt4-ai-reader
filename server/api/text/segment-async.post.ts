@@ -1,4 +1,5 @@
 import { queryOne, runQuery, runQueryCount } from '../../utils/db'
+import { snapshotText } from '../../utils/textHistory'
 import { safeParse } from '../../utils/subtitle'
 import type { SubtitleCue } from '#shared/types'
 
@@ -105,11 +106,15 @@ async function runAsyncSegment(
 
   /** 条件写入：只有 segments 与快照一致时才落库 */
   async function commitSegments(next: any[]): Promise<boolean> {
+    // 覆盖前先留历史，便于用户回退到后台分段之前的结构
+    const snapId = await snapshotText(id, '后台重新分段（覆盖前）')
     const applied = await runQueryCount(
       `UPDATE texts SET segments=?, explanations=?, paragraphChats=? WHERE id=? AND COALESCE(segments,'')=?`,
       [JSON.stringify(next), '', '', id, segmentsSnapshot],
     )
     if (!applied) {
+      // 未落库则这条快照没有意义，撤掉避免噪音
+      if (snapId) { try { await runQuery('DELETE FROM texts_history WHERE id=?', [snapId]) } catch {} }
       console.warn(`[segment-async] ${id} 分段期间段落已被手动修改，放弃本次写入（避免覆盖用户整理结果）`)
       return false
     }

@@ -1,4 +1,5 @@
 import { queryOne, runQuery } from '../../utils/db'
+import { snapshotText } from '../../utils/textHistory'
 import { existsSync, unlinkSync } from 'node:fs'
 import { resolveFilePath } from '../../utils/storage'
 
@@ -12,6 +13,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '缺少必要参数' })
   }
 
+  // 删除前留快照
+  await snapshotText(body.textId, '删除段落')
   const row = await queryOne('SELECT * FROM texts WHERE id=?', [body.textId])
   if (!row) throw createError({ statusCode: 404, message: '文本不存在' })
 

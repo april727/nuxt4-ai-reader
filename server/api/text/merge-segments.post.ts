@@ -1,4 +1,5 @@
 import { queryOne, runQuery } from '../../utils/db'
+import { snapshotText } from '../../utils/textHistory'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -12,6 +13,8 @@ export default defineEventHandler(async (event) => {
   }
 
   // 加载文本和段落
+  // 合并前留快照
+  await snapshotText(body.textId, '合并段落')
   const textRow = await queryOne('SELECT * FROM texts WHERE id=?', [body.textId])
   if (!textRow) throw createError({ statusCode: 404, message: '文本不存在' })
 

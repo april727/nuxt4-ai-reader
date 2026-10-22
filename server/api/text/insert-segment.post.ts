@@ -1,4 +1,5 @@
 import { queryOne, runQuery } from '../../utils/db'
+import { snapshotText } from '../../utils/textHistory'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -16,6 +17,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '必须指定 beforeParagraphId 或 afterParagraphId' })
   }
 
+  // 插入前留快照
+  await snapshotText(body.textId, '插入段落')
   const row = await queryOne('SELECT segments FROM texts WHERE id=?', [body.textId])
   if (!row) throw createError({ statusCode: 404 })
 

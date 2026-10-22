@@ -39,6 +39,9 @@ async function createTablesTurso() {
   await db.execute(`CREATE TABLE IF NOT EXISTS marks (id TEXT PRIMARY KEY,textId TEXT NOT NULL,textTitle TEXT DEFAULT '',textFolder TEXT DEFAULT 'default',type TEXT NOT NULL,text TEXT NOT NULL,lemma TEXT DEFAULT '',detail TEXT DEFAULT '',note TEXT DEFAULT '',createdAt TEXT NOT NULL,deletedAt TEXT DEFAULT NULL)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS auth_logs (id TEXT PRIMARY KEY,time TEXT NOT NULL,ip TEXT DEFAULT '',ua TEXT DEFAULT '',ok INTEGER DEFAULT 1)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS knowledge_pages (id TEXT PRIMARY KEY,groupId TEXT NOT NULL,title TEXT NOT NULL,content TEXT DEFAULT '',createdAt TEXT,updatedAt TEXT)`)
+  // 段落结构历史：任何段落整理（合并/删除/插入/重新分段）前留快照，便于回退
+  await db.execute(`CREATE TABLE IF NOT EXISTS texts_history (id TEXT PRIMARY KEY,textId TEXT NOT NULL,segments TEXT DEFAULT '[]',marks TEXT DEFAULT '[]',explanations TEXT DEFAULT '{}',paragraphChats TEXT DEFAULT '{}',note TEXT DEFAULT '',segmentCount INTEGER DEFAULT 0,createdAt TEXT NOT NULL)`)
+  try { await db.execute('CREATE INDEX IF NOT EXISTS idx_th_textId ON texts_history(textId, createdAt DESC)') } catch {}
   try { await db.execute('CREATE INDEX IF NOT EXISTS idx_kp_groupId ON knowledge_pages(groupId)') } catch {}
   try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_createdAt ON marks(createdAt DESC)') } catch {}
   try { await db.execute('CREATE INDEX IF NOT EXISTS idx_marks_textId ON marks(textId)') } catch {}
@@ -165,6 +168,8 @@ function createTablesSqljs() {
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT, folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT, analysis TEXT, segments TEXT, explanations TEXT, marks TEXT, readingPosition TEXT, paragraphChats TEXT, createdAt TEXT, updatedAt TEXT, chapters TEXT DEFAULT '[]', cover TEXT DEFAULT '', deletedAt TEXT DEFAULT NULL)`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT, parent TEXT DEFAULT '', createdAt TEXT)`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY, readCount INTEGER DEFAULT 0, lastReadAt TEXT, markCount INTEGER DEFAULT 0)`)
+  // 段落结构历史（与 Turso 分支保持一致）
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts_history (id TEXT PRIMARY KEY, textId TEXT NOT NULL, segments TEXT DEFAULT '[]', marks TEXT DEFAULT '[]', explanations TEXT DEFAULT '{}', paragraphChats TEXT DEFAULT '{}', note TEXT DEFAULT '', segmentCount INTEGER DEFAULT 0, createdAt TEXT NOT NULL)`)
   try { sqljsDb.run("ALTER TABLE folders ADD COLUMN parent TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run('ALTER TABLE folders ADD COLUMN isPrivate INTEGER DEFAULT 0') } catch {}
   try { sqljsDb.run("ALTER TABLE folders ADD COLUMN passwordHash TEXT DEFAULT ''") } catch {}

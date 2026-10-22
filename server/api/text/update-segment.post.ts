@@ -1,9 +1,12 @@
 import { queryOne, runQuery } from '../../utils/db'
+import { snapshotText } from '../../utils/textHistory'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ textId: string; segmentId: string; text: string }>(event)
   if (!body?.textId || !body?.segmentId || !body?.text?.trim()) throw createError({ statusCode: 400 })
 
+  // 编辑前留快照
+  await snapshotText(body.textId, '编辑段落')
   const segRow = await queryOne('SELECT segments FROM texts WHERE id=?', [body.textId])
   if (!segRow) throw createError({ statusCode: 404 })
 

@@ -1,5 +1,6 @@
 import { queryOne, runQuery } from '../../utils/db'
 import { syncMarks } from '../../utils/marksSync'
+import { snapshotText } from '../../utils/textHistory'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -12,6 +13,9 @@ export default defineEventHandler(async (event) => {
   // 先读现有数据
   const existing = await queryOne('SELECT * FROM texts WHERE id=?', [body.id])
   if (!existing) throw createError({ statusCode: 404 })
+
+  // 段落结构将要变化 → 先留历史快照（仅当确实传了 segments）
+  if (body.segments) await snapshotText(body.id, '段落结构更新')
 
   // 合并
   const title = body.title || existing.title
