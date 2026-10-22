@@ -1,11 +1,12 @@
 import { queryAll, queryOne, runQuery } from '../../utils/db'
 
 export default defineEventHandler(async () => {
-  // 读取所有有 paragraphNotes 或 notes 的文本
+  // 读取所有有 paragraphNotes 或 notes 的文本（排除软删除）
   const rows = await queryAll(
     `SELECT id, title, paragraphNotes, notes FROM texts
-     WHERE (paragraphNotes IS NOT NULL AND paragraphNotes != '' AND paragraphNotes != '[]')
-        OR (notes IS NOT NULL AND notes != '')`
+     WHERE deletedAt IS NULL
+       AND ((paragraphNotes IS NOT NULL AND paragraphNotes != '' AND paragraphNotes != '[]')
+        OR (notes IS NOT NULL AND notes != ''))`
   )
 
   let created = 0

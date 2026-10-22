@@ -13,10 +13,10 @@ export default defineEventHandler(async (event) => {
   }
   const filterType = (getQuery(event).type as string) || 'word'
 
-  // 从 marks 表读取指定日期和类型的标记
+  // 从 marks 表读取指定日期和类型的标记（排除软删除）
   const rows = await queryAll(
     `SELECT DISTINCT text, type FROM marks
-     WHERE date(createdAt) = ? AND type = ?
+     WHERE date(createdAt) = ? AND type = ? AND deletedAt IS NULL
      ORDER BY text`,
     [date, filterType]
   )

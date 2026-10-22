@@ -82,8 +82,7 @@ function updateParagraphText(paragraphId: string, text: string) {
   }
 }
 
-// 发音 API 基础 URL
-const PRONUNCIATION_BASE = 'https://audio.beingfine.cn/speeches/UK/UK-speech'
+// 发音：走统一发音模块（音库 API + 词形还原 + 探测缓存），详见 ~/utils/pronounce
 
 export function useArticle() {
   function setRawText(text: string) {
@@ -96,7 +95,11 @@ export function useArticle() {
 
   function setAnalysis(a: ArticleAnalysis) {
     analysis.value = a
-    title.value = a.title
+    if (a.title) title.value = a.title
+  }
+
+  function setTitle(t: string) {
+    title.value = t || ''
   }
 
   function setActiveParagraph(id: string | null) {
@@ -130,19 +133,24 @@ export function useArticle() {
     return parts.join('\n')
   }
 
-  function getPronunciationUrl(word: string): string {
-    const clean = word.replace(/[^a-zA-Z]/g, '').toLowerCase()
-    return `${PRONUNCIATION_BASE}/${clean}.mp3`
-  }
-
   function pronounceWord(word: string) {
     if (!import.meta.client) return
-    const audio = new Audio(getPronunciationUrl(word))
-    audio.play().catch(() => {
-      const utterance = new SpeechSynthesisUtterance(word)
-      utterance.lang = 'en-GB'
-      utterance.rate = 0.85
-      speechSynthesis.speak(utterance)
+    pronResolve(word).then((r) => {
+      if (r) {
+        // 复用共享播放器：换 src 立即 play 会被浏览器吞音，且并发 play 会互相打断
+        const p = getSharedPronPlayer()
+        p.playOne(r.src)
+        return
+      }
+      // 音库里没有（专有名词/缩写等）→ 合成音兜底
+      if (typeof speechSynthesis === 'undefined') return
+      try {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'
+        u.rate = 0.85
+        speechSynthesis.cancel()
+        speechSynthesis.speak(u)
+      } catch {}
     })
   }
 
@@ -187,11 +195,11 @@ export function useArticle() {
     setRawText,
     setParagraphs,
     setAnalysis,
+    setTitle,
     setActiveParagraph,
     setRightContent,
     addChatMessage,
     getArticleContext,
-    getPronunciationUrl,
     pronounceWord,
     reset,
     clearParagraphCaches,

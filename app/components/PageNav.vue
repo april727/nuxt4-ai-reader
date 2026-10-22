@@ -3,6 +3,7 @@
     <NuxtLink to="/words/daily" class="pn-link" :class="{ active: active === 'daily' }">每日</NuxtLink>
     <NuxtLink to="/reviews" class="pn-link" :class="{ active: active === 'reviews' }">复习本</NuxtLink>
     <NuxtLink to="/words/analysis" class="pn-link" :class="{ active: active === 'analysis' }">分析</NuxtLink>
+    <NuxtLink to="/resources" class="pn-link" :class="{ active: active === 'resources' }">资源</NuxtLink>
     <NuxtLink to="/wordbooks" class="pn-link" :class="{ active: active === 'wordbooks' }">单词本</NuxtLink>
   </div>
 </template>

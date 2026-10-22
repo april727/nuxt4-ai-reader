@@ -1,7 +1,9 @@
-import { writeFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import { getImagesDir, ensureDir } from '../../utils/storage'
+import { storeImage } from '../../utils/imageStore'
 
+/**
+ * 通用图片上传：标记解释里的配图、段落插图都走这里。
+ * R2 优先，失败回退本地；文件名用内容指纹，重复粘贴不会产生冗余文件。
+ */
 export default defineEventHandler(async (event) => {
   const form = await readMultipartFormData(event)
   if (!form?.length) throw createError({ statusCode: 400, message: '未收到文件' })
@@ -11,16 +13,11 @@ export default defineEventHandler(async (event) => {
 
   if (!file) throw createError({ statusCode: 400, message: '缺少文件' })
 
-  const ext = file.filename
-    ? (file.filename.includes('.') ? '.' + file.filename.split('.').pop() : '.png')
-    : '.png'
-  const hash = randomUUID().slice(0, 8)
-  const dir = getImagesDir('default', textId)
-  ensureDir(dir)
+  const contentType = (file.type || '').startsWith('image/')
+    ? file.type!
+    : 'image/png'
 
-  const filename = `img_${hash}${ext}`
-  const filePath = `default/${textId}/images/${filename}`
-  writeFileSync(dir + '/' + filename, file.data)
+  const stored = await storeImage(Buffer.from(file.data), contentType, textId)
 
-  return { url: `/api/file/${encodeURIComponent(filePath)}` }
+  return { url: stored.url, storage: stored.storage, bytes: stored.bytes }
 })

@@ -7,6 +7,7 @@
  */
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
 
 let r2Client: S3Client | null = null
 
@@ -21,6 +22,11 @@ function getClient(): S3Client {
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
     },
     forcePathStyle: true,
+    maxAttempts: 1, // 不重试，快速失败以便回退本地
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: 5000,
+      socketTimeout: 5000,
+    }),
   })
   return r2Client
 }

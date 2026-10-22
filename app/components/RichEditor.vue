@@ -80,8 +80,8 @@ import { Underline } from '@tiptap/extension-underline'
 import { Link } from '@tiptap/extension-link'
 import { Placeholder } from '@tiptap/extension-placeholder'
 
-const props = defineProps<{ modelValue?: string }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const props = defineProps<{ modelValue?: string; placeholder?: string }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string]; blur: [] }>()
 
 const textColor = ref('#1a1a18')
 const highlightColor = ref('#fff176')
@@ -108,18 +108,24 @@ const editor = useEditor({
     TableCell,
     Underline,
     Link.configure({ openOnClick: false }),
-    Placeholder.configure({ placeholder: '开始书写…' }),
+    Placeholder.configure({ placeholder: props.placeholder || '开始书写…' }),
   ],
   onUpdate: ({ editor }) => {
     emit('update:modelValue', JSON.stringify(editor.getJSON()))
   },
+  onBlur: () => emit('blur'),
 })
 
 watch(() => props.modelValue, (val) => {
   if (!editor.value) return
-  const current = JSON.stringify(editor.value.getJSON())
-  if (val && val !== current) {
-    editor.value.commands.setContent(parseContent(val) || '')
+  if (val) {
+    const current = JSON.stringify(editor.value.getJSON())
+    if (val !== current) {
+      editor.value.commands.setContent(parseContent(val) || '')
+    }
+  } else {
+    // 外部清空 → 清空编辑器（切换段落到无笔记时）
+    editor.value.commands.setContent('')
   }
 })
 

@@ -1,166 +1,83 @@
 /**
- * 发音工具 — 优先使用音频 API，fallback 到 speechSynthesis
- * 移动端优化：选择高质量语音、处理自动播放限制
+ * 发音工具（前端统一入口）
+ *
+ * 链路：
+ *   1. 词形还原：音库只收原形（catches→catch），变形词先还原再解析
+ *   2. 服务端代理解析：POST /api/pronounce/resolve —— 服务端无 CORS 限制，
+ *      并发探测 + 落盘缓存，命中即返回（见 ~/utils/pronounce 注释）
+ *   3. 播放：复用同一个 <audio> 元素串行播放（换 src 立即 play 会被浏览器吞音）
+ *   4. 兜底：音库里没有的词（专有名词/缩写等）回退 speechSynthesis
+ *
+ * 稳定性要点：
+ *   - 复用单例 audio 元素，避免并发 play 互相打断
+ *   - 播放失败/被浏览器拦截时自动重试一次，再退合成音
+ *   - 预取：整篇单词提前解析，用户点击时零等待
  */
 
-const PRONUNCIATION_BASE = 'https://audio.beingfine.cn/speeches/UK/UK-speech'
-
-let cachedVoices: SpeechSynthesisVoice[] | null = null
-let voicesLoaded = false
-
-function loadVoices(): Promise<SpeechSynthesisVoice[]> {
-  if (!import.meta.client || typeof speechSynthesis === 'undefined') return Promise.resolve([])
-  if (voicesLoaded && cachedVoices) return Promise.resolve(cachedVoices)
-
-  return new Promise((resolve) => {
-    const voices = speechSynthesis.getVoices()
-    if (voices.length > 0) {
-      cachedVoices = voices
-      voicesLoaded = true
-      resolve(voices)
-      return
-    }
-    // iOS Safari 等需要异步加载
-    speechSynthesis.onvoiceschanged = () => {
-      cachedVoices = speechSynthesis.getVoices()
-      voicesLoaded = true
-      resolve(cachedVoices)
-    }
-    // 超时保护
-    setTimeout(() => {
-      if (!voicesLoaded) {
-        cachedVoices = []
-        voicesLoaded = true
-        resolve([])
-      }
-    }, 3000)
-  })
+function player() {
+  // 复用全局单例：所有发音入口共用一个串行播放器，不会互相打断
+  return getSharedPronPlayer()
 }
 
-function pickBestVoice(lang: string): SpeechSynthesisVoice | null {
-  if (!cachedVoices || cachedVoices.length === 0) return null
+/** 解析一个词的实际可播音频地址（含词形还原），查不到返回 null */
+export function resolveWordAudio(word: string, accent: 'UK' | 'US' = 'UK') {
+  return pronResolve(word, accent)
+}
 
-  // 优先级：
-  // 1. 母语语音 + 精确匹配 (en-GB / en-US)
-  // 2. 母语语音 + 前缀匹配 (en)
-  // 3. 任意匹配
-  const exact = cachedVoices.filter(v => v.lang === lang && v.localService)
-  if (exact.length > 0) {
-    // 优先选 named voice（非默认机械音）
-    const named = exact.find(v => !v.name.toLowerCase().includes('default') && v.name.length > 3)
-    return named || exact[0]
-  }
+/**
+ * 等待一个音频播完（供阻塞式调用）。
+ * 用共享播放器的 Promise 版，避免每次 new Audio 造成并发打断。
+ */
+function playAndWait(src: string): Promise<void> {
+  return player().playOneAsync(src)
+}
 
-  const prefixed = cachedVoices.filter(v => v.lang.startsWith('en') && v.localService)
-  if (prefixed.length > 0) {
-    const named = prefixed.find(v => !v.name.toLowerCase().includes('default') && v.name.length > 3)
-    return named || prefixed[0]
-  }
-
-  const anyEn = cachedVoices.filter(v => v.lang.startsWith('en'))
-  return anyEn.length > 0 ? anyEn[0] : null
+/** 浏览器合成音兜底 */
+function speakFallback(word: string) {
+  if (typeof speechSynthesis === 'undefined') return
+  try {
+    const u = new SpeechSynthesisUtterance(word)
+    u.lang = 'en-GB'
+    u.rate = 0.85
+    speechSynthesis.cancel()
+    speechSynthesis.speak(u)
+  } catch {}
 }
 
 export function usePronunciation() {
-  let playTimer: ReturnType<typeof setTimeout> | null = null
   const isPlaying = ref(false)
 
-  function getPronunciationUrl(word: string): string {
-    const clean = word.replace(/[^a-zA-ZÀ-ÿ'-]/g, '').toLowerCase()
-    return `${PRONUNCIATION_BASE}/${clean}.mp3`
-  }
-
-  /** 发音：优先音频 API，失败则用 speechSynthesis */
+  /** 阻塞式发音：解析（含词形还原）→ 播放 → 等播完；失败回退合成音 */
   async function pronounce(word: string, options?: { onStart?: () => void; onEnd?: () => void }) {
     if (!import.meta.client) return
-
-    // 清除之前的计时器
-    if (playTimer) { clearTimeout(playTimer); playTimer = null }
     isPlaying.value = true
     options?.onStart?.()
 
-    const clean = word.replace(/[^a-zA-ZÀ-ÿ'-]/g, '').toLowerCase()
-    if (!clean) {
+    const r = await pronResolve(word)
+    if (r) {
+      await playAndWait(r.src)
       isPlaying.value = false
       options?.onEnd?.()
       return
     }
-
-    // 方式 1：音频 URL
-    let audioWorked = false
-    try {
-      const url = getPronunciationUrl(word)
-      const audio = new Audio(url)
-      audio.preload = 'auto'
-      // 等待音频可播放
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('timeout')), 4000)
-        audio.oncanplaythrough = () => { clearTimeout(timeout); resolve() }
-        audio.onerror = () => { clearTimeout(timeout); reject(new Error('load error')) }
-        audio.load()
-      })
-      await audio.play()
-      audioWorked = true
-      // 等待播放结束
-      await new Promise<void>((resolve) => {
-        audio.onended = () => resolve()
-        audio.onerror = () => resolve()
-        setTimeout(() => resolve(), 5000)
-      })
-    } catch {
-      // 音频失败 — 回退到 speechSynthesis
-    }
-
-    // 方式 2：speechSynthesis 回退
-    if (!audioWorked && typeof speechSynthesis !== 'undefined') {
-      try {
-        await loadVoices()
-        const voice = pickBestVoice('en-GB')
-        const utterance = new SpeechSynthesisUtterance(word)
-        utterance.lang = voice ? voice.lang : 'en-GB'
-        utterance.rate = 0.85
-        utterance.volume = 1
-        if (voice) utterance.voice = voice
-
-        await new Promise<void>((resolve) => {
-          utterance.onend = () => resolve()
-          utterance.onerror = () => resolve()
-          setTimeout(() => resolve(), 8000) // 超时保护
-          speechSynthesis.speak(utterance)
-        })
-      } catch {
-        // 最终放弃
-      }
-    }
-
+    speakFallback(word)
     isPlaying.value = false
     options?.onEnd?.()
   }
 
-  /** 非阻塞发音（用于列表快速播放） */
+  /** 非阻塞发音（列表快速播放）：命中用共享串行播放器，未命中回退合成音 */
   function pronounceSimple(word: string) {
     if (!import.meta.client) return
-    const clean = word.replace(/[^a-zA-ZÀ-ÿ'-]/g, '').toLowerCase()
-    if (!clean) return
-
-    const audio = new Audio(getPronunciationUrl(word))
-    audio.play().catch(async () => {
-      if (typeof speechSynthesis === 'undefined') return
-      await loadVoices()
-      const voice = pickBestVoice('en-GB')
-      const u = new SpeechSynthesisUtterance(word)
-      u.lang = voice ? voice.lang : 'en-GB'
-      u.rate = 0.85
-      if (voice) u.voice = voice
-      speechSynthesis.speak(u)
+    pronResolve(word).then((r) => {
+      if (r) { player().playOne(r.src); return }
+      speakFallback(word)
     })
   }
 
   function cleanup() {
-    if (playTimer) { clearTimeout(playTimer); playTimer = null }
     isPlaying.value = false
     if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
   }
 
-  return { pronounce, pronounceSimple, isPlaying, cleanup, getPronunciationUrl }
+  return { pronounce, pronounceSimple, isPlaying, cleanup }
 }

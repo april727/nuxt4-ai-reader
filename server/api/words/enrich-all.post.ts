@@ -1,4 +1,6 @@
 import { queryAll, runQuery } from '../../utils/db'
+import { getPromptMessages } from '../../utils/promptManager'
+import { deepseekChat } from '../../utils/deepseek'
 
 // AI 批量获取词性（仅用于纯英文单词）
 async function enrichWordPos(words: string[]): Promise<Map<string, string>> {
@@ -7,36 +9,17 @@ async function enrichWordPos(words: string[]): Promise<Map<string, string>> {
 
   for (let i = 0; i < words.length; i += batchSize) {
     const batch = words.slice(i, i + batchSize)
-    const prompt = `为以下英文单词标注最常见、最常用的词性。如果一个词有多种词性，只标注其中最常用的一种。只返回JSON：
-{"words":[{"word":"xxx","pos":"n."}]}
-
-词性缩写：n./v./adj./adv./pron./prep./conj./interj./art./num./det./modal./aux.
-
-单词列表：${batch.join(', ')}`
+    // 从 Prompt 管理器获取模板（与 wordbooks 的 enrich-pos 共用，失败时降级到本地常量）
+    const { system, user } = await getPromptMessages('enrich-pos', { wordList: batch.join(', ') })
 
     try {
-      const config = useRuntimeConfig()
-      const apiKey = config.deepseekApiKey || process.env.DEEPSEEK_API_KEY
-      const res = await fetch(`${process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-          messages: [
-            { role: 'system', content: '你是词典专家。只返回JSON，不要代码块。' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.2,
-          max_tokens: 3000,
-        }),
-      })
-
-      if (!res.ok) continue
-      const json = await res.json() as any
-      const content = json.choices?.[0]?.message?.content || ''
+      const content = await deepseekChat(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        { temperature: 0.2, maxTokens: 3000 },
+      )
       const jsonMatch = content.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const data = JSON.parse(jsonMatch[0])

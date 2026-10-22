@@ -1,13 +1,115 @@
 <template>
-  <div class="markdown-renderer prose" v-html="renderedHtml"></div>
+  <div class="markdown-renderer prose" :class="{ 'image-resizable': imageResizable }" v-html="renderedHtml" @click="onContentClick"></div>
+  <Teleport to="body">
+    <div
+      v-if="resizeImg && !isStreaming"
+      class="rm-slider"
+      :style="{ left: resizeImg.x + 'px', top: resizeImg.y + 'px' }"
+      @mousedown.stop
+      @touchstart.stop
+    >
+      <div class="rm-slider-head">
+        <span class="rm-slider-label">图片宽度</span>
+        <button class="rm-slider-reset" @click="resetWidth" title="恢复原始宽度">原宽</button>
+        <span class="rm-slider-val">{{ resizeImg.width }}%</span>
+      </div>
+      <input
+        class="rm-range"
+        type="range"
+        min="10"
+        max="100"
+        step="5"
+        :value="resizeImg.width"
+        @input="onSliderInput"
+        @change="onSliderCommit"
+      >
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
 import { marked } from 'marked'
+import { splitStreamContent, escapeHtml } from '~/utils/streamBuffer'
 
 const props = defineProps<{
   content: string
+  isStreaming?: boolean
+  imageResizable?: boolean
 }>()
+const emit = defineEmits<{ (e: 'resize-image', p: { src: string; width: string }): void }>()
+
+const resizeImg = ref<{ src: string; width: number; x: number; y: number } | null>(null)
+// 当前被调节的 <img> 元素（非响应式，避免把 DOM 节点包进 reactive）
+let activeImgEl: HTMLImageElement | null = null
+
+/** 点击内容里的图片 → 在图片底部弹出宽度滑块；点击非图片区域 → 收起 */
+function onContentClick(e: MouseEvent) {
+  if (!props.imageResizable) return
+  const img = (e.target as HTMLElement).closest?.('img') as HTMLImageElement | null
+  if (!img) {
+    closeSlider()
+    return
+  }
+  const src = img.getAttribute('src') || ''
+  if (!src) return
+  e.preventDefault()
+  const r = img.getBoundingClientRect()
+  const container = img.closest('.markdown-renderer') as HTMLElement | null
+  // 初始值：优先取已有 =NN% 标记；否则按当前显示宽度相对容器的百分比近似
+  let cur = 100
+  const stw = img.style.width || ''
+  const m = stw.match(/^(\d+(?:\.\d+)?)%/)
+  if (m) {
+    cur = Math.min(100, Math.max(10, Math.round(Number(m[1]))))
+  } else if (container && container.clientWidth > 0) {
+    cur = Math.min(100, Math.max(10, Math.round((r.width / container.clientWidth) * 100)))
+  }
+  const barW = 224
+  const barH = 64
+  const x = Math.max(8, Math.min(r.left + r.width / 2 - barW / 2, window.innerWidth - barW - 8))
+  const y = r.bottom + 6 + barH > window.innerHeight ? Math.max(6, r.top - barH - 6) : r.bottom + 6
+  activeImgEl = img
+  resizeImg.value = { src, width: cur, x, y }
+}
+function closeSlider() {
+  activeImgEl = null
+  resizeImg.value = null
+}
+/** 拖动中：实时改图片 CSS 宽度做预览（不动源内容） */
+function onSliderInput(e: Event) {
+  if (!resizeImg.value) return
+  const v = Number((e.target as HTMLInputElement).value) || 0
+  resizeImg.value.width = v
+  if (activeImgEl) {
+    activeImgEl.style.width = v + '%'
+    activeImgEl.style.maxWidth = '100%'
+    activeImgEl.style.height = 'auto'
+  }
+}
+/** 松手：把最终宽度写回 Markdown 源并保存 */
+function onSliderCommit() {
+  if (!resizeImg.value) return
+  emit('resize-image', { src: resizeImg.value.src, width: `${resizeImg.value.width}%` })
+  closeSlider()
+}
+/** 恢复原始宽度：移除尺寸标记 */
+function resetWidth() {
+  if (!resizeImg.value) return
+  emit('resize-image', { src: resizeImg.value.src, width: 'auto' })
+  closeSlider()
+}
+function onDocMouseDown(e: MouseEvent) {
+  if (!resizeImg.value) return
+  if (!(e.target as HTMLElement).closest?.('.rm-slider')) closeSlider()
+}
+watch(resizeImg, (open) => {
+  if (open) document.addEventListener('mousedown', onDocMouseDown)
+  else document.removeEventListener('mousedown', onDocMouseDown)
+})
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocMouseDown)
+  activeImgEl = null
+})
 
 /** 规范化 AI 生成的表格：修复列数不一致、行首空列等问题 */
 function normalizeTables(md: string): string {
@@ -55,10 +157,27 @@ function normalizeTables(md: string): string {
 const renderedHtml = computed(() => {
   if (!props.content) return ''
   try {
+    // 流式过程中：块级缓冲——已完成块交 marked 解析，进行中块保留纯文本
+    if (props.isStreaming) {
+      const { completed, pending } = splitStreamContent(props.content)
+      let md = completed
+      md = md.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[-: |]+\|)/g, '$1\n\n$2')
+      md = normalizeTables(md)
+      md = md.replace(/!\[([^\]]*)\]\(([^\n=]+)\s*=\s*(\d+%?)\)/g, (_, alt, src, size) => {
+        const s = size.endsWith('%') ? `style="width:${size};max-width:100%"` : `width="${size}"`
+        return `<img src="${src.trim()}" alt="${alt}" ${s}>`
+      })
+      const completedHtml = marked.parse(md, { breaks: true, gfm: true, html: true }) as string
+      const pendingHtml = pending
+        ? `<span class="streaming-pending">${escapeHtml(pending)}</span>`
+        : ''
+      return completedHtml + pendingHtml
+    }
+
+    // 非流式：全量解析
     let md = props.content
     md = md.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[-: |]+\|)/g, '$1\n\n$2')
     md = normalizeTables(md)
-    // 扩展图片语法：![alt](url =300) → 固定宽，![alt](url =50%) → 百分比
     md = md.replace(/!\[([^\]]*)\]\(([^\n=]+)\s*=\s*(\d+%?)\)/g, (_, alt, src, size) => {
       const s = size.endsWith('%') ? `style="width:${size};max-width:100%"` : `width="${size}"`
       return `<img src="${src.trim()}" alt="${alt}" ${s}>`
@@ -74,6 +193,10 @@ const renderedHtml = computed(() => {
 .markdown-renderer {
   line-height: 1.75;
   color: #334155;
+}
+.markdown-renderer :deep(.streaming-pending) {
+  opacity: 0.45;
+  white-space: pre-wrap;
 }
 
 .markdown-renderer :deep(h1),
@@ -124,6 +247,60 @@ const renderedHtml = computed(() => {
 }
 .markdown-renderer :deep(img) {
   max-width: 100%; height: auto;
+}
+.markdown-renderer.image-resizable :deep(img) {
+  cursor: pointer;
+}
+.markdown-renderer.image-resizable :deep(img):hover {
+  outline: 2px solid rgba(99, 102, 241, 0.55);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.rm-slider {
+  position: fixed;
+  z-index: 9999;
+  width: 224px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+  padding: 8px 12px 10px;
+  user-select: none;
+}
+.rm-slider-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.rm-slider-label {
+  font-size: 11px;
+  color: #94a3b8;
+  flex: 1;
+}
+.rm-slider-reset {
+  border: none;
+  background: transparent;
+  color: #818cf8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.rm-slider-reset:hover {
+  color: #3d3591;
+  text-decoration: underline;
+}
+.rm-slider-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3d3591;
+  min-width: 34px;
+  text-align: right;
+}
+.rm-range {
+  width: 100%;
+  accent-color: #6366f1;
+  cursor: pointer;
 }
 .markdown-renderer :deep(table) {
   border-collapse: collapse;

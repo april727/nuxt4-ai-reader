@@ -1,4 +1,5 @@
 import { queryAll, runQuery } from '../../utils/db'
+import { deepseekChat } from '../../utils/deepseek'
 
 // DeepSeek: 批量获取词性，跨全部单词本
 async function enrichPos(words: string[]): Promise<Map<string, string>> {
@@ -28,28 +29,13 @@ async function enrichPos(words: string[]): Promise<Map<string, string>> {
 单词列表：${batch.join(', ')}`
 
     try {
-      const config = useRuntimeConfig()
-      const apiKey = config.deepseekApiKey || process.env.DEEPSEEK_API_KEY
-      const res = await fetch(`${process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-          messages: [
-            { role: 'system', content: '你是词典专家。只返回JSON，不要代码块标记。' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.2,
-          max_tokens: 3000,
-        }),
-      })
-
-      if (!res.ok) continue
-      const json = await res.json() as any
-      const content = json.choices?.[0]?.message?.content || ''
+      const content = await deepseekChat(
+        [
+          { role: 'system', content: '你是词典专家。只返回JSON，不要代码块标记。' },
+          { role: 'user', content: prompt },
+        ],
+        { temperature: 0.2, maxTokens: 3000 },
+      )
       const jsonMatch = content.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const data = JSON.parse(jsonMatch[0])

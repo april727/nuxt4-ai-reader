@@ -23,9 +23,9 @@ export default defineEventHandler(async (event) => {
 
   let rows: any[]
   if (folder === 'all') {
-    rows = await queryAll('SELECT id,title,source,folder,excerpt,createdAt,completedAt,0 as len,filePath,videoMeta,segments FROM texts ORDER BY createdAt DESC')
+    rows = await queryAll('SELECT id,title,source,folder,excerpt,createdAt,completedAt,0 as len,filePath,videoMeta,segments FROM texts WHERE deletedAt IS NULL ORDER BY createdAt DESC')
   } else {
-    rows = await queryAll('SELECT id,title,source,folder,excerpt,createdAt,completedAt,0 as len,filePath,videoMeta,segments FROM texts WHERE folder=? ORDER BY createdAt DESC', [folder])
+    rows = await queryAll('SELECT id,title,source,folder,excerpt,createdAt,completedAt,0 as len,filePath,videoMeta,segments FROM texts WHERE folder=? AND deletedAt IS NULL ORDER BY createdAt DESC', [folder])
   }
 
   const result = rows.map((r: any) => {

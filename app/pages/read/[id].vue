@@ -1,7 +1,7 @@
 <template>
   <div class="reader-app">
     <!-- 顶部栏 -->
-    <header class="reader-topbar">
+    <header class="reader-topbar" :class="{ 'topbar-hidden': topbarHidden, 'topbar-compact': topbarCompact }">
       <button class="back-btn" @click="goBack">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline points="15 18 9 12 15 6"/>
@@ -9,15 +9,16 @@
         书架
       </button>
 
-      <div class="reader-title-center">
+      <div class="reader-title-center" :class="{ hidden: topbarCompact }">
         <span class="reader-doc-title">{{ title || '加载中…' }}</span>
       </div>
 
       <div class="reader-topbar-right">
-        <div v-if="paragraphs.length" class="progress-wrap">
+        <!-- 手机端隐藏段落指示，给顶栏和正文留出空间 -->
+        <div v-if="paragraphs.length && !topbarCompact" class="progress-wrap">
           <div class="progress-dots">
             <template v-for="item in visibleDots" :key="item.key">
-              <span v-if="item.type === 'dot'" class="progress-dot" :class="{ done: item.index < currentParaIdx, current: paragraphs[item.index]?.id === activeParagraphId }" />
+              <span v-if="item.type === 'dot'" class="progress-dot" :class="{ done: item.index < currentParaIdx, current: paragraphs[item.index]?.id === activeParagraphId }" :title="`跳转到第 ${item.index + 1} 段`" @click="jumpToPara(item.index)" />
               <span v-else class="progress-gap">…</span>
             </template>
           </div>
@@ -30,56 +31,132 @@
           <span>{{ progressMsg }}</span>
           <button v-if="progressError" class="progress-dismiss" @click="dismissProgress">×</button>
         </div>
+        <!-- 功能按钮组：紧凑模式收进「⋯」下拉（带文字标签），宽屏横向排列 -->
+        <div class="topbar-actions" :class="{ open: moreMenuOpen }">
         <button v-if="isVideo" class="reader-icon-btn" @click="goToWatch" title="回到播放模式">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
           </svg>
+          <span class="tb-label">回到播放模式</span>
         </button>
         <button v-if="pdfUrl" class="reader-icon-btn" @click="pdfPage = null; showPdf = true" title="查看 PDF 原文">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
           </svg>
+          <span class="tb-label">查看 PDF 原文</span>
         </button>
-        <button v-if="readingPosition" class="reader-icon-btn" @click="jumpToReadingPos" title="跳转到上次阅读位置">
+        <button v-if="readingPosition" class="reader-icon-btn" @click="jumpToReadingPos" title="阅读跳转">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
+          <span class="tb-label">阅读跳转</span>
+        </button>
+        <button class="reader-icon-btn" @click="markCurrentPosition" title="标记位置">
+          <span style="font-size:14px;line-height:1">🚩</span>
+          <span class="tb-label">标记位置</span>
+        </button>
+        <button class="reader-icon-btn" :class="{ active: paraActionsEnabled }" @click="toggleParaActions" :title="paraActionsEnabled ? '隐藏段落工具条' : '显示段落工具条（悬停段落可编辑/插入/合并/删除）'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+          <span class="tb-label">段落工具条</span>
         </button>
         <button class="reader-icon-btn" @click="toggleSearch" title="搜索 (Ctrl+F)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
+          <span class="tb-label">搜索</span>
         </button>
-        <button class="reader-icon-btn" @click="runManualAnalysis()" title="AI 分析" :disabled="analyzing">
+        <button v-if="chapters.length" class="reader-icon-btn" @click="tocVisible = true" title="章节目录">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+          <span class="tb-label">章节目录</span>
+        </button>
+        <button class="reader-icon-btn" @click="runManualAnalysis()" title="分析" :disabled="analyzing">
           <svg v-if="!analyzing" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M8 12a4 4 0 1 1 8 0"/>
             <circle cx="12" cy="12" r="2.5"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
           </svg>
           <div v-else class="btn-spinner-sm"></div>
+          <span class="tb-label">分析</span>
+        </button>
+        <button class="reader-icon-btn" @click="reimportOriginalText" title="重新导入" :disabled="segmenting || analyzing">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/>
+          </svg>
+          <span class="tb-label">重新导入</span>
+        </button>
+        <button class="reader-icon-btn" @click="openTrash" title="回收站" :class="{ 'has-trash': trashedMarks.length }">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+          </svg>
+          <span class="tb-label">回收站</span>
         </button>
         <div class="segment-size-wrap" ref="segSizeWrapRef">
-          <button class="reader-icon-btn" @click="toggleSegSizeMenu" title="重新分段" :disabled="segmenting">
+          <button class="reader-icon-btn" @click="toggleSegSizeMenu" title="重新分组" :disabled="segmenting">
             <svg v-if="!segmenting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M4 7h16M4 12h12M4 17h8"/><circle cx="20" cy="17" r="3"/>
             </svg>
             <div v-else class="btn-spinner-sm"></div>
+            <span class="tb-label">重新分组</span>
             <svg class="seg-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <Transition name="seg-drop">
             <div v-if="showSegSizeMenu" class="seg-size-menu">
-              <button
-                v-for="opt in segSizeOptions" :key="opt.key"
-                class="seg-size-opt" :class="{ active: segSizeKey === opt.key }"
-                @click="selectSegSize(opt)"
-              >
-                <span class="seg-size-label">{{ opt.label }}</span>
-                <span class="seg-size-hint">{{ opt.hint }}</span>
-              </button>
+              <template v-for="group in segSizeGroups" :key="group.key">
+                <div class="seg-size-group-label">{{ group.label }}</div>
+                <button
+                  v-for="opt in group.options" :key="opt.key"
+                  class="seg-size-opt" :class="{ active: segSizeKey === opt.key, 'is-disabled': opt.key === 'subtitle' && !isVideo }"
+                  :disabled="opt.key === 'subtitle' && !isVideo"
+                  :title="opt.key === 'subtitle' && !isVideo ? '仅视频/音频（有字幕）可用' : ''"
+                  @click="selectSegSize(opt)"
+                >
+                  <span class="seg-size-label">{{ opt.label }}</span>
+                  <span class="seg-size-hint">{{ opt.hint }}</span>
+                </button>
+                <!-- 简单分段的句数选择 -->
+                <div v-if="group.key === 'simple' && segSizeKey === 'simple'" class="seg-size-simple">
+                  <span class="seg-size-simple-label">每段句数</span>
+                  <div class="seg-size-simple-opts">
+                    <button
+                      v-for="n in simpleSentencesOptions" :key="n"
+                      class="seg-size-simple-opt" :class="{ active: simpleSentences === n }"
+                      @click.stop="simpleSentences = n; selectSegSize({ key: 'simple', label: '简单' })"
+                    >{{ n }}</button>
+                  </div>
+                </div>
+              </template>
             </div>
           </Transition>
         </div>
+        </div>
+        <!-- 手机端「⋯」：展开/收起功能下拉 -->
+        <button v-if="topbarCompact" class="reader-icon-btn topbar-more-btn" :class="{ active: moreMenuOpen }" @click="moreMenuOpen = !moreMenuOpen" title="更多功能">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/>
+          </svg>
+          <span class="more-label">功能</span>
+          <svg class="more-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <!-- 收起菜单栏：向上隐藏，释放正文空间 -->
+        <button class="reader-icon-btn topbar-collapse-btn" @click="topbarHidden = true" title="收起菜单栏">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="18 15 12 9 6 15"/>
+          </svg>
+        </button>
       </div>
     </header>
+
+    <!-- 菜单栏收起后：右上角悬浮恢复按钮 -->
+    <button v-if="topbarHidden" class="topbar-restore" @click="topbarHidden = false" title="展开菜单栏">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
 
     <!-- 书内搜索条 -->
     <div v-if="searchVisible" class="search-bar">
@@ -144,7 +221,7 @@
         >
           <div
             class="para-num"
-            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id, 'has-chat': paragraphsWithChats.has(para.id), 'is-video': isVideo }"
+            :class="{ 'pos-marker': readingPosition?.paragraphId === para.id, 'has-chat': paragraphsWithChats.has(para.id), 'has-note': hasParaNote(para.id), 'is-video': isVideo }"
             @click.stop="handleSetPosition(para.id)"
             :title="readingPosition?.paragraphId === para.id ? '当前阅读位置' : '点击标记阅读位置'"
           >
@@ -173,7 +250,7 @@
                 v-html="renderEditPreview()"
               ></div>
             </template>
-          <div class="para-actions" v-if="para.id === activeParagraphId || para.id === hoveredParaId" @click.stop @mouseenter="cancelParaHide()" @mouseleave="scheduleParaHide()">
+          <div class="para-actions" v-if="paraActionsEnabled && (para.id === activeParagraphId || para.id === hoveredParaId)" @click.stop @mouseenter="cancelParaHide()" @mouseleave="scheduleParaHide()">
             <button
               v-if="isVideo && (para as any).start !== undefined"
               class="para-action-btn"
@@ -254,8 +331,16 @@
                 <line x1="12" y1="7" x2="12" y2="13"/>
               </svg>
             </button>
-            <button class="para-action-btn" @click.stop="doCopy(para.text)" title="复制">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <button
+              class="para-action-btn"
+              :class="{ 'copy-success': copiedParaId === para.id }"
+              @click.stop="doCopy(para.text, para.id)"
+              :title="copiedParaId === para.id ? '已复制' : '复制'"
+            >
+              <svg v-if="copiedParaId === para.id" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
             </button>
@@ -274,6 +359,9 @@
               <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/><path d="M17 4l3 3-3 3"/><path d="M21 7H9"/>
               </svg>
+            </button>
+            <button class="para-action-btn" @click.stop="handleParagraphAction('explain', para.id, para.text)" title="AI 翻译此段">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
             </button>
             <button class="para-action-btn" @click.stop="reAnalyzeParagraph(para.id, para.text)" title="重新分析">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -315,6 +403,13 @@
             </div>
           </div>
           </div>
+          <!-- 阅读位置小红旗 -->
+          <span
+            v-if="flagPos && flagPos.pid === para.id"
+            class="pos-flag"
+            :style="{ left: flagPos.x + 'px', top: flagPos.y + 'px' }"
+            :title="readingPosition?.selectedText ? `上次读到：「${readingPosition.selectedText}」` : '上次阅读位置'"
+          >🚩</span>
         </div>
 
         <!-- 在段落下方插入 -->
@@ -339,6 +434,14 @@
         </div>
         </template>
       </article>
+
+      <!-- 阅读赛道（把中间闲置分隔缝做成游戏竖条，移动端隐藏） -->
+      <GameRail
+        :current-para-idx="currentParaIdx"
+        :total-paras="paragraphs.length"
+        :marked-count="activeMarkedWordCount"
+        :hidden="isMobile"
+      />
 
       <!-- 可拖拽分割线（移动端隐藏） -->
       <div class="panel-divider" :class="{ hidden: isMobile }"></div>
@@ -392,24 +495,103 @@
         <!-- 理解 Tab -->
         <div v-if="activeTab === 'understand'" class="panel-content qa-panel">
           <div class="panel-scroll">
-            <section class="panel-section" v-if="rightPanelContent || isTyping || displayedContent">
+            <section class="panel-section" v-if="activeParagraphId || rightPanelContent || isTyping || displayedContent">
               <div class="section-header">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
                 段落解析
+                <button
+                  v-if="activeParagraphId"
+                  class="ai-translate-btn"
+                  :disabled="pendingExplain === activeExplainPid"
+                  @click="explainCurrentParagraph"
+                  :title="pendingExplain === activeExplainPid ? '正在生成…' : 'AI 翻译并解析当前段落'"
+                >{{ pendingExplain === activeExplainPid ? '生成中…' : 'AI 翻译此段' }}</button>
+                <button
+                  v-if="paragraphs.length"
+                  class="ea-btn"
+                  :disabled="explainAll.running"
+                  @click="startExplainAll"
+                  :title="explainAll.running ? '正在后台生成…' : '解释当前文章所有未解析段落'"
+                >{{ explainAll.running ? `生成中 ${explainAll.done}/${explainAll.total}` : '解释全文' }}</button>
               </div>
-              <div class="section-text">
-                <MarkdownRenderer v-if="displayedContent || rightPanelContent" :content="displayedContent || rightPanelContent"/>
+
+              <!-- 段落选中：Markdown 编辑器（编辑/显示切换） -->
+              <template v-if="activeParagraphId">
+                <div class="source-preview-tabs">
+                  <button
+                    class="sp-tab-btn"
+                    :class="{ active: explainViewTab === 'edit' }"
+                    @click="switchExplainView('edit')"
+                  >编辑</button>
+                  <button
+                    class="sp-tab-btn"
+                    :class="{ active: explainViewTab === 'view' }"
+                    @click="switchExplainView('view')"
+                  >显示</button>
+                </div>
+
+                <!-- 编辑模式：可编辑 Markdown 源码 -->
+                <div v-if="explainViewTab === 'edit'" class="section-text">
+                  <textarea
+                    ref="explainEditorEl"
+                    class="source-editor"
+                    v-model="explainSourceContent"
+                    :disabled="pendingExplain === activeExplainPid"
+                    spellcheck="false"
+                    placeholder="支持 Markdown；可直接 Ctrl+V 粘贴图片"
+                    @input="explainManuallyEdited = true"
+                    @paste="onExplainEditorPaste"
+                    @blur="saveExplanationContent"
+                  ></textarea>
+                  <div v-if="pendingExplain === activeExplainPid" class="explain-loading">
+                    <div class="explain-spinner"></div>
+                    <span>正在生成翻译…</span>
+                  </div>
+                </div>
+
+                <!-- 显示模式：渲染预览 -->
+                <div v-else class="section-text">
+                  <template v-if="explainParsed && !explainManuallyEdited">
+                    <div class="trans-section">
+                      <div class="trans-title">一、整体翻译</div>
+                      <div class="trans-para" v-html="transRenderedHtml"></div>
+                    </div>
+                    <MarkdownRenderer :content="explainBodyMarkdown" :is-streaming="false"/>
+                  </template>
+                  <template v-else-if="pendingExplain === activeExplainPid">
+                    <div v-if="transParaHtml" class="trans-section">
+                      <div class="trans-title">一、整体翻译</div>
+                      <div class="trans-para" v-html="transRenderedHtml"></div>
+                    </div>
+                    <div v-else class="explain-loading">
+                      <div class="explain-spinner"></div>
+                      <span>正在生成翻译…</span>
+                    </div>
+                  </template>
+                  <MarkdownRenderer
+                    v-else
+                    :content="explainSourceContent"
+                    :is-streaming="false"
+                    image-resizable
+                    @resize-image="onExplainImageResize"
+                  />
+                </div>
+              </template>
+
+              <!-- 其他操作（翻译等）：直接渲染 -->
+              <div v-else class="section-text">
+                <MarkdownRenderer v-if="displayedContent || rightPanelContent" :content="displayedContent || rightPanelContent" :is-streaming="isTyping"/>
                 <span v-if="isTyping" class="typing-cursor">|</span>
               </div>
             </section>
 
-            <div v-if="!rightPanelContent && !isTyping && !displayedContent" class="empty-state">
+            <div v-if="!activeParagraphId && !rightPanelContent && !isTyping && !displayedContent" class="empty-state">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
                 <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
               </svg>
-              <p>点击段落查看 AI 解析</p>
+              <p>点击段落，可在此输入翻译或用「AI 翻译此段」</p>
             </div>
           </div>
 
@@ -465,7 +647,7 @@
               </div>
               <!-- 流式输出中 -->
               <div v-if="chatTyping" class="chat-msg ai">
-                <div class="chat-bubble"><MarkdownRenderer :content="typingChatContent" /><span class="typing-cursor">|</span></div>
+                <div class="chat-bubble"><MarkdownRenderer :content="typingChatContent" :is-streaming="true" /><span class="typing-cursor">|</span></div>
               </div>
               <div v-else-if="chatLoading && !chatTyping" class="chat-msg ai">
                 <div class="chat-bubble" style="color:#a09e97">思考中…</div>
@@ -493,32 +675,65 @@
 
         <!-- 笔记 Tab -->
         <div v-if="activeTab === 'notes'" class="panel-content">
-          <div class="panel-scroll">
-            <div v-if="textNotes" class="text-notes-section">
-              <MarkdownRenderer :content="textNotes" />
+          <div class="panel-scroll notes-panel">
+            <!-- 当前段落笔记（跟随段落，每段独立保存，富文本可插图片） -->
+            <section class="panel-section" v-if="activeParagraphId">
+              <div class="section-header">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M4 21V4h11l5 5v12z"/><polyline points="14 4 14 10 20 10"/>
+                </svg>
+                段落笔记
+                <span class="note-para-chip">第 {{ currentParaIdx + 1 }} 段</span>
+              </div>
+              <div class="notes-editor-wrap note-editor--para" :key="'para-note-' + (activeParagraphId || 'none')">
+                <RichEditor v-model="currentParagraphNote" placeholder="为当前段落写笔记，可插入图片…" @blur="saveParaNotes" />
+              </div>
+            </section>
+            <div v-else class="empty-state">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <path d="M4 21V4h11l5 5v12z"/><polyline points="14 4 14 10 20 10"/>
+              </svg>
+              <p>点击段落，为它写笔记（每段独立保存）</p>
             </div>
-            <div v-if="paragraphNotes.length" class="notes-divider">
-              <span>摘抄笔记 · {{ paragraphNotes.length }}</span>
+
+            <!-- 已有笔记的段落索引 -->
+            <div v-if="paraNoteList.length" class="notes-divider">
+              <span>已有笔记 · {{ paraNoteList.length }} 段</span>
             </div>
-            <div v-for="(note, ni) in paragraphNotes" :key="note.id" class="note-card">
+            <div
+              v-for="item in paraNoteList" :key="item.pid"
+              class="note-card note-card--index"
+              @click="jumpToNote(item.pid)"
+            >
               <div class="note-quote">
-                <svg class="note-quote-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.3"><path d="M3.7 6.7C2.4 8.3 1.5 10.4 1.5 12.9c0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8L3.7 6.7zm9.5 0c-1.3 1.6-2.2 3.7-2.2 6.2 0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8l-3.6-1.1z"/></svg>
-                <span class="note-quote-text">{{ note.quotedText }}</span>
-                <button class="note-jump-btn" @click.stop="jumpToNoteSource(note)" title="跳转到原文位置">
+                <span class="note-para-label">第 {{ paragraphIndex(item.pid) }} 段</span>
+                <span class="note-preview-text">{{ item.preview }}</span>
+                <button class="note-jump-btn" @click.stop="jumpToNote(item.pid)" title="跳转到段落">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </button>
               </div>
-              <div class="note-actions">
-                <span class="note-para-label">第 {{ paragraphIndex(note.paragraphId) }} 段</span>
-                <button class="note-action-btn note-action-btn--delete" @click.stop="deleteNote(ni)" title="删除">删除</button>
+            </div>
+
+            <!-- 历史摘抄（旧版选中文字生成，保留展示不丢数据） -->
+            <template v-if="paragraphNotes.length">
+              <div class="notes-divider">
+                <span>历史摘抄 · {{ paragraphNotes.length }}</span>
               </div>
-            </div>
-            <div v-if="!textNotes && paragraphNotes.length === 0" class="empty-state">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-              </svg>
-              <p>选中文字后点「记」可添加笔记</p>
-            </div>
+              <div v-for="(note, ni) in paragraphNotes" :key="note.id" class="note-card">
+                <div class="note-quote">
+                  <svg class="note-quote-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.3"><path d="M3.7 6.7C2.4 8.3 1.5 10.4 1.5 12.9c0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8L3.7 6.7zm9.5 0c-1.3 1.6-2.2 3.7-2.2 6.2 0 4.2 2.1 5.6 3.9 5.6 2.2 0 3.5-1.8 3.5-3.5s-1.3-3.5-3.5-3.5c-.2 0-.5 0-.7.1.4-1.5 1.3-2.8 2.6-3.8l-3.6-1.1z"/></svg>
+                  <span class="note-quote-text">{{ note.quotedText }}</span>
+                  <button class="note-jump-btn" @click.stop="jumpToNoteSource(note)" title="跳转到原文位置">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  </button>
+                </div>
+                <div class="note-actions">
+                  <span class="note-para-label">第 {{ paragraphIndex(note.paragraphId) }} 段</span>
+                  <button class="note-action-btn note-action-btn--delete" @click.stop="deleteNote(ni)" title="删除">删除</button>
+                </div>
+              </div>
+            </template>
+
           </div>
         </div>
 
@@ -547,7 +762,7 @@
       </aside>
     </div>
 
-    <!-- 选中文字工具条 -->
+    <!-- 选中文字浮动标记工具条（词/短/句/译） -->
     <Teleport to="body">
       <div v-if="selToolbar.visible" class="sel-toolbar" :style="selToolbarStyle">
         <button class="sel-btn" style="--c:#f59e0b" @click="createMark('word')" title="标记为生词">
@@ -559,10 +774,7 @@
         <button class="sel-btn" style="--c:#06b6d4" @click="createMark('sentence')" title="标记为句子">
           <span class="sel-label">句</span><span class="sel-hint">标记</span>
         </button>
-        <button class="sel-btn" style="--c:#ec4899" @click="handleCreateNote(selToolbar.paraId, selToolbar.text, selToolbar.startOffset, selToolbar.endOffset); selToolbar.visible = false; window.getSelection()?.removeAllRanges()" title="保存为知识要点">
-          <span class="sel-label">知</span><span class="sel-hint">要点</span>
-        </button>
-        <button class="sel-btn" style="--c:#8b5cf6" @click="handleQuickTranslate(selToolbar.text, { x: selToolbar.x, y: selToolbar.y }); selToolbar.visible = false; window.getSelection()?.removeAllRanges()" title="翻译选中">
+        <button class="sel-btn" style="--c:#8b5cf6" @click="handleQuickTranslate(selToolbar.text, { x: selToolbar.x, y: selToolbar.y }); selToolbar.visible = false; selToolbar.hasSelection = false; window.getSelection()?.removeAllRanges()" title="翻译选中">
           <span class="sel-label">译</span><span class="sel-hint">翻译</span>
         </button>
       </div>
@@ -587,12 +799,17 @@
     <MarkPopup
       :visible="markPopup.visible"
       :mark="markPopup.mark"
+      :text-id="id"
       :loading="markPopup.loading"
       :typing="markPopup.typing"
       :typing-content="markPopup.typingContent"
       :position="markPopup.position"
+      :auto-generate="markAutoGenerate"
       @close="markPopup.visible = false"
       @update-note="handleUpdateNote"
+      @update-detail="handleUpdateDetail"
+      @generate="handleGenerateMarkDetail"
+      @update-auto-generate="setMarkAutoGenerate"
       @delete="handleDeleteMark"
       @pronounce="handlePronounce"
     />
@@ -625,11 +842,140 @@
       @close="floatingImage = null"
     />
 
+    <!-- 手动分段 / 播客整理上传 -->
+    <Teleport to="body">
+      <div v-if="manualSegVisible" class="manual-seg-overlay" @click.self="manualSegVisible = false">
+        <div class="manual-seg-modal">
+          <div class="manual-seg-header">
+            <span>手动分段 / 整理上传</span>
+            <button class="manual-seg-close" @click="manualSegVisible = false" title="关闭">×</button>
+          </div>
+          <div class="manual-seg-body">
+            <label class="manual-seg-label">分段内容（<b>空行分隔</b>，每块 = 一个段落）</label>
+            <textarea
+              class="manual-seg-textarea"
+              v-model="manualSegText"
+              spellcheck="false"
+              placeholder="粘贴已分好段的内容，段与段之间用空行隔开…"
+            ></textarea>
+            <div class="manual-seg-count">
+              {{ manualSegCount }} 个段落
+              <span v-if="manualSegCount === 0" class="manual-seg-warn">需用空行分隔</span>
+            </div>
+
+            <label class="manual-seg-label">整理笔记（可选，播客/博客用 Markdown，同步到知识要点）</label>
+            <textarea
+              class="manual-seg-textarea manual-seg-notes"
+              v-model="manualNotesText"
+              spellcheck="false"
+              placeholder="## 情景对话原文&#10;…&#10;&#10;## 重点词汇表&#10;…"
+            ></textarea>
+
+            <div v-if="manualSegError" class="manual-seg-error">{{ manualSegError }}</div>
+          </div>
+          <div class="manual-seg-footer">
+            <button class="manual-seg-btn manual-seg-cancel" @click="manualSegVisible = false">取消</button>
+            <button
+              class="manual-seg-btn manual-seg-save"
+              :disabled="manualSegSaving || manualSegCount === 0"
+              @click="saveManualSegments"
+            >{{ manualSegSaving ? '保存中…' : '保存并应用' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 按字幕条数分段 -->
+    <Teleport to="body">
+      <div v-if="subtitleSegVisible" class="manual-seg-overlay" @click.self="subtitleSegVisible = false">
+        <div class="manual-seg-modal" style="max-width: 380px">
+          <div class="manual-seg-header">
+            <span>按字幕条数分段</span>
+            <button class="manual-seg-close" @click="subtitleSegVisible = false" title="关闭">×</button>
+          </div>
+          <div class="manual-seg-body">
+            <label class="manual-seg-label">每段包含多少条字幕？</label>
+            <input
+              type="number"
+              class="manual-seg-input"
+              v-model.number="subtitleSegCount"
+              min="1"
+              max="200"
+              placeholder="例如 10"
+              @keydown.enter="confirmSubtitleSeg"
+              @focus="$event.target.select()"
+            />
+            <div class="manual-seg-count">
+              共 {{ originalSubtitles?.length || 0 }} 条字幕 → 约 {{ Math.ceil((originalSubtitles?.length || 0) / Math.max(1, subtitleSegCount || 10)) }} 段
+            </div>
+            <label class="manual-seg-check">
+              <input type="checkbox" v-model="subtitlePunctuate" class="manual-seg-checkbox" />
+              <span>自动补标点（每条字幕首字母大写 + 句号）</span>
+            </label>
+          </div>
+          <div class="manual-seg-footer">
+            <button class="manual-seg-btn manual-seg-cancel" @click="subtitleSegVisible = false">取消</button>
+            <button class="manual-seg-btn manual-seg-save" @click="confirmSubtitleSeg">分段</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 标记回收站 -->
+    <Teleport to="body">
+      <div v-if="trashVisible" class="modal-overlay" @click.self="trashVisible = false">
+        <div class="modal-card trash-modal">
+          <div class="modal-header">
+            <h3 class="modal-title">标记回收站</h3>
+            <button class="modal-close" @click="trashVisible = false">×</button>
+          </div>
+          <div class="modal-body trash-body">
+            <p v-if="trashedMarks.length === 0" class="trash-empty">回收站是空的</p>
+            <div v-for="m in trashedMarks" :key="m.id" class="trash-item">
+              <div class="trash-item-info">
+                <div class="trash-item-text">{{ m.text }}</div>
+                <div class="trash-item-meta">{{ markTypeLabel(m.type) }} · {{ formatTrashTime(m.deletedAt) }}</div>
+              </div>
+              <div class="trash-item-actions">
+                <button class="trash-restore-btn" @click="restoreMark(m)">恢复</button>
+                <button class="trash-delete-btn" @click="permanentDeleteMark(m)">彻底删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 章节目录 -->
+    <Teleport to="body">
+      <div v-if="tocVisible" class="modal-overlay" @click.self="tocVisible = false">
+        <div class="modal-card toc-modal">
+          <div class="modal-header">
+            <h3 class="modal-title">目录</h3>
+            <button class="modal-close" @click="tocVisible = false">×</button>
+          </div>
+          <div class="modal-body toc-body">
+            <p v-if="chapters.length === 0" class="trash-empty">未识别到章节</p>
+            <button
+              v-for="(ch, i) in chapters"
+              :key="`${ch.title}-${i}`"
+              class="toc-item"
+              :class="{ 'toc-level-0': ch.level === 0, 'toc-level-2': ch.level === 2 }"
+              @click="jumpToChapter(i)"
+            >
+              <span class="toc-item-title">{{ ch.title }}</span>
+              <span class="toc-item-page">p.{{ ch.page }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import type { ParagraphAction, ChatMessage, Paragraph, Mark, MarkType, ReadingPosition, ParagraphNote } from '#shared/types'
+import type { ParagraphAction, ChatMessage, Paragraph, Mark, MarkType, ReadingPosition, ParagraphNote, Chapter } from '#shared/types'
 import { MARK_COLORS } from '#shared/types'
 import { useArticle } from '~/composables/useArticle'
 import { useDeepSeek } from '~/composables/useDeepSeek'
@@ -638,7 +984,9 @@ import { useIsMobile } from '~/composables/useIsMobile'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
 import ReadingAppearance from '~/components/ReadingAppearance.vue'
 import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
+import { compressImageFile } from '~/utils/imageCompress'
 import { marked } from 'marked'
+import { parseExplainJson, parseExplainMarkdown, renderExplainMarkdown, renderExplainBody, setMarkdownImageWidth, type ExplainJson } from '#shared/utils/explainRenderer'
 
 const route = useRoute(); const id = route.params.id as string
 useHead({ title: 'AI 阅读分析' })
@@ -649,6 +997,30 @@ const { rawText, title, paragraphs, analysis, chatHistory, activeParagraphId, ri
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 const isMobile = useIsMobile()
+
+// 顶栏收起/展开（记忆到 localStorage）
+const topbarHidden = ref(false)
+onMounted(() => { try { topbarHidden.value = localStorage.getItem('reader-topbar-hidden') === '1' } catch {} })
+watch(topbarHidden, (v) => { try { localStorage.setItem('reader-topbar-hidden', v ? '1' : '0') } catch {} })
+
+// 手机端「⋯」更多功能下拉
+const moreMenuOpen = ref(false)
+// 顶栏紧凑模式：窗口不足 1152px（或触屏设备）时，功能按钮收进「⋯」下拉，标题/段落进度隐藏
+const topbarCompact = ref(false)
+function syncTopbarCompact() {
+  if (typeof window === 'undefined') return
+  const coarse = window.matchMedia?.('(pointer: coarse)')?.matches ?? false
+  topbarCompact.value = window.innerWidth < 1152 || coarse
+}
+onMounted(() => { syncTopbarCompact(); window.addEventListener('resize', syncTopbarCompact) })
+onBeforeUnmount(() => window.removeEventListener('resize', syncTopbarCompact))
+function closeMoreMenu(e: MouseEvent) {
+  if (!moreMenuOpen.value) return
+  const t = e.target as HTMLElement | null
+  if (t && !t.closest('.topbar-actions') && !t.closest('.topbar-more-btn')) moreMenuOpen.value = false
+}
+onMounted(() => document.addEventListener('click', closeMoreMenu))
+onBeforeUnmount(() => document.removeEventListener('click', closeMoreMenu))
 const source = ref('')
 const isVideo = computed(() => videoSources.includes(source.value))
 const originalSubtitles = ref<Array<{ text: string; start: number; end: number }> | null>(null)
@@ -674,6 +1046,86 @@ const { displayText: tcc, isTyping: chatTyping, startStreaming: startChatStream,
 const typingChatContent = computed(() => tcc.value)
 
 const activeTab = ref('understand')
+
+// ── 解释面板状态 ──
+const explainSourceContent = ref('')       // 兜底显示的 Markdown（explainParsed 为空时用）
+const activeExplainPid = ref('')          // 当前正在解释的段落 ID
+
+// ── 理解区 Markdown 编辑器（编辑/显示切换）──
+const explainViewTab = ref<'edit' | 'view'>('edit')   // edit=编辑(源码可改), view=显示(渲染预览)
+const explainManuallyEdited = ref(false)               // 用户手动编辑过（禁用结构化渲染）
+
+/** 保存当前段落的解释内容（手动输入 或 AI 生成后编辑） */
+function saveExplanationContent() {
+  const pid = activeExplainPid.value
+  if (!pid) return
+  const content = explainSourceContent.value
+  const orig = article.getCachedExplanation(pid, 'explain') || ''
+  // 内容为空且原本无缓存：跳过写入，避免在数据库里留下空键（空解释记录）
+  if (!content.trim() && !orig) return
+  // 未手动编辑的结构化内容：原缓存是 JSON 则保留（含逐句翻译），避免 markdown 覆盖破坏结构化；
+  // 原缓存是旧版 markdown 则保存当前干净渲染（自我修复历史重复表头）
+  let toSave = content
+  if (!explainManuallyEdited.value && explainParsed.value) {
+    try { JSON.parse(orig); toSave = orig } catch { toSave = content }
+  }
+  article.setCachedExplanation(pid, 'explain', toSave)
+  article.setRightContent(content, 'explain')
+  $fetch('/api/text/update', { method: 'POST', body: { id, explanations: { [`${pid}:explain`]: toSave } } }).catch(() => {})
+}
+
+/** 切换标记/显示：切到显示时保存 */
+function switchExplainView(tab: 'edit' | 'view') {
+  if (tab === 'view' && explainViewTab.value === 'edit') saveExplanationContent()
+  explainViewTab.value = tab
+}
+
+const explainEditorEl = ref<HTMLTextAreaElement | null>(null)
+
+/**
+ * 段落解释编辑器：直接粘贴图片 → 上传并转成 Markdown 图片语法插入光标处。
+ * 阻止冒泡，避免全局 onDocumentPaste 把图片追加到段落正文。
+ */
+async function onExplainEditorPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (!item.type.startsWith('image/')) continue
+    e.preventDefault()
+    e.stopPropagation()
+    const file = item.getAsFile()
+    if (!file) return
+    try {
+      const form = new FormData()
+      const compressed = await compressImageFile(file)
+      form.append('file', compressed, (compressed as File).name || 'paste.webp')
+      form.append('id', id)
+      const result = await $fetch<{ url: string }>('/api/upload/image', { method: 'POST', body: form })
+      const el = explainEditorEl.value
+      if (el) {
+        const start = el.selectionStart ?? el.value.length
+        const end = el.selectionEnd ?? start
+        const md = `\n\n![图片](${result.url})\n\n`
+        explainSourceContent.value = el.value.slice(0, start) + md + el.value.slice(end)
+        explainManuallyEdited.value = true
+        await nextTick()
+        el.focus()
+        el.setSelectionRange(start + md.length, start + md.length)
+      }
+    } catch (err: any) {
+      alert('图片上传失败: ' + (err?.message || ''))
+    }
+    return
+  }
+}
+
+/** 显示模式点击图片选宽度 → 改写 Markdown 里的尺寸标记并保存 */
+function onExplainImageResize({ src, width }: { src: string; width: string }) {
+  explainSourceContent.value = setMarkdownImageWidth(explainSourceContent.value, src, width)
+  explainManuallyEdited.value = true
+  saveExplanationContent()
+}
+
 const chatInput = ref('')
 const chatLoading = ref(false)
 const savedMessages = reactive(new Set<number>())
@@ -691,8 +1143,174 @@ const pdfViewerUrl = computed(() => {
   return pdfUrl.value
 })
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
-const textNotes = ref('')
+/** 未软删除的标记（软删除 = deletedAt 非空，进回收站） */
+const activeMarks = computed(() => marks.value.filter(m => !m.deletedAt))
+/** 回收站里的标记 */
+const trashedMarks = computed(() => marks.value.filter(m => m.deletedAt))
+/** 标记回收站弹窗 */
+const trashVisible = ref(false)
+function openTrash() { trashVisible.value = true }
+
+/** 标记解释生成模式：默认自动，用户修改后持久化到本地 */
+const markAutoGenerate = ref(true)
+const MARK_AUTO_GENERATE_KEY = 'mark-auto-generate'
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(MARK_AUTO_GENERATE_KEY)
+    if (saved !== null) markAutoGenerate.value = saved !== 'false'
+  } catch {}
+})
+function setMarkAutoGenerate(value: boolean) {
+  markAutoGenerate.value = value
+  try { localStorage.setItem(MARK_AUTO_GENERATE_KEY, String(value)) } catch {}
+  if (value && markPopup.visible && !markPopup.mark.detail && !markPopup.loading && !markPopup.typing) {
+    void handleGenerateMarkDetail()
+  }
+}
+
+/** 章节目录（PDF 解析时提取的结构化字段） */
+const chapters = ref<Chapter[]>([])
+const tocVisible = ref(false)
+
+/** 归一化标题：去掉页码标记与 Markdown # 前缀与空白，用于章节标题 ↔ 段落文本匹配 */
+function normTitle(s: string): string {
+  return s
+    .replace(/^\[PAGE:\d+\]/i, '')   // 章节常位于页首，段落文本可能以 [PAGE:N] 开头
+    .replace(/^[#\s]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/** 章节 → 段落下标映射（用于目录跳转，随重新分段自动重算） */
+const chapterAnchors = computed<number[]>(() => {
+  const paras = article.paragraphs.value
+  if (!paras.length) return chapters.value.map(() => -1)
+  return chapters.value.map((ch) => {
+    const target = normTitle(ch.title)
+    // 优先：段落文本（去标题标记）以章节标题开头
+    let idx = paras.findIndex((p) => {
+      const t = normTitle(p.text)
+      return t === target || t.startsWith(target + ' ')
+    })
+    if (idx >= 0) return idx
+    // 兜底：段落内独立标题行（如 `# Chapter 1`）
+    const esc = ch.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`^#{1,6}\\s*${esc}\\s*$`, 'im')
+    idx = paras.findIndex((p) => re.test(p.text))
+    return idx
+  })
+})
+
+/** 点击目录项 → 跳转到对应段落 */
+function jumpToChapter(chIndex: number) {
+  const paraIdx = chapterAnchors.value[chIndex]
+  tocVisible.value = false
+  if (paraIdx < 0) return
+  jumpToPara(paraIdx)
+}
+function markTypeLabel(t: string): string {
+  return ({ word: '生词', phrase: '短语', sentence: '句子', note: '摘抄' } as any)[t] || t
+}
+function formatTrashTime(t?: string): string {
+  if (!t) return ''
+  const d = new Date(t)
+  return `${d.toLocaleDateString('zh-CN')} ${d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
+}
 const paragraphNotes = ref<ParagraphNote[]>([])
+
+// ── 每段落笔记（paragraphNotesMap: { [paragraphId]: RichEditor JSON }）──
+const paraNotesMap = ref<Record<string, string>>({})
+
+/** 兼容旧 markdown：非 JSON 的笔记转成纯文本富文本 JSON，避免丢失 */
+function toRichJson(raw: string): string {
+  if (!raw) return ''
+  try { JSON.parse(raw); return raw } catch {
+    const lines = raw.split(/\n+/).filter(Boolean)
+    return JSON.stringify({
+      type: 'doc',
+      content: lines.map(line => ({ type: 'paragraph', content: [{ type: 'text', text: line }] })),
+    })
+  }
+}
+
+/** 递归判断富文本 JSON 里是否有实际内容（文字 / 图片） */
+function richHasContent(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (node.type === 'text' && node.text?.trim()) return true
+  if (node.type === 'image') return true
+  if (Array.isArray(node.content)) return node.content.some(richHasContent)
+  return false
+}
+
+/** 从富文本 JSON 提取纯文本预览 */
+function richTextPreview(json: string): string {
+  let doc: any = null
+  try { doc = JSON.parse(json) } catch { return json.replace(/\s+/g, ' ').slice(0, 60) }
+  const parts: string[] = []
+  const walk = (n: any) => {
+    if (!n || typeof n !== 'object') return
+    if (n.type === 'text' && n.text) parts.push(n.text)
+    if (n.type === 'image') parts.push('[图片]')
+    if (Array.isArray(n.content)) n.content.forEach(walk)
+  }
+  walk(doc)
+  return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+}
+
+/** 当前选中段落的笔记（跟随段落切换，RichEditor JSON） */
+const currentParagraphNote = computed<string>({
+  get: () => {
+    const pid = activeParagraphId.value
+    return pid ? toRichJson(paraNotesMap.value[pid] || '') : ''
+  },
+  set: (v) => {
+    const pid = activeParagraphId.value
+    if (!pid) return
+    paraNotesMap.value = { ...paraNotesMap.value, [pid]: v }
+    scheduleSaveParaNotes()
+  },
+})
+
+/** 有笔记的段落列表（按段号排序，用于索引） */
+const paraNoteList = computed(() =>
+  Object.entries(paraNotesMap.value)
+    .filter(([pid]) => hasParaNote(pid))
+    .map(([pid, text]) => ({ pid, preview: richTextPreview(text) }))
+    .sort((a, b) => paragraphIndex(a.pid) - paragraphIndex(b.pid))
+)
+
+function hasParaNote(pid: string): boolean {
+  const raw = paraNotesMap.value[pid]
+  if (!raw || !raw.trim()) return false
+  try {
+    return richHasContent(JSON.parse(raw))
+  } catch {
+    return !!raw.trim()
+  }
+}
+
+let paraNoteTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleSaveParaNotes() {
+  if (paraNoteTimer) clearTimeout(paraNoteTimer)
+  paraNoteTimer = setTimeout(saveParaNotes, 1000)
+}
+function saveParaNotes() {
+  if (paraNoteTimer) { clearTimeout(paraNoteTimer); paraNoteTimer = null }
+  $fetch('/api/text/update', { method: 'POST', body: { id, paragraphNotesMap: paraNotesMap.value } }).catch(() => {})
+}
+
+/** 跳转到某段并打开笔记面板 */
+function jumpToNote(pid: string) {
+  article.setActiveParagraph(pid)
+  activeTab.value = 'notes'
+  nextTick(() => {
+    const el = document.querySelector(`[data-id="${pid}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    ;(el as HTMLElement)?.classList.add('note-flash')
+    setTimeout(() => (el as HTMLElement)?.classList.remove('note-flash'), 2000)
+  })
+}
 
 // ── Prompt 模板缓存（客户端从 API 加载一次） ──
 const promptTemplates = reactive<Record<string, string>>({
@@ -851,9 +1469,9 @@ watch(typingChatContent, () => {
 // 折叠态自动隐藏定时器
 
 // 笔记/生词本地数据
-// 生词 — 从全文章 marks 中自动提取 type=word 的标记
+// 生词 — 从全文章 activeMarks 中自动提取 type=word 的标记（不含软删除）
 const savedVocab = computed(() => {
-  return marks.value
+  return activeMarks.value
     .filter(m => m.type === 'word')
     .map(m => {
       const phoneticMatch = m.detail?.match(/\[PHONETIC\]\/(.+?)\/\[\/PHONETIC\]/)
@@ -877,6 +1495,13 @@ const tabs = [
 const currentParaIdx = computed(() => {
   if (!activeParagraphId.value) return 0
   return paragraphs.value.findIndex(p => p.id === activeParagraphId.value)
+})
+
+/** 当前段落的生词标记数（驱动阅读赛道：读得越细跑得越快） */
+const activeMarkedWordCount = computed(() => {
+  const pid = activeParagraphId.value
+  if (!pid) return 0
+  return activeMarks.value.filter(m => m.paraId === pid && m.type === 'word').length
 })
 
 /** 超过 80 段时用滑动窗口显示 dots，避免溢出顶栏 */
@@ -966,9 +1591,9 @@ function locateMark(m: Mark, paraText: string): { start: number; end: number } |
 }
 
 function renderMarkedText(p: Paragraph): string {
-  // 解析标记 → 定位 → 过滤失效标记
+  // 解析标记 → 定位 → 过滤失效/软删除标记
   const resolved: Array<{ mark: Mark; start: number; end: number }> = []
-  for (const m of marks.value) {
+  for (const m of activeMarks.value) {
     if (m.paragraphId !== p.id) continue
     const r = locateMark(m, p.text)
     if (r) resolved.push({ mark: m, start: r.start, end: r.end })
@@ -1047,7 +1672,8 @@ function renderMarkedText(p: Paragraph): string {
       }
       const idx = mdHtml.indexOf(escaped, searchFrom)
       if (idx !== -1 && mdHtml.indexOf(escaped, idx + 1) === -1) return mdHtml.slice(idx, idx + escaped.length)
-      return escaped
+      // 原文被 marked 转换（如 *斜体* → <em>）后搜不到 → 用行内 Markdown 渲染，保证斜体/加粗生效
+      return renderInlineMD(target)
     }
 
     let html = ''
@@ -1164,13 +1790,26 @@ function startQaResize(e: MouseEvent) {
   document.addEventListener('mouseup', onUp)
 }
 
-// ---- 文本选择工具条（与旧版 ArticlePanel 完全一致的 mouseup 方式） ----
-const selToolbar = reactive({ visible: false, x: 0, y: 0, text: '', paraId: '', startOffset: 0, endOffset: 0 })
+// ---- 文本选择浮动工具条（选中文字后弹出：词/短/句/译） ----
+
+// ---- 段落顶部工具条（.para-actions）显隐开关 ----
+/** 默认关闭：段落工具条（编辑/插入/合并/删除等）需手动开启，悬停段落即现 */
+const paraActionsEnabled = ref(false)
+const PARA_ACTIONS_KEY = 'reader-para-actions-enabled'
+onMounted(() => { try { paraActionsEnabled.value = localStorage.getItem(PARA_ACTIONS_KEY) === '1' } catch {} })
+watch(paraActionsEnabled, (v) => { try { localStorage.setItem(PARA_ACTIONS_KEY, v ? '1' : '0') } catch {} })
+function toggleParaActions() {
+  paraActionsEnabled.value = !paraActionsEnabled.value
+}
+
+const selToolbar = reactive({ visible: false, x: 0, y: 0, text: '', paraId: '', startOffset: 0, endOffset: 0, hasSelection: false })
 const selToolbarStyle = computed(() => {
   const w = typeof window !== 'undefined' ? window.innerWidth : 1024
+  const h = typeof window !== 'undefined' ? window.innerHeight : 768
   return {
     left: Math.max(150, Math.min(selToolbar.x, w - 170)) + 'px',
-    top: Math.max(8, selToolbar.y - 50) + 'px',
+    // 出现在选中文字下方；贴近屏幕底部时上收
+    top: Math.max(8, Math.min(selToolbar.y + 8, h - 60)) + 'px',
   }
 })
 
@@ -1178,11 +1817,11 @@ function handleTextSelect(p: Paragraph) {
   setTimeout(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      selToolbar.visible = false
+      selToolbar.visible = false; selToolbar.hasSelection = false
       return
     }
     const text = sel.toString().trim()
-    if (text.length < 2 || text.length > 2000) { selToolbar.visible = false; return }
+    if (text.length < 2 || text.length > 2000) { selToolbar.visible = false; selToolbar.hasSelection = false; return }
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     // 尝试从 DOM 获取粗略偏移作为搜索提示
@@ -1197,13 +1836,226 @@ function handleTextSelect(p: Paragraph) {
       }
     }
     selToolbar.visible = true
+    selToolbar.hasSelection = true
     selToolbar.x = rect.left + rect.width / 2
-    selToolbar.y = rect.top
+    selToolbar.y = rect.bottom // 工具条出现在选中文字下方
     selToolbar.text = text
     selToolbar.paraId = p.id
     selToolbar.startOffset = hintOffset
     selToolbar.endOffset = hintOffset + text.length
   }, 10)
+}
+
+// ---- 移动端：selectionchange 驱动（触摸设备长按选中文字时弹出工具条） ----
+// 桌面端保留 mouseup 方式（避免拖选时工具条闪烁）
+const IS_TOUCH_DEVICE = typeof window !== 'undefined' &&
+  !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches
+
+let selChangeTimer: ReturnType<typeof setTimeout> | null = null
+function onSelectionChange() {
+  if (selChangeTimer) clearTimeout(selChangeTimer)
+  selChangeTimer = setTimeout(() => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      // 选区已清空 → 隐藏工具条
+      selToolbar.visible = false; selToolbar.hasSelection = false
+      return
+    }
+    // 找到选区所在段落块（.para-block 有 data-id）
+    const blockEl = (sel.anchorNode?.parentElement)?.closest('.para-block') as HTMLElement | null
+    if (!blockEl) {
+      selToolbar.visible = false; selToolbar.hasSelection = false
+      return
+    }
+    const pid = blockEl.dataset.id
+    const para = paragraphs.value.find((p) => p.id === pid)
+    if (para) handleTextSelect(para)
+  }, 150)
+}
+if (IS_TOUCH_DEVICE) {
+  onMounted(() => document.addEventListener('selectionchange', onSelectionChange))
+  onUnmounted(() => {
+    document.removeEventListener('selectionchange', onSelectionChange)
+    if (selChangeTimer) clearTimeout(selChangeTimer)
+  })
+}
+
+// ── 选区 → 翻译高亮联动（桌面 + 触摸，始终启用）──
+let hlTimer: ReturnType<typeof setTimeout> | null = null
+
+function splitSentences(text: string): { start: number; end: number; text: string }[] {
+  const sentences: { start: number; end: number; text: string }[] = []
+  // 无 lookbehind 的安全正则：标点 + 后面的空格或行尾
+  const regex = /([.!?。！？"」])(\s+|$)/g
+  let last = 0
+  let m: RegExpExecArray | null
+  let guard = 0
+  while ((m = regex.exec(text)) && guard++ < 10000) {
+    const end = m.index + m[1].length // 包含标点
+    const s = text.slice(last, end).trim()
+    if (s) sentences.push({ start: last, end, text: s })
+    last = end
+  }
+  const tail = text.slice(last).trim()
+  if (tail) sentences.push({ start: text.lastIndexOf(tail), end: text.length, text: tail })
+  return sentences
+}
+
+function findSentenceAt(sentences: { start: number; end: number }[], offset: number): number {
+  for (let i = 0; i < sentences.length; i++) {
+    if (offset >= sentences[i].start && offset < sentences[i].end) return i
+  }
+  return sentences.length - 1
+}
+
+function findSelectedSentenceRange(pid: string): { startIdx: number; endIdx: number } {
+  const para = paragraphs.value.find((p) => p.id === pid)
+  if (!para) return { startIdx: -1, endIdx: -1 }
+  const sentences = splitSentences(para.text)
+  if (!sentences.length) return { startIdx: -1, endIdx: -1 }
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return { startIdx: -1, endIdx: -1 }
+  const range = sel.getRangeAt(0)
+  const block = document.querySelector(`.para-block[data-id="${pid}"]`)
+  const textEl = block?.querySelector('.para-text') as HTMLElement | null
+  if (!textEl) return { startIdx: -1, endIdx: -1 }
+  // 用 DOM 精确计算选区起止在段落文本中的偏移（不依赖文本 indexOf 匹配）
+  const startOffset = calcCharOffset(textEl, range.startContainer, range.startOffset)
+  const endOffset = calcCharOffset(textEl, range.endContainer, range.endOffset)
+  let startIdx = -1
+  let endIdx = -1
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i]
+    if (s.end <= startOffset) continue
+    if (startIdx === -1) startIdx = i
+    if (s.start < endOffset) endIdx = i
+    else break
+  }
+  if (startIdx === -1) { startIdx = 0; endIdx = 0 }
+  return { startIdx, endIdx }
+}
+
+// ── 选区 → 翻译高亮（mouseup 触发，支持一次选多句连续高亮）──
+function resetTransHighlight() {
+  transParaHtml.value = explainParsed.value?.translation || ''
+}
+function updateTransHighlight(range: { startIdx: number; endIdx: number }) {
+  const json = explainParsed.value
+  if (!json || !json.translation) return
+  if (range.startIdx === -1) { resetTransHighlight(); return }
+  const full = json.translation
+  const cnSentences = splitCnSentences(full)
+  if (!cnSentences.length) { resetTransHighlight(); return }
+
+  // 单句：优先用逐句译文匹配（更精准）
+  if (range.startIdx === range.endIdx) {
+    const target = (json.sentenceTranslations || [])[range.startIdx]
+    if (target) {
+      const loc = fuzzyLocate(full, target)
+      if (loc.start !== -1) {
+        transParaHtml.value =
+          escapeHtml(full.slice(0, loc.start)) +
+          `<mark class="trans-hl">${escapeHtml(full.slice(loc.start, loc.end))}</mark>` +
+          escapeHtml(full.slice(loc.end))
+        return
+      }
+    }
+  }
+  // 多句（或单句无逐句匹配）：按序号映射中文句段，高亮连续范围
+  const cStart = mapToCnIndex(range.startIdx, cnSentences)
+  const cEnd = mapToCnIndex(range.endIdx, cnSentences)
+  if (cStart === -1 || cEnd === -1) { resetTransHighlight(); return }
+  const hlStart = cnSentences[cStart].start
+  const hlEnd = cnSentences[cEnd].end
+  if (hlEnd <= hlStart) { resetTransHighlight(); return }
+  transParaHtml.value =
+    escapeHtml(full.slice(0, hlStart)) +
+    `<mark class="trans-hl">${escapeHtml(full.slice(hlStart, hlEnd))}</mark>` +
+    escapeHtml(full.slice(hlEnd))
+}
+
+/** 英文句子序号 → 中文句子序号（数量一致同序号，否则按句数比例映射） */
+function mapToCnIndex(enIdx: number, cnSentences: { start: number; end: number }[]): number {
+  const para = paragraphs.value.find((p) => p.id === activeExplainPid.value)
+  const enSentences = para ? splitSentences(para.text) : []
+  if (!enSentences.length) return Math.min(cnSentences.length - 1, Math.max(0, enIdx))
+  if (enSentences.length !== cnSentences.length) {
+    return Math.min(cnSentences.length - 1, Math.max(0, Math.round((enIdx / enSentences.length) * cnSentences.length)))
+  }
+  return Math.min(cnSentences.length - 1, Math.max(0, enIdx))
+}
+function onMouseUpHighlight() {
+  if (hlTimer) clearTimeout(hlTimer)
+  hlTimer = setTimeout(() => {
+    const sel = window.getSelection()
+    const text = sel ? sel.toString().trim() : ''
+    if (!sel || sel.isCollapsed || !text) { resetTransHighlight(); return }
+    const blockEl = (sel.anchorNode?.parentElement)?.closest('.para-block') as HTMLElement | null
+    const pid = blockEl?.dataset.id
+    if (!pid) { resetTransHighlight(); return }
+    // 选中了其他段落：若该段落有缓存解释，自动加载到右侧并高亮
+    if (pid !== activeExplainPid.value) {
+      const cached = article.getCachedExplanation(pid, 'explain')
+      if (!cached) return // 无缓存解释，保持现状
+      article.setActiveParagraph(pid)
+      loadExplanationEditor(pid)
+    }
+    updateTransHighlight(findSelectedSentenceRange(pid))
+  }, 50)
+}
+onMounted(() => document.addEventListener('mouseup', onMouseUpHighlight))
+onUnmounted(() => {
+  document.removeEventListener('mouseup', onMouseUpHighlight)
+  if (hlTimer) clearTimeout(hlTimer)
+})
+
+// ── 整段翻译中的模糊定位（精确优先，相似句段兜底）──
+/** 从流式累积的 JSON 中提取 translation 字段（用于渐进显示翻译正文） */
+function extractTranslation(raw: string): string | null {
+  const m = raw.match(/"translation"\s*:\s*"((?:\\.|[^"\\])*)"/)
+  if (m) {
+    try { return JSON.parse('"' + m[1] + '"') } catch { return m[1] }
+  }
+  return null
+}
+
+function splitCnSentences(text: string): { start: number; end: number; text: string }[] {
+  const sentences: { start: number; end: number; text: string }[] = []
+  const regex = /([。！？!?])/g
+  let last = 0
+  let m: RegExpExecArray | null
+  let guard = 0
+  while ((m = regex.exec(text)) && guard++ < 10000) {
+    const end = m.index + 1
+    const s = text.slice(last, end).trim()
+    if (s) sentences.push({ start: last, end, text: s })
+    last = end
+  }
+  const tail = text.slice(last).trim()
+  if (tail) sentences.push({ start: text.lastIndexOf(tail), end: text.length, text: tail })
+  return sentences
+}
+function textSimilarity(a: string, b: string): number {
+  const setA = new Set(a)
+  const setB = new Set(b)
+  let inter = 0
+  for (const ch of setA) if (setB.has(ch)) inter++
+  const union = setA.size + setB.size - inter
+  return union === 0 ? 0 : inter / union
+}
+function fuzzyLocate(fullText: string, target: string): { start: number; end: number } {
+  const idx = fullText.indexOf(target)
+  if (idx !== -1) return { start: idx, end: idx + target.length }
+  // 整段按中文句切分，找与目标最相似的一句
+  const sentences = splitCnSentences(fullText)
+  let best = -1
+  let bestScore = 0
+  for (let i = 0; i < sentences.length; i++) {
+    const score = textSimilarity(target, sentences[i].text)
+    if (score > bestScore) { bestScore = score; best = i }
+  }
+  if (best !== -1 && bestScore > 0.2) return { start: sentences[best].start, end: sentences[best].end }
+  return { start: -1, end: -1 }
 }
 
 function handleDoubleClick(para: Paragraph) {
@@ -1241,14 +2093,11 @@ function createMark(type: MarkType) {
   const { start, end } = findOffsetInSource(para.text, selToolbar.text, selToolbar.startOffset)
   if (start === end) return // 找不到
   handleCreateMark(selToolbar.paraId, selToolbar.text, type, start, end)
-  selToolbar.visible = false
+  selToolbar.visible = false; selToolbar.hasSelection = false
   window.getSelection()?.removeAllRanges()
 }
 
 // ---- 段落点击 ----
-let clickTimer: ReturnType<typeof setTimeout> | null = null
-let pendingPara: Paragraph | null = null
-
 function handleParaClick(p: Paragraph, e: MouseEvent) {
   const target = e.target as HTMLElement
   // 点击 Markdown 渲染的图片 → 打开图片查看器
@@ -1261,20 +2110,56 @@ function handleParaClick(p: Paragraph, e: MouseEvent) {
     const mark = marks.value.find(m => m.id === mid)
     if (mark && mark.type !== 'note') { handleShowMark(mark); return }
   }
-  if (clickTimer) clearTimeout(clickTimer)
   const sel = window.getSelection()
   if (sel && !sel.isCollapsed) return
+  // 仅选中段落，不触发 AI 解析（由「AI 翻译此段」按钮触发）
   article.setActiveParagraph(p.id)
-  pendingPara = p
-  clickTimer = setTimeout(() => {
-    if (pendingPara) {
-      handleParagraphAction('explain', pendingPara.id, pendingPara.text)
-      pendingPara = null
-    }
-  }, 300)
+  loadExplanationEditor(p.id)
 }
 
-function doCopy(text: string) { navigator.clipboard.writeText(text).catch(() => {}) }
+/** 加载段落的解释内容到理解区编辑器（缓存优先，无缓存则空编辑区） */
+function loadExplanationEditor(pid: string) {
+  // 先保存上一个段落的编辑
+  if (activeExplainPid.value && activeExplainPid.value !== pid) saveExplanationContent()
+  activeExplainPid.value = pid
+  const cached = article.getCachedExplanation(pid, 'explain')
+  if (cached) {
+    const cachedJson = parseExplainJson(cached)
+    const cachedParsed = cachedJson || parseExplainMarkdown(cached)
+    explainParsed.value = cachedParsed
+    transParaHtml.value = cachedParsed?.translation || ''
+    if (cachedJson) {
+      // JSON = AI 生成：可安全重写为结构化展示
+      explainSourceContent.value = renderExplainMarkdown(cachedJson)
+      explainManuallyEdited.value = false
+    } else {
+      // Markdown = 手动输入 或 旧 AI 数据：原样展示，绝不重写（防止额外内容被删）
+      explainSourceContent.value = cached
+      explainManuallyEdited.value = true
+    }
+    explainViewTab.value = 'view'
+  } else {
+    // 无缓存 → 空编辑区，停在「标记」模式方便直接输入
+    explainParsed.value = null
+    transParaHtml.value = ''
+    explainSourceContent.value = ''
+    explainManuallyEdited.value = false
+    explainViewTab.value = 'edit'
+  }
+  article.setRightContent(explainSourceContent.value, 'explain')
+}
+
+// 段落复制成功反馈（图标短暂切换为对勾）
+const copiedParaId = ref('')
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+function doCopy(text: string, pid?: string) {
+  navigator.clipboard.writeText(text).catch(() => {})
+  if (pid) {
+    copiedParaId.value = pid
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copiedParaId.value = '' }, 1500)
+  }
+}
 
 // 段落文本编辑
 const editingParagraphId = ref<string | null>(null)
@@ -1431,7 +2316,7 @@ async function deleteParagraph(pid: string) {
   if (idx === -1) { editingParagraphId.value = null; editText.value = ''; return }
 
   const para = paragraphs.value[idx]
-  const markCount = marks.value.filter(m => m.paragraphId === pid).length
+  const markCount = activeMarks.value.filter(m => m.paragraphId === pid).length
   const imageCount = para.images?.length || 0
 
   // 确认提示
@@ -1452,6 +2337,14 @@ async function deleteParagraph(pid: string) {
   // 清理此段落的 AI 缓存
   article.setCachedExplanation(pid, 'explain', '')
   article.setCachedExplanation(pid, 'translate', '')
+
+  // 清理此段落的笔记
+  if (paraNotesMap.value[pid]) {
+    const next = { ...paraNotesMap.value }
+    delete next[pid]
+    paraNotesMap.value = next
+    scheduleSaveParaNotes()
+  }
 
   // 清理阅读位置
   if (readingPosition.value?.paragraphId === pid) {
@@ -1577,9 +2470,15 @@ onMounted(async () => {
     const data = await $fetch<any>(`/api/text/${id}`)
     if (!data?.text) throw new Error('No text')
     source.value = data.source || ''
+    article.setTitle(data.title || titleFromSource(data.source || ''))
     article.setRawText(data.text)
     if (data.segments) {
       article.setParagraphs(data.segments)
+    } else if (isVideo.value && data.videoSubtitles?.length) {
+      // 视频：直接用字幕 cue 构建段落（每条字幕一段，自动补标点），避免无标点文本整篇合成一段
+      const segs = segmentsFromCues(data.videoSubtitles, 1, true)
+      article.setParagraphs(segs)
+      $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs } }).catch(() => {})
     } else {
       const segs = quickSegment(data.text)
       article.setParagraphs(segs)
@@ -1589,9 +2488,21 @@ onMounted(async () => {
     if (data.filePath) pdfUrl.value = `/api/file/${data.filePath}`
     if (data.analysis) { article.setAnalysis(data.analysis); showAll(formatMd(data.analysis)) }
     if (data.explanations) for (const [k, v] of Object.entries(data.explanations)) { const [pid, act] = k.split(':'); article.setCachedExplanation(pid, act as any, v as string) }
-    if (data.marks) marks.value = data.marks
+    if (data.marks) {
+      marks.value = data.marks
+      purgeExpiredTrash()
+      // 从单词本「定位原文」进入：滚动到对应段落并打开标记弹窗
+      const targetMark = String(route.query.mark || '')
+      if (targetMark) setTimeout(() => focusMark(targetMark), 350)
+    }
     if (data.paragraphNotes && data.paragraphNotes.length) {
       paragraphNotes.value = data.paragraphNotes
+    }
+    if (data.paragraphNotesMap) {
+      paraNotesMap.value = data.paragraphNotesMap
+    }
+    if (data.chapters && Array.isArray(data.chapters)) {
+      chapters.value = data.chapters
     }
     // 迁移旧格式：将 type='note' 的 marks 转为 paragraphNotes
     if (data.marks) {
@@ -1618,8 +2529,11 @@ onMounted(async () => {
         $fetch('/api/text/update', { method: 'POST', body: { id, marks: data.marks, paragraphNotes: paragraphNotes.value } }).catch(() => {})
       }
     }
-    if (data.readingPosition) readingPosition.value = data.readingPosition
-    if (data.notes) textNotes.value = data.notes
+    if (data.readingPosition) {
+      readingPosition.value = data.readingPosition
+      // 等 DOM 渲染后计算小红旗位置
+      nextTick(computeFlagPos)
+    }
     if (data.paragraphChats) {
       article.loadParagraphChats(data.paragraphChats)
       for (const pid of Object.keys(data.paragraphChats)) paragraphsWithChats.add(pid)
@@ -1630,11 +2544,9 @@ onMounted(async () => {
     if (data.videoMeta) {
       videoMeta.value = data.videoMeta as { url: string; type: string; duration: number }
     }
-    // 后台自动开始 AI 分析（如果还没有），不阻塞页面
-    if (!data.analysis || !data.analysis.title) {
-      analyzing.value = true
-      runAnalysis(article.rawText.value).finally(() => { analyzing.value = false })
-    }
+    // 预取整篇用词的发音：服务端批量解析并落盘缓存，用户点词时零等待
+    try { schedulePrefetchPronunciation(data.text || '') } catch {}
+    // 分析改为手动触发（工具栏「AI 分析」按钮），不再打开文章自动消耗 API
 
     // 检查后台是否有分段正在执行（跨页面恢复 spinner）
     const segStatus = await $fetch<{ running: boolean }>(`/api/text/segment-status?id=${id}`).catch(() => ({ running: false }))
@@ -1645,9 +2557,30 @@ onMounted(async () => {
 
     const markPid = route.query.mark as string
     if (markPid) { await nextTick(); const el = document.querySelector(`[data-id="${markPid}"]`); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
-    $fetch('/api/text/stats', { method: 'POST', body: { id, marks: marks.value.length } }).catch(() => {})
+    $fetch('/api/text/stats', { method: 'POST', body: { id, marks: activeMarks.value.length } }).catch(() => {})
   } catch (e: any) { alert('加载失败'); navigateTo('/') }
 })
+
+/**
+ * 预取整篇用词的发音地址。
+ *
+ * 为什么要预取：音库只收原形，变形词需要还原后再探测；旧实现每次点击都要现查，
+ * 慢且不稳定。改成"打开文章时后台一次性把全文用词解析好（服务端并发 + 落盘缓存）"，
+ * 用户点击时直接命中缓存，零等待。
+ *
+ * 放在 setTimeout 里是为了不阻塞首屏渲染（解析请求是网络 IO）。
+ */
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null
+function schedulePrefetchPronunciation(text: string) {
+  if (!import.meta.client || !text) return
+  if (prefetchTimer) clearTimeout(prefetchTimer)
+  prefetchTimer = setTimeout(() => {
+    prefetchTimer = null
+    const words = pronTokenize(text)
+    if (!words.length) return
+    pronPrefetch(words)
+  }, 600)
+}
 
 function goBack() {
   stopStreaming(); article.reset()
@@ -1677,6 +2610,14 @@ const currentTimeForWatch = computed(() => {
   return 0
 })
 
+/** 从文件名/来源推导默认标题（去掉扩展名，兜底用） */
+function titleFromSource(source: string): string {
+  if (!source || source === 'paste' || source === 'upload') return '未命名'
+  const base = source.split(/[\\/]/).pop() || source
+  if (/^https?:/i.test(base)) return source.slice(0, 40)
+  return base.replace(/\.[^.]+$/, '').trim() || '未命名'
+}
+
 function formatCueTime(seconds: number): string {
   if (seconds === undefined || seconds === null) return ''
   const m = Math.floor(seconds / 60)
@@ -1685,24 +2626,36 @@ function formatCueTime(seconds: number): string {
 }
 
 /** 保留原文段落结构：有自然段则逐段保留，没有则按句切分 */
-function quickSegment(text: string): Paragraph[] {
+function quickSegment(text: string, group = 10): Paragraph[] {
   const blocks = text.split(/\n\s*\n/).filter(b => b.trim())
   if (blocks.length > 1) {
     // 原文有自然段落 → 保留原样，不拆不合并
     return blocks.map((b, i) => ({ id: `q-${i}`, index: i, text: b.trim() }))
   }
   // 原文无段落结构 → 按句切分兜底
-  return splitIntoParagraphs(text)
+  return splitIntoParagraphs(text, group)
 }
 
-/** 按句子拆分并每 4 句合并为一段 */
-function splitIntoParagraphs(text: string): Paragraph[] {
-  const GROUP = 4
+/** 按句子拆分并每 group 句合并为一段 */
+function splitIntoParagraphs(text: string, group = 10): Paragraph[] {
+  const GROUP = group
   const prepared = text.replace(/\.{3,}/g, '…')
   const sentences = prepared.split(/(?<=[.!?。！？"」])\s*/)
     .map(s => s.replace(/…/g, '...').trim())
     .filter(s => s.length > 0)
-  if (sentences.length <= 1) return [{ id: 'q-0', index: 0, text }]
+  if (sentences.length <= 1) {
+    // 无标点（如字幕文本）：按行分组，避免整篇合成一段
+    const lines = text.split(/\r?\n+/).map(l => l.trim()).filter(l => l.length > 0)
+    if (lines.length > 1) {
+      const result: Paragraph[] = []
+      for (let i = 0; i < lines.length; i += GROUP) {
+        const chunk = lines.slice(i, i + GROUP).join(' ').trim()
+        if (chunk) result.push({ id: `q-${result.length}`, index: result.length, text: chunk })
+      }
+      if (result.length) return result
+    }
+    return [{ id: 'q-0', index: 0, text }]
+  }
 
   const result: Paragraph[] = []
   for (let i = 0; i < sentences.length; i += GROUP) {
@@ -1913,13 +2866,28 @@ function cancelParaHide() {
 }
 
 // ── 分段粒度控制 ──
-const segSizeOptions = [
-  { key: 'auto', label: '自动', hint: '按内容类型' },
-  { key: 'academic', label: '学术', hint: '4–5 句/段' },
-  { key: 'writing', label: '写作', hint: '5–6 句/段' },
-  { key: 'news', label: '新闻', hint: '6–8 句/段' },
-  { key: 'video', label: '视频', hint: '8–10 句/段' },
-  { key: 'podcast', label: 'Podcast', hint: '10–12 句/段' },
+const segSizeGroups = [
+  {
+    key: 'ai',
+    label: 'AI 分段',
+    options: [
+      { key: 'auto', label: '自动', hint: '按内容类型' },
+      { key: 'academic', label: '学术', hint: '4–5 句/段' },
+      { key: 'writing', label: '写作', hint: '5–6 句/段' },
+      { key: 'news', label: '新闻', hint: '6–8 句/段' },
+      { key: 'video', label: '视频', hint: '8–10 句/段' },
+      { key: 'podcast', label: 'Podcast', hint: '10–12 句/段' },
+    ],
+  },
+  {
+    key: 'simple',
+    label: '简单分段',
+    options: [
+      { key: 'simple', label: '简单', hint: '空行/句号' },
+      { key: 'subtitle', label: '按字幕', hint: '按字幕条数分组' },
+      { key: 'manual', label: '手动', hint: '粘贴已分好段的内容' },
+    ],
+  },
 ]
 const segSizeMap: Record<string, { minSentences: number; maxSentences: number } | null> = {
   auto: null,
@@ -1932,6 +2900,9 @@ const segSizeMap: Record<string, { minSentences: number; maxSentences: number } 
 const segSizeKey = ref('auto')
 const showSegSizeMenu = ref(false)
 const segSizeWrapRef = ref<HTMLElement | null>(null)
+// 简单分段：每段句数（可选）
+const simpleSentencesOptions = [5, 8, 10, 15, 20]
+const simpleSentences = ref(10)
 
 function toggleSegSizeMenu() {
   showSegSizeMenu.value = !showSegSizeMenu.value
@@ -1939,7 +2910,179 @@ function toggleSegSizeMenu() {
 function selectSegSize(opt: { key: string; label: string }) {
   segSizeKey.value = opt.key
   showSegSizeMenu.value = false
-  runManualSegment()
+  if (opt.key === 'manual') {
+    openManualSegModal()
+  } else if (opt.key === 'simple') {
+    runSimpleSegment()
+  } else if (opt.key === 'subtitle') {
+    openSubtitleSeg()
+  } else {
+    runManualSegment()
+  }
+}
+
+// ── 按字幕条数分段（不调用 AI）──
+const subtitleSegVisible = ref(false)
+const subtitleSegCount = ref(10)
+const subtitlePunctuate = ref(true)  // 自动补标点
+
+function openSubtitleSeg() {
+  subtitleSegCount.value = 10
+  subtitleSegVisible.value = true
+}
+
+function confirmSubtitleSeg() {
+  const n = Math.max(1, Math.floor(subtitleSegCount.value) || 10)
+  subtitleSegVisible.value = false
+  runSubtitleSegment(n, subtitlePunctuate.value)
+}
+
+/** 给无标点的字幕文本补标点：首字母大写 + 句尾加句号（已有标点则保留） */
+function punctuateCueText(s: string): string {
+  const t = s.trim()
+  if (!t) return ''
+  let out = t.charAt(0).toUpperCase() + t.slice(1)
+  if (!/[.!?。！？]$/.test(out)) out += '.'
+  return out
+}
+
+/** 按每 group 条字幕合并为一段（保留时间戳）；punctuate=true 时自动为每条字幕补标点 */
+function segmentsFromCues(cues: Array<{ text: string; start?: number; end?: number }>, group: number, punctuate = true): Paragraph[] {
+  const segs: Paragraph[] = []
+  for (let i = 0; i < cues.length; i += group) {
+    const batch = cues.slice(i, i + group)
+    const text = batch
+      .map(c => punctuate ? punctuateCueText(c.text) : c.text.trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim()
+    if (!text) continue
+    segs.push({
+      id: `s-${segs.length}`,
+      index: segs.length,
+      text,
+      start: batch[0]?.start,
+      end: batch[batch.length - 1]?.end,
+    })
+  }
+  return segs
+}
+
+function runSubtitleSegment(count: number, punctuate = true) {
+  const cues = originalSubtitles.value
+  if (!cues?.length) { progressError.value = true; progressMsg.value = '没有可用字幕'; setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 2500); return }
+  const n = Math.max(1, count)
+  const segs = segmentsFromCues(cues, n, punctuate)
+  if (!segs.length) return
+  article.setParagraphs(segs)
+  article.clearParagraphCaches()
+  $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs } }).catch(() => {})
+  progressMsg.value = `已按字幕每 ${n} 条分为 ${segs.length} 段${punctuate ? '（已补标点）' : ''}`
+  progressError.value = false
+  setTimeout(() => { if (progressMsg.value?.startsWith('已按字幕')) progressMsg.value = '' }, 2500)
+}
+
+/** 从原文重建段落：视频按每条字幕一段（保留时间戳、自动补标点），文本按规则分段 */
+function rebuildSegmentsFromText(): Paragraph[] {
+  if (isVideo.value && originalSubtitles.value?.length) {
+    return segmentsFromCues(originalSubtitles.value, 1, true)
+  }
+  return quickSegment(article.rawText.value || '', simpleSentences.value)
+}
+
+/** 重新导入原始文字：从数据库拉取原文，按原文重新分段载入学习模式 */
+async function reimportOriginalText() {
+  if (segmenting.value || analyzing.value) return
+  if (!confirm('重新导入原始文字？\n将丢弃当前分段，按原始文字重新分段载入（合并/拆分/编辑等操作会丢失）。')) return
+  segmenting.value = true
+  try {
+    const data = await $fetch<any>(`/api/text/${id}`)
+    if (!data?.text) throw new Error('No text')
+    source.value = data.source || ''
+    article.setTitle(data.title || titleFromSource(data.source || ''))
+    article.setRawText(data.text)
+    // 总是从原文重建段落（视频按字幕，文本按规则）
+    const segs = rebuildSegmentsFromText()
+    article.setParagraphs(segs)
+    article.clearParagraphCaches()
+    await $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs } })
+    progressMsg.value = `已重新导入原文，分为 ${segs.length} 段`
+    progressError.value = false
+    setTimeout(() => { if (progressMsg.value?.startsWith('已重新导入')) progressMsg.value = '' }, 2500)
+  } catch {
+    progressError.value = true
+    progressMsg.value = '重新导入失败，请重试'
+    setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
+  } finally {
+    segmenting.value = false
+  }
+}
+
+/** 简单规则分段：不调用 AI。视频按字幕每 N 条合并（自动补标点），文本按空行/句号 */
+function runSimpleSegment() {
+  if (segmenting.value || !article.rawText.value) return
+  const segs = isVideo.value && originalSubtitles.value?.length
+    ? segmentsFromCues(originalSubtitles.value, simpleSentences.value, true)
+    : quickSegment(article.rawText.value, simpleSentences.value)
+  article.setParagraphs(segs)
+  article.clearParagraphCaches()
+  $fetch('/api/text/update', { method: 'POST', body: { id, segments: segs } }).catch(() => {})
+  progressMsg.value = `已按规则分为 ${segs.length} 段（每段约 ${simpleSentences.value} 句${isVideo.value ? '，已补标点' : ''}）`
+  progressError.value = false
+  setTimeout(() => { if (progressMsg.value?.startsWith('已按规则')) progressMsg.value = '' }, 2500)
+}
+
+// ── 手动分段 / 播客整理上传（不调用 AI）──
+const manualSegVisible = ref(false)
+const manualSegText = ref('')
+const manualNotesText = ref('')
+const manualSegSaving = ref(false)
+const manualSegError = ref('')
+const manualSegCount = computed(() => {
+  if (!manualSegText.value.trim()) return 0
+  return manualSegText.value.split(/\n\s*\n/).map(s => s.trim()).filter(s => s.length > 0).length
+})
+
+function openManualSegModal() {
+  manualSegText.value = article.rawText.value || ''
+  manualNotesText.value = ''
+  manualSegError.value = ''
+  manualSegVisible.value = true
+}
+
+async function saveManualSegments() {
+  const blocks = manualSegText.value.split(/\n\s*\n/).map(s => s.trim()).filter(s => s.length > 0)
+  if (!blocks.length) { manualSegError.value = '没有检测到段落内容（用空行分隔段落）'; return }
+  manualSegSaving.value = true
+  manualSegError.value = ''
+  try {
+    await $fetch('/api/text/segments', {
+      method: 'POST',
+      body: {
+        id,
+        segments: blocks,
+        notes: manualNotesText.value.trim() || undefined,
+      },
+    })
+    manualSegVisible.value = false
+    // 重新加载文章（段数变化 + 解释缓存已清空）
+    const fresh = await $fetch<any>(`/api/text/${id}`)
+    article.setRawText(fresh.text || article.rawText.value)
+    article.setParagraphs(fresh.segments || [])
+    article.clearParagraphCaches()
+    // 重置理解区编辑器状态
+    explainParsed.value = null
+    transParaHtml.value = ''
+    explainSourceContent.value = ''
+    explainManuallyEdited.value = false
+    activeExplainPid.value = ''
+    article.setActiveParagraph(null)
+    article.setRightContent('', 'explain')
+  } catch (e: any) {
+    manualSegError.value = e?.message || '保存失败'
+  } finally {
+    manualSegSaving.value = false
+  }
 }
 function closeSegMenu(e: MouseEvent) {
   if (segSizeWrapRef.value && !segSizeWrapRef.value.contains(e.target as Node)) {
@@ -2041,6 +3184,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
+  // 立即落盘未保存的段落笔记
+  if (paraNoteTimer) saveParaNotes()
 })
 
 const progressError = ref(false)
@@ -2241,8 +3386,9 @@ async function uploadParaImage(paraId: string, file: File | Blob, filename = 'im
   const para = paragraphs.value.find(p => p.id === paraId)
   if (!para) return
   try {
+    const compressed = await compressImageFile(file)
     const form = new FormData()
-    form.append('file', file, filename)
+    form.append('file', compressed, (compressed as File).name || filename)
     form.append('id', id)
 
     const result = await $fetch<{ url: string }>('/api/upload/image', { method: 'POST', body: form })
@@ -2291,47 +3437,186 @@ function onDocumentPaste(e: ClipboardEvent) {
 onMounted(() => { document.addEventListener('paste', onDocumentPaste) })
 onUnmounted(() => { document.removeEventListener('paste', onDocumentPaste) })
 
+/** 「AI 翻译此段」：对当前选中段落触发 AI 解析 */
+function explainCurrentParagraph() {
+  const pid = activeParagraphId.value
+  if (!pid || pendingExplain.value === pid) return
+  const para = paragraphs.value.find(p => p.id === pid)
+  if (!para) return
+  handleParagraphAction('explain', pid, para.text)
+}
+
 async function handleParagraphAction(action: ParagraphAction, pid: string, ptext: string) {
   article.setActiveParagraph(pid)
   const cached = article.getCachedExplanation(pid, action)
-  if (cached) { article.setRightContent(cached, action); showAll(cached); return }
+  if (cached) {
+    if (action === 'explain') {
+      // JSON = AI 生成（可重写）；Markdown = 手动输入/旧数据（原样展示，不重写防丢内容）
+      const cachedJson = parseExplainJson(cached)
+      const cachedParsed = cachedJson || parseExplainMarkdown(cached)
+      explainParsed.value = cachedParsed
+      transParaHtml.value = cachedParsed?.translation || ''
+      if (cachedJson) {
+        explainSourceContent.value = renderExplainMarkdown(cachedJson)
+        explainManuallyEdited.value = false
+      } else {
+        explainSourceContent.value = cached
+        explainManuallyEdited.value = true
+      }
+      explainViewTab.value = 'view'
+      article.setRightContent(explainSourceContent.value, action); showAll(explainSourceContent.value)
+      activeExplainPid.value = pid
+    } else {
+      article.setRightContent(cached, action); showAll(cached)
+    }
+    return
+  }
   if (pendingExplain.value === pid) return
   pendingExplain.value = pid
   article.setRightContent('', action)
-  const typeLabel = action === 'translate' ? '专业翻译' : '双语阅读导师'
-  const requirements = action === 'translate'
-    ? `将以下段落翻译成流畅自然的中文。忠实原文，只输出翻译结果，不要添加任何解释。\n\n待翻译段落：\n${ptext}`
-    : `深度解读以下段落，结合文章背景。用 Markdown 输出三部分：
 
-### 一、整体翻译
-
-### 二、难点词汇解析
-用表格输出，列名为：| 词汇 | 释义 | 语境理解 |
-其中"语境理解"为该词在当前段落语境中的具体含义和用法。
-
-### 三、段落精讲`
-
-  const vars = {
-    typeLabel,
-    requirements,
-    paragraphText: ptext,
-    articleContext: article.getArticleContext(),
+  let messages: Array<{ role: string; content: string }>
+  if (action === 'explain') {
+    // 使用 refine 后的 explain 模板（含完整表格格式规则）
+    const vars = {
+      paragraphText: ptext,
+      articleContext: article.getArticleContext(),
+    }
+    const filled = fillPrompt('explain', vars)
+    messages = [
+      { role: 'system', content: filled.system },
+      { role: 'user', content: filled.user },
+    ]
+  } else {
+    // 翻译用简单 prompt
+    messages = [
+      { role: 'system', content: '你是专业翻译。忠实原文，只输出翻译结果，不要任何解释。' },
+      { role: 'user', content: `将以下段落翻译成流畅自然的中文：\n\n${ptext}` },
+    ]
   }
-  const filled = fillPrompt('explain', vars)
-  const messages = [
-    { role: 'system' as const, content: filled.system },
-    { role: 'user' as const, content: filled.user || requirements },
-  ]
+  // ── explain：重置显示状态 ──
+  if (action === 'explain') {
+    // 若当前段落已有手动编辑内容，先保存再重新生成（避免覆盖丢失）
+    if (activeExplainPid.value === pid && explainSourceContent.value) saveExplanationContent()
+    // 清空旧段落解释，显示加载中
+    explainParsed.value = null
+    transParaHtml.value = ''
+    explainSourceContent.value = ''
+    explainManuallyEdited.value = false
+    activeExplainPid.value = pid
+  }
+
   let fullResult = ''; startStreaming('')
+  const isExplain = action === 'explain'
   try {
-    await deepseek.streamExplain(messages, (chunk: string) => { fullResult += chunk; appendText(chunk) })
+    await deepseek.streamExplain(messages, (chunk: string) => {
+      fullResult += chunk
+      if (isExplain) {
+        // 流式渐进：优先显示翻译正文（不必等完整 JSON）
+        const t = extractTranslation(fullResult)
+        if (t) transParaHtml.value = escapeHtml(t)
+      } else {
+        appendText(chunk)
+        explainSourceContent.value = fullResult
+      }
+    }, isExplain ? { response_format: { type: 'json_object' } } : undefined)
     endStream()
-    article.setCachedExplanation(pid, action, fullResult)
-    article.setRightContent(fullResult, action)
-    $fetch('/api/text/update', { method: 'POST', body: { id, explanations: { [`${pid}:${action}`]: fullResult } } }).catch(() => {})
+
+    if (isExplain) {
+      // 解析模型输出的 JSON → 用固定模板渲染成 Markdown（格式 100% 由代码控制）
+      const parsed = parseExplainJson(fullResult)
+      const markdown = parsed ? renderExplainMarkdown(parsed) : ''
+      // 解析失败（多为输出被截断）：显示友好提示，不展示原始 JSON
+      const display = parsed ? markdown : '⚠️ 解释生成不完整，请点击段落重新生成。'
+      explainParsed.value = parsed
+      transParaHtml.value = parsed?.translation || ''
+      explainSourceContent.value = display
+      explainManuallyEdited.value = false
+      explainViewTab.value = 'view'
+      article.setCachedExplanation(pid, action, parsed ? fullResult : display)
+      article.setRightContent(display, action)
+      $fetch('/api/text/update', { method: 'POST', body: { id, explanations: { [`${pid}:${action}`]: parsed ? fullResult : display } } }).catch(() => {})
+    } else {
+      article.setCachedExplanation(pid, action, fullResult)
+      article.setRightContent(fullResult, action)
+      $fetch('/api/text/update', { method: 'POST', body: { id, explanations: { [`${pid}:${action}`]: fullResult } } }).catch(() => {})
+    }
   } catch (e: any) { stopStreaming() }
   finally { pendingExplain.value = '' }
 }
+
+// ── 段落解释的解析结果 + 句子高亮联动 ──
+const explainParsed = ref<ExplainJson | null>(null)
+/** 整段翻译的 HTML（选中原文时高亮对应句段） */
+const transParaHtml = ref('')
+/** 缓存词汇表+精讲的 Markdown，避免高亮变化时重复解析 */
+const explainBodyMarkdown = computed(() => explainParsed.value ? renderExplainBody(explainParsed.value) : '')
+/** 整体翻译渲染：Markdown + 换行 + 高亮标记（trans-hl）一次处理 */
+const transRenderedHtml = computed(() => {
+  if (!transParaHtml.value) return ''
+  try {
+    return marked.parse(transParaHtml.value, { breaks: true, gfm: true, html: true }) as string
+  } catch {
+    return escapeHtml(transParaHtml.value).replace(/\n/g, '<br>')
+  }
+})
+
+// ── 解释全文（后台批量生成，离开页面任务继续）──
+const explainAll = reactive({ running: false, total: 0, done: 0, failed: 0 })
+let explainAllTimer: ReturnType<typeof setInterval> | null = null
+
+/** 后台「解释全文」完成后：重新拉取 explanations 刷新内存缓存，并重载当前段落显示 */
+async function refreshExplanationsAfterExplainAll() {
+  try {
+    const data = await $fetch<any>(`/api/text/${id}`)
+    if (data.explanations) {
+      for (const [k, v] of Object.entries(data.explanations)) {
+        const [pid, act] = k.split(':')
+        article.setCachedExplanation(pid, act as any, v as string)
+      }
+    }
+    const pid = activeExplainPid.value || activeParagraphId.value
+    if (pid) loadExplanationEditor(pid)
+  } catch {}
+}
+
+async function pollExplainAll() {
+  try {
+    const p = await $fetch<{ total: number; done: number; failed: number; running: boolean }>(
+      `/api/text/${id}/explain-all-progress`,
+    )
+    explainAll.total = p.total
+    explainAll.done = p.done
+    explainAll.failed = p.failed
+    if (!p.running) {
+      explainAll.running = false
+      if (explainAllTimer) { clearInterval(explainAllTimer); explainAllTimer = null }
+      refreshExplanationsAfterExplainAll()
+    }
+  } catch {
+    explainAll.running = false
+    if (explainAllTimer) { clearInterval(explainAllTimer); explainAllTimer = null }
+  }
+}
+
+async function startExplainAll() {
+  if (explainAll.running) return
+  try {
+    const res = await $fetch<{ total: number; pending: number }>(`/api/text/${id}/explain-all`, { method: 'POST' })
+    explainAll.running = true
+    explainAll.total = res.total
+    explainAll.done = res.total - res.pending
+    if (explainAllTimer) clearInterval(explainAllTimer)
+    explainAllTimer = setInterval(pollExplainAll, 2000)
+    pollExplainAll()
+  } catch {
+    explainAll.running = false
+  }
+}
+
+onUnmounted(() => {
+  if (explainAllTimer) { clearInterval(explainAllTimer); explainAllTimer = null }
+})
 
 async function handleQuickTranslate(text: string, position: { x: number; y: number }) {
   tc.visible = true; tc.loading = true; tc.text = ''
@@ -2342,40 +3627,7 @@ async function handleQuickTranslate(text: string, position: { x: number; y: numb
   } catch { tc.visible = false }
 }
 
-// ── 段落笔记 ──
-function handleCreateNote(pid: string, text: string, startOffset: number, endOffset: number) {
-  const now = new Date().toISOString()
-  const noteId = `pn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-  paragraphNotes.value.push({
-    id: noteId,
-    paragraphId: pid,
-    startOffset,
-    endOffset,
-    quotedText: text,
-    userContent: '',
-    images: [],
-    createdAt: now,
-    updatedAt: now,
-  })
-  // 在原文中创建视觉标记（粉色高亮，不影响 AI 系统）
-  marks.value.push({
-    id: noteId, paragraphId: pid, startOffset, endOffset, text,
-    type: 'note', color: MARK_COLORS.note, detail: '', note: '', lemma: '',
-    createdAt: now,
-  })
-  saveMarks()
-  persistParagraphNotes()
-  // 同步创建知识要点
-  $fetch('/api/knowledge/create', {
-    method: 'POST',
-    body: {
-      content: text,
-      sourceId: id,
-      sourceTitle: title.value || article.analysis.value?.title || '',
-      sourceType: 'note',
-    },
-  }).catch(() => {})
-}
+// ── 历史摘抄笔记（仅保留旧数据展示与删除）──
 
 async function persistParagraphNotes() {
   try {
@@ -2398,8 +3650,22 @@ async function deleteNote(idx: number) {
   await persistParagraphNotes()
 }
 
-function jumpToNoteSource(note: ParagraphNote) {
-  activeTab.value = 'analyze'
+/** 从单词本跳转过来：定位到标记所在段落，并打开该标记的解析弹窗 */
+function focusMark(markId: string) {
+  const m = marks.value.find(x => x.id === markId && !x.deletedAt)
+  if (!m) return
+  nextTick(() => {
+    const block = document.querySelector(`.para-block[data-id="${m.paragraphId}"]`) as HTMLElement | null
+    if (block) {
+      block.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      block.classList.add('note-flash')
+      setTimeout(() => block.classList.remove('note-flash'), 2400)
+    }
+    handleShowMark(m)
+  })
+}
+
+function jumpToNoteSource(note: ParagraphNote) {  activeTab.value = 'analyze'
   nextTick(() => {
     const el = document.querySelector(`[data-id="${note.paragraphId}"]`)
     if (el) {
@@ -2414,18 +3680,43 @@ function paragraphIndex(pid: string): number {
   return paragraphs.value.findIndex(p => p.id === pid) + 1
 }
 
+/** 取标记所在句子：从选区向两侧扩到句末标点，作为卡片的记忆线索 */
+function sentenceAt(text: string, start: number, end: number): string {
+  if (!text) return ''
+  const isBoundary = (ch: string) => /[.!?。！？\n]/.test(ch)
+  let s = Math.max(0, start)
+  let e = Math.min(text.length, end)
+  while (s > 0 && !isBoundary(text[s - 1])) s--
+  while (e < text.length && !isBoundary(text[e])) e++
+  if (e < text.length && /[.!?。！？]/.test(text[e])) e++
+  return text.slice(s, e).replace(/\s+/g, ' ').trim().slice(0, 400)
+}
+
 async function handleCreateMark(pid: string, text: string, type: MarkType, startOffset: number, endOffset: number) {
   const dup = marks.value.find(m => m.paragraphId === pid && m.startOffset === startOffset && m.endOffset === endOffset)
   if (dup) return
-  const m: Mark = { id: `m_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type, color: MARK_COLORS[type], detail: '', note: '', createdAt: new Date().toISOString() }
-  marks.value.push(m); markPopup.mark = m; markPopup.visible = true; markPopup.loading = true; markPopup.typing = true; markPopup.typingContent = ''
+  const paraText = paragraphs.value.find(p => p.id === pid)?.text || ''
+  const m: Mark = { id: `m_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type, color: MARK_COLORS[type], detail: '', note: '', context: sentenceAt(paraText, startOffset, endOffset), createdAt: new Date().toISOString() }
+  marks.value.push(m)
+  // 默认自动生成解释；用户切换为手动后，仍可点击「AI 生成」
+  markPopup.mark = m; markPopup.visible = true; markPopup.loading = false; markPopup.typing = false; markPopup.typingContent = ''
   markPopup.position = { x: Math.min(window.innerWidth - 420, 400), y: 120 }
-  const para = paragraphs.value.find(p => p.id === pid)
-  const promptKey = type === 'word' ? 'markWord' : type === 'phrase' ? 'markPhrase' : 'markSentence'
+  // 与 AI 生成并行写库，不再让保存往返阻塞首字（生产 Turso 模式下每次保存为多次远程写）
+  void saveMarks()
+  if (markAutoGenerate.value) void handleGenerateMarkDetail()
+}
+
+/** 手动触发 AI 生成当前标记的解释内容 */
+async function handleGenerateMarkDetail() {
+  const m = markPopup.mark
+  if (!m || markPopup.loading || markPopup.typing) return
+  markPopup.loading = true; markPopup.typing = true; markPopup.typingContent = ''
+  const para = paragraphs.value.find(p => p.id === m.paragraphId)
+  const promptKey = m.type === 'word' ? 'markWord' : m.type === 'phrase' ? 'markPhrase' : 'markSentence'
   const filled = fillPrompt(promptKey, {
     articleContext: article.getArticleContext(),
     paragraphText: para?.text || '',
-    selectedText: text,
+    selectedText: m.text,
   })
   const msgs = [
     { role: 'system' as const, content: filled.system },
@@ -2438,14 +3729,22 @@ async function handleCreateMark(pid: string, text: string, type: MarkType, start
     // 提取原词
     const lemmaMatch = full.match(/\[LEMMA\]\/(.+?)\/\[\/LEMMA\]/)
     if (lemmaMatch && lemmaMatch[1].trim()) m.lemma = lemmaMatch[1].trim()
-    // savedVocab 已改为 computed 自动从 marks 提取，无需手动插入
   } catch { markPopup.typing = false; markPopup.loading = false }
   saveMarks()
 }
 
 function handleShowMark(mark: Mark) {
-  markPopup.mark = mark; markPopup.visible = true; markPopup.loading = false
+  markPopup.mark = mark; markPopup.visible = true; markPopup.loading = false; markPopup.typing = false; markPopup.typingContent = ''
   markPopup.position = { x: Math.min(window.innerWidth - 420, 400), y: 120 }
+}
+
+/** 保存手动编辑的标记解释内容 */
+function handleUpdateDetail(detail: string) {
+  const m = markPopup.mark
+  if (!m) return
+  m.detail = detail
+  const idx = marks.value.findIndex(x => x.id === m.id)
+  if (idx !== -1) { marks.value[idx].detail = detail; saveMarks() }
 }
 
 async function handleUpdateNote(note: string) {
@@ -2454,13 +3753,55 @@ async function handleUpdateNote(note: string) {
   if (idx !== -1) { marks.value[idx].note = note; saveMarks() }
 }
 
+/** 软删除标记：标记保留在数据里但进回收站（deletedAt 非空） */
 function handleDeleteMark() {
-  marks.value = marks.value.filter(m => m.id !== markPopup.mark.id)
-  markPopup.visible = false; saveMarks()
+  const m = markPopup.mark
+  const idx = marks.value.findIndex(x => x.id === m.id)
+  if (idx !== -1) {
+    marks.value[idx] = { ...marks.value[idx], deletedAt: new Date().toISOString() }
+    saveMarks()
+  }
+  markPopup.visible = false
+  progressMsg.value = '标记已移入回收站'
+  setTimeout(() => { if (progressMsg.value === '标记已移入回收站') progressMsg.value = '' }, 2000)
 }
 
-async function saveMarks() {
-  $fetch('/api/text/update', { method: 'POST', body: { id, marks: marks.value } }).catch(() => {})
+/** 从回收站恢复标记 */
+function restoreMark(mark: Mark) {
+  const idx = marks.value.findIndex(x => x.id === mark.id)
+  if (idx !== -1) {
+    const { deletedAt, ...rest } = marks.value[idx]
+    marks.value[idx] = rest as Mark
+    saveMarks()
+  }
+}
+
+/** 从回收站彻底删除（不可恢复） */
+function permanentDeleteMark(mark: Mark) {
+  if (!confirm(`彻底删除该标记「${mark.text}」？此操作不可恢复。`)) return
+  marks.value = marks.value.filter(x => x.id !== mark.id)
+  saveMarks()
+}
+
+/** 回收站保留期：30 天 */
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+/** 自动清理超过保留期的软删除标记 */
+function purgeExpiredTrash() {
+  const cutoff = Date.now() - TRASH_RETENTION_MS
+  const before = marks.value.length
+  marks.value = marks.value.filter(m => !m.deletedAt || new Date(m.deletedAt).getTime() > cutoff)
+  if (marks.value.length !== before) saveMarks()
+}
+
+/** 保存串行化：保证「先创建的快照」先落库，避免 AI 完成后的新快照被旧请求覆盖 */
+let saveChain: Promise<any> = Promise.resolve()
+function saveMarks() {
+  // 调用时立刻快照，防止流式生成期间 marks 变化影响本次请求体
+  const snapshot = JSON.parse(JSON.stringify(marks.value))
+  saveChain = saveChain
+    .then(() => $fetch('/api/text/update', { method: 'POST', body: { id, marks: snapshot } }))
+    .catch(() => {})
+  return saveChain
 }
 
 function handleSetPosition(pid: string) {
@@ -2469,9 +3810,138 @@ function handleSetPosition(pid: string) {
 }
 
 function jumpToReadingPos() {
-  if (!readingPosition.value) return
-  const el = document.querySelector(`[data-id="${readingPosition.value.paragraphId}"]`)
+  const rp = readingPosition.value
+  if (!rp) return
+  // 有段落内精确位置 → 跳到字符处
+  if (typeof rp.charOffset === 'number') {
+    const block = document.querySelector(`.para-block[data-id="${rp.paragraphId}"]`)
+    const textEl = block?.querySelector('.para-text') as HTMLElement | null
+    if (textEl) {
+      const rect = getCharRect(textEl, rp.charOffset)
+      const pane = articlePane.value
+      if (rect && pane) {
+        pane.scrollTo({
+          top: pane.scrollTop + rect.top - pane.getBoundingClientRect().top - pane.clientHeight * 0.2,
+          behavior: 'smooth',
+        })
+        nextTick(computeFlagPos)
+        return
+      }
+    }
+  }
+  // 兜底：段落级跳转
+  const el = document.querySelector(`[data-id="${rp.paragraphId}"]`)
   el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+/** 点击顶栏进度圆点 → 选中并跳转到对应段落 */
+function jumpToPara(index: number) {
+  const p = paragraphs.value[index]
+  if (!p) return
+  article.setActiveParagraph(p.id)
+  nextTick(() => {
+    const el = document.querySelector(`.para-block[data-id="${p.id}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      ;(el as HTMLElement).classList.add('note-flash')
+      setTimeout(() => (el as HTMLElement).classList.remove('note-flash'), 2000)
+    }
+  })
+}
+
+// ── 小红旗：段落内精确阅读位置标记 ──
+const flagPos = ref<{ pid: string; x: number; y: number } | null>(null)
+
+/** 兼容取光标位置 */
+function getCaretPoint(x: number, y: number): { node: Node; offset: number } | null {
+  const d = document as any
+  if (d.caretPositionFromPoint) {
+    const p = d.caretPositionFromPoint(x, y)
+    if (p) return { node: p.offsetNode, offset: p.offset }
+  }
+  const r = d.caretRangeFromPoint ? d.caretRangeFromPoint(x, y) : null
+  if (r) return { node: r.startContainer, offset: r.startOffset }
+  return null
+}
+
+/** 计算目标节点在段落文本中的字符偏移 */
+function calcCharOffset(container: HTMLElement, targetNode: Node, targetOffset: number): number {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  let acc = 0
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    if (node === targetNode) return acc + targetOffset
+    acc += (node.textContent || '').length
+  }
+  return acc
+}
+
+/** 定位段落内 charOffset 字符的视口矩形 */
+function getCharRect(container: HTMLElement, charOffset: number): DOMRect | null {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  let acc = 0
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    const len = (node.textContent || '').length
+    if (acc + len > charOffset) {
+      const range = document.createRange()
+      range.setStart(node, charOffset - acc)
+      range.setEnd(node, Math.min(charOffset - acc + 1, len))
+      const rect = range.getBoundingClientRect()
+      if (rect && (rect.width > 0 || rect.height > 0)) return rect
+      return (node.parentElement as HTMLElement)?.getBoundingClientRect() || rect
+    }
+    acc += len
+  }
+  return null
+}
+
+/** 在当前视口顶部标记阅读位置（小红旗） */
+function markCurrentPosition() {
+  // ① 有选中文字 → 红旗标记到选区起始位置（更精准）
+  const sel = window.getSelection()
+  if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0)
+    const textEl = (range.startContainer as Node).parentElement?.closest('.para-text') as HTMLElement | null
+    if (textEl) {
+      const block = textEl.closest('.para-block') as HTMLElement | null
+      const pid = block?.dataset.id
+      if (pid) {
+        const charOffset = calcCharOffset(textEl, range.startContainer, range.startOffset)
+        setReadingPosition(pid, charOffset, sel.toString().trim().slice(0, 50))
+        return
+      }
+    }
+  }
+  // ② 未选中任何文字 → 清除阅读位置（红旗消失）
+  clearReadingPosition()
+}
+
+/** 清除阅读位置（红旗消失） */
+function clearReadingPosition() {
+  readingPosition.value = null
+  flagPos.value = null
+  $fetch('/api/text/update', { method: 'POST', body: { id, readingPosition: null } }).catch(() => {})
+}
+
+/** 保存阅读位置并刷新红旗 */
+function setReadingPosition(pid: string, charOffset: number, selectedText = '') {
+  readingPosition.value = { paragraphId: pid, charOffset, selectedText, updatedAt: new Date().toISOString() }
+  $fetch('/api/text/update', { method: 'POST', body: { id, readingPosition: readingPosition.value } }).catch(() => {})
+  nextTick(computeFlagPos)
+}
+
+/** 计算红旗在段落内的位置 */
+function computeFlagPos() {
+  const rp = readingPosition.value
+  if (!rp || typeof rp.charOffset !== 'number') { flagPos.value = null; return }
+  const block = document.querySelector(`.para-block[data-id="${rp.paragraphId}"]`) as HTMLElement | null
+  const textEl = block?.querySelector('.para-text') as HTMLElement | null
+  if (!block || !textEl) { flagPos.value = null; return }
+  const rect = getCharRect(textEl, rp.charOffset)
+  const blockRect = block.getBoundingClientRect()
+  if (!rect) { flagPos.value = null; return }
+  flagPos.value = { pid: rp.paragraphId, x: rect.left - blockRect.left, y: rect.top - blockRect.top }
 }
 
 function handlePronounce(word: string) { article.pronounceWord(word) }
@@ -2526,11 +3996,120 @@ async function sendChat() {
   finally { chatLoading.value = false; nextTick(() => { if (qaAnswerRef.value) qaAnswerRef.value.scrollTop = qaAnswerRef.value.scrollHeight }) }
 }
 
-onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
+onUnmounted(() => { /* clickTimer 已移除 */ })
 </script>
 
 <style scoped>
 .reader-app { display: flex; flex-direction: column; height: 100vh; font-family: 'DM Sans', sans-serif; background: var(--ra-bg, #ffffff); color: #1a1a18; transition: background 0.3s; }
+
+/* 解释全文按钮 */
+.ea-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid #d8d5cd;
+  background: #f7f6f3;
+  color: #55524a;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.ea-btn:hover:not(:disabled) {
+  background: #fff;
+  border-color: #3d3591;
+  color: #3d3591;
+}
+.ea-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 「AI 翻译此段」主按钮 */
+.ai-translate-btn {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 14px;
+  border-radius: 8px;
+  border: 1px solid #3d3591;
+  background: #3d3591;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.ai-translate-btn:hover:not(:disabled) {
+  background: #4a43a8;
+  border-color: #4a43a8;
+}
+.ai-translate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 翻译区逐句显示 + 高亮联动 */
+.trans-section {
+  margin-bottom: 14px;
+}
+.trans-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #3d3591;
+  margin-bottom: 8px;
+}
+.trans-para {
+  line-height: 1.8;
+  color: #3a3a36;
+}
+.trans-para :deep(p) { margin: 0 0 8px; }
+.trans-para :deep(p:last-child) { margin-bottom: 0; }
+.trans-para :deep(ul),
+.trans-para :deep(ol) { padding-left: 1.5em; margin: 4px 0; }
+.trans-para :deep(strong) { font-weight: 600; color: #1a1a18; }
+.trans-para :deep(.trans-hl) {
+  background: #fef08a;
+  color: #1a1a18;
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 500;
+}
+
+/* 解释加载中 */
+.explain-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  color: #8a8780;
+  font-size: 13px;
+}
+.explain-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #d8d5cd;
+  border-top-color: #3d3591;
+  border-radius: 50%;
+  animation: explain-spin 0.8s linear infinite;
+}
+@keyframes explain-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 阅读位置小红旗（段落内绝对定位） */
+.para-block {
+  position: relative;
+}
+.pos-flag {
+  position: absolute;
+  font-size: 16px;
+  line-height: 1;
+  z-index: 8;
+  transform: translateY(-100%);
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
 
 /* 选中文字浮动工具条 */
 .sel-toolbar {
@@ -2542,6 +4121,24 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 .sel-label { font-size: 14px; font-weight: 700; color: var(--c); }
 .sel-hint { font-size: 10px; color: #a09e97; line-height: 1; }
 .sel-btn:hover { background: #ffffff; border-color: var(--c); }
+
+/* 移动端适配：工具条更紧凑，隐藏提示文字，防止溢出屏幕 */
+@media (max-width: 600px) {
+  .sel-toolbar {
+    gap: 3px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    max-width: calc(100vw - 16px);
+    flex-wrap: nowrap;
+  }
+  .sel-btn {
+    min-width: 38px;
+    padding: 6px 6px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sel-label { font-size: 15px; }
+  .sel-hint { display: none; }
+}
 
 /* 标记高亮 */
 :deep(mark) { cursor: pointer; transition: filter 0.12s; }
@@ -2670,6 +4267,7 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 .para-text :deep(h3) { font-size: 1.05em; }
 .para-text :deep(p) { margin: 0.4em 0; }
 .para-text :deep(strong) { font-weight: 600; }
+.para-text :deep(em) { font-style: italic; }
 .para-text :deep(ul), .para-text :deep(ol) { padding-left: 1.5em; margin: 0.3em 0; }
 .para-text :deep(code) { background: #f1f5f9; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }
 .para-text :deep(blockquote) { border-left: 3px solid #6366f1; padding-left: 1em; margin: 0.5em 0; color: #64748b; }
@@ -2797,6 +4395,22 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   width: 5px; height: 5px;
   border-radius: 50%;
   background: #3d3591;
+}
+
+/* 段落笔记标记 — 序号右上角琥珀色圆点 */
+.para-num.has-note {
+  position: relative;
+}
+.para-num.has-note::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 1.5px solid #ffffff;
+  z-index: 1;
 }
 
 /* ---- QA 浮动区 ---- */
@@ -3030,6 +4644,13 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 .seg-size-opt.active {
   background: #f3f0fd;
 }
+.seg-size-opt.is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.seg-size-opt.is-disabled:hover {
+  background: transparent;
+}
 .seg-size-label {
   font-size: 13px;
   font-weight: 500;
@@ -3039,6 +4660,59 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   font-size: 11px;
   color: #a09e97;
   font-family: 'DM Mono', monospace;
+}
+/* 分段菜单分组标签 */
+.seg-size-group-label {
+  padding: 6px 14px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #b0ada4;
+  font-family: 'DM Sans', sans-serif;
+}
+.seg-size-group-label:not(:first-child) {
+  border-top: 0.5px solid rgba(0, 0, 0, 0.06);
+  margin-top: 4px;
+}
+/* 简单分段：每段句数选择 */
+.seg-size-simple {
+  border-top: 0.5px solid rgba(0, 0, 0, 0.06);
+  margin-top: 2px;
+  padding: 8px 10px 4px;
+}
+.seg-size-simple-label {
+  display: block;
+  font-size: 11px;
+  color: #a09e97;
+  margin-bottom: 6px;
+  font-family: 'DM Sans', sans-serif;
+}
+.seg-size-simple-opts {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.seg-size-simple-opt {
+  min-width: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  background: #fafaf8;
+  color: #6b6963;
+  font-size: 12px;
+  font-family: 'DM Mono', monospace;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.seg-size-simple-opt:hover {
+  border-color: rgba(61, 53, 145, 0.25);
+  color: #3d3591;
+}
+.seg-size-simple-opt.active {
+  background: #3d3591;
+  border-color: #3d3591;
+  color: #ffffff;
 }
 .seg-drop-enter-active {
   transition: opacity 0.15s, transform 0.15s;
@@ -3093,6 +4767,20 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   border-radius: 3px;
   font-size: 0.9em;
 }
+/* ── 富文本笔记编辑器 ── */
+.notes-editor-wrap {
+  border: 1px solid #ebe9e4;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  margin-bottom: 16px;
+}
+.notes-editor-wrap :deep(.re-root) { min-height: 320px; }
+.notes-editor-wrap :deep(.re-content) { min-height: 260px; }
+
 /* ── 段落笔记卡片 ── */
 .note-card {
   margin-bottom: 14px;
@@ -3162,6 +4850,41 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
   background: rgba(0,0,0,0.06);
 }
 
+/* ── 每段落笔记 ── */
+.note-para-chip {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: #f0eefb;
+  color: #3d3591;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+.note-editor--para {
+  min-height: 260px;
+  margin-bottom: 0;
+}
+.note-editor--para :deep(.re-root) { min-height: 260px; }
+.note-editor--para :deep(.re-content) { min-height: 210px; }
+.note-preview-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b6963;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note-card--index {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.note-card--index:hover {
+  border-color: rgba(61, 53, 145, 0.25);
+  background: #faf9ff;
+}
 /* ── 重叠标记：上层透明度递减 ── */
 :deep(mark.hl-top) {
   border-bottom-style: dashed;
@@ -3203,15 +4926,62 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
 }
 
 /* ── 手机端适配 ── */
+/* 顶栏紧凑模式（<1152px 或触屏设备）：标题/段落进度隐藏，功能按钮收进「⋯」竖排下拉（带文字标签）；宽屏保持横向排列 */
+.topbar-actions { display: contents; }
+.topbar-more-btn { display: none; }
+.tb-label { display: none; }
+.reader-topbar.topbar-compact .reader-title-center { display: none; }
+.reader-topbar.topbar-compact .topbar-actions { display: none; }
+.reader-topbar.topbar-compact .topbar-actions.open {
+  display: block;
+  position: absolute; top: 46px; right: 8px; left: auto; width: 178px; z-index: 850;
+  background: #ffffff; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 12px;
+  padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.16);
+}
+.reader-topbar.topbar-compact .topbar-actions.open .reader-icon-btn {
+  display: flex; width: 100%; height: auto;
+  align-items: center; gap: 8px; justify-content: flex-start; text-align: left;
+  padding: 8px 10px; border-radius: 8px;
+  border: none; background: transparent;
+  color: #55534d;
+}
+.reader-topbar.topbar-compact .topbar-actions.open .reader-icon-btn:hover { background: #f0efe9; }
+.reader-topbar.topbar-compact .topbar-actions.open .tb-label {
+  display: inline; font-size: 13px; font-weight: 500; color: inherit;
+  font-family: 'DM Sans', system-ui, sans-serif; white-space: nowrap;
+}
+.reader-topbar.topbar-compact .topbar-actions.open .segment-size-wrap { width: 100%; }
+.reader-topbar.topbar-compact .topbar-actions.open .seg-size-menu {
+  position: static; width: 100%; min-width: 0; box-shadow: none; border: none; padding: 4px 0 4px 10px;
+}
+/* 触发按钮：书本图标 + 「功能」+ 箭头（白底描边胶囊，参考「学习」按钮样式） */
+.reader-topbar.topbar-compact .topbar-more-btn {
+  display: flex; width: auto; height: auto;
+  align-items: center; gap: 7px;
+  padding: 8px 14px; border-radius: 10px;
+  border: 0.5px solid rgba(0,0,0,0.14); background: #ffffff; color: #44434d;
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+.reader-topbar.topbar-compact .topbar-more-btn:hover { background: #f5f4f0; }
+.reader-topbar.topbar-compact .topbar-more-btn.active { background: #f0efe9; }
+.reader-topbar.topbar-compact .more-label { display: inline; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.reader-topbar.topbar-compact .more-chevron { transition: transform .15s; }
+.reader-topbar.topbar-compact .topbar-more-btn.active .more-chevron { transform: rotate(180deg); }
+.topbar-more-btn.active { background: #edeafd; color: #3d3591; }
+
 @media (max-width: 767px) {
-  .reader-layout { flex-direction: column; min-height: 100dvh; }
-  .reader-body { flex-direction: column; }
-  .reader-article-pane { flex: 1; width: 100% !important; max-width: 100% !important; padding: 0; overflow-y: auto; }
+  /* dvh = 可视视口动态高度：浏览器地址栏收展时布局始终贴合屏幕，底部横条不会被顶出屏幕 */
+  .reader-app { height: 100dvh; }
+  .reader-layout { flex-direction: column; flex: 1; min-height: 0; }
+  .reader-body { flex-direction: column; flex: 1; min-height: 0; }
+  .reader-article-pane { flex: 1 1 0; min-height: 0; width: 100% !important; max-width: 100% !important; padding: 0; overflow-y: auto; }
   .article-body { font-size: 15px; line-height: 1.85; }
   .reader-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 4px; }
   .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }
   .panel-divider.hidden { display: none; }
   .panel-divider { display: none; }
+  /* 移动端隐藏阅读赛道竖条（竖向空间有限，且会挤压正文） */
+  :deep(.game-rail) { display: none !important; }
   .reader-header { padding: 10px 16px; }
   .reader-header h1 { font-size: 18px; }
   .page-header { padding: 10px 16px; }
@@ -3245,6 +5015,7 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
     align-items: center;
     justify-content: space-between;
     padding: 8px 14px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
     gap: 8px;
     flex-shrink: 0;
     position: relative;
@@ -3337,5 +5108,266 @@ onUnmounted(() => { if (clickTimer) clearTimeout(clickTimer) })
     height: auto;
     overflow: visible;
   }
+}
+
+/* ── 手动分段 / 整理上传 弹窗 ── */
+.manual-seg-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(15, 15, 20, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.manual-seg-modal {
+  width: 640px; max-width: 100%;
+  max-height: 85vh;
+  display: flex; flex-direction: column;
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+.manual-seg-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  font-size: 14px; font-weight: 600; color: #1a1a18;
+  border-bottom: 0.5px solid rgba(0,0,0,0.08);
+}
+.manual-seg-close {
+  width: 26px; height: 26px; border: none; background: none;
+  font-size: 20px; line-height: 1; color: #a09e97; cursor: pointer;
+  border-radius: 6px;
+}
+.manual-seg-close:hover { background: #f0efe9; color: #1a1a18; }
+.manual-seg-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.manual-seg-label {
+  font-size: 12px; color: #6b6963;
+}
+.manual-seg-textarea {
+  width: 100%; min-height: 160px;
+  padding: 10px 12px;
+  border: 0.5px solid rgba(0,0,0,0.12); border-radius: 8px;
+  font-size: 13px; line-height: 1.7; color: #3a3a36;
+  font-family: 'DM Mono', 'SF Mono', monospace;
+  resize: vertical; outline: none;
+  background: #fafaf8;
+}
+.manual-seg-textarea:focus { border-color: #3d3591; box-shadow: 0 0 0 2px rgba(61,53,145,0.08); }
+.manual-seg-textarea.manual-seg-notes { min-height: 110px; }
+.manual-seg-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0.5px solid rgba(0,0,0,0.12);
+  border-radius: 8px;
+  font-size: 15px;
+  color: #1a1a18;
+  font-family: 'DM Mono', monospace;
+  outline: none;
+  background: #fafaf8;
+  box-sizing: border-box;
+}
+.manual-seg-input:focus { border-color: #3d3591; box-shadow: 0 0 0 2px rgba(61,53,145,0.08); background: #fff; }
+.manual-seg-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6b6963;
+  cursor: pointer;
+  user-select: none;
+}
+.manual-seg-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: #3d3591;
+  cursor: pointer;
+}
+.manual-seg-count {
+  font-size: 11px; color: #8a8880;
+}
+.manual-seg-warn { color: #f59e0b; margin-left: 6px; }
+
+/* ── 标记回收站 ── */
+.reader-icon-btn.has-trash {
+  position: relative;
+}
+.reader-icon-btn.has-trash::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 1px solid #fff;
+}
+.trash-modal {
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.trash-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.trash-empty {
+  color: #c0bdb4;
+  font-size: 13px;
+  text-align: center;
+  padding: 30px 0;
+}
+.trash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: #fafaf8;
+}
+.trash-item-info {
+  min-width: 0;
+}
+.trash-item-text {
+  font-size: 13px;
+  color: #4a4a46;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trash-item-meta {
+  font-size: 11px;
+  color: #a09e97;
+  margin-top: 2px;
+  font-family: 'DM Mono', monospace;
+}
+.trash-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.trash-restore-btn,
+.trash-delete-btn {
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.trash-restore-btn {
+  color: #3d3591;
+}
+.trash-restore-btn:hover {
+  background: #f0eefb;
+  border-color: rgba(61, 53, 145, 0.25);
+}
+.trash-delete-btn {
+  color: #dc2626;
+}
+.trash-delete-btn:hover {
+  background: #fef2f2;
+  border-color: rgba(220, 38, 38, 0.25);
+}
+.manual-seg-error {
+  font-size: 12px; color: #dc2626; background: #fef2f2;
+  border-radius: 6px; padding: 6px 10px;
+}
+.manual-seg-footer {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 12px 18px;
+  border-top: 0.5px solid rgba(0,0,0,0.08);
+}
+.manual-seg-btn {
+  padding: 7px 18px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  border: 1px solid transparent; transition: all 0.15s;
+  font-family: 'DM Sans', sans-serif;
+}
+.manual-seg-cancel { background: #f7f6f3; color: #55524a; border-color: #e0ddd5; }
+.manual-seg-cancel:hover { background: #fff; }
+.manual-seg-save { background: #3d3591; color: #fff; }
+.manual-seg-save:hover:not(:disabled) { background: #4a43a8; }
+.manual-seg-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── 章节目录 ── */
+.toc-modal {
+  width: 90%;
+  max-width: 440px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  padding: 20px 24px;
+  box-sizing: border-box;
+}
+.toc-modal .modal-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a18;
+}
+.toc-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  margin-top: 4px;
+}
+.toc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: 13px;
+  color: #4a4a46;
+  transition: background 0.12s;
+}
+.toc-item:hover {
+  background: #f2f1ec;
+}
+.toc-item-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toc-item-page {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+}
+.toc-level-0 {
+  font-weight: 700;
+  font-size: 14px;
+  color: #2a2a28;
+}
+.toc-level-0 .toc-item-title {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.toc-level-2 {
+  padding-left: 26px;
+  color: #6a6a66;
 }
 </style>

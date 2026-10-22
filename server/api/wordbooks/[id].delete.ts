@@ -1,4 +1,4 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { queryOne, runQuery, runOnTurso, deleteRowsFromTurso } from '../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const bookId = getRouterParam(event, 'id')
@@ -11,5 +11,8 @@ export default defineEventHandler(async (event) => {
   }
   await runQuery('DELETE FROM words WHERE bookId=?', [bookId])
   await runQuery('DELETE FROM wordbooks WHERE id=?', [bookId])
+  // 同步删除云端，防止被拉回
+  await runOnTurso('DELETE FROM words WHERE bookId=?', [bookId])
+  await deleteRowsFromTurso('wordbooks', 'id', [bookId])
   return { ok: true }
 })

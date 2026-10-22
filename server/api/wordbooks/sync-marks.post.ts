@@ -54,7 +54,7 @@ export default defineEventHandler(async () => {
 
   // 读取所有有标记的文本
   const rows = await queryAll(
-    `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
+    `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]' AND deletedAt IS NULL`
   )
 
   const now = new Date().toISOString()
@@ -67,6 +67,8 @@ export default defineEventHandler(async () => {
     if (!marks.length) continue
 
     for (const mark of marks) {
+      // 跳过回收站中的软删除标记
+      if (mark.deletedAt) { skipped++; continue }
       const bookId = MARK_TO_BOOK[mark.type]
       if (!bookId || !mark.text?.trim()) continue
 

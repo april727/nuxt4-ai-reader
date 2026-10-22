@@ -4,7 +4,7 @@ export default defineEventHandler(async (event) => {
   const q = (getQuery(event).q as string || '').trim()
   if (!q) return []
 
-  const rows = await queryAll("SELECT id,title,excerpt,source,createdAt FROM texts WHERE text LIKE ? OR title LIKE ? ORDER BY createdAt DESC LIMIT 20", [`%${q}%`, `%${q}%`])
+  const rows = await queryAll("SELECT id,title,excerpt,source,createdAt FROM texts WHERE deletedAt IS NULL AND (text LIKE ? OR title LIKE ?) ORDER BY createdAt DESC LIMIT 20", [`%${q}%`, `%${q}%`])
 
   const results: any[] = []
   for (const r of rows) {

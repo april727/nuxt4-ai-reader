@@ -7,7 +7,7 @@ export default defineEventHandler(async () => {
   if (cached) return cached
 
   const rows = await queryAll(
-    'SELECT folder, COUNT(*) as count FROM texts GROUP BY folder'
+    'SELECT folder, COUNT(*) as count FROM texts WHERE deletedAt IS NULL GROUP BY folder'
   )
   const counts: Record<string, number> = {}
   for (const row of rows) {

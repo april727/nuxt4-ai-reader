@@ -260,10 +260,15 @@ function playWord(item: MarkItem) {
   if (playingId.value === item.mark.id) return
   playingId.value = item.mark.id
   const word = (item.mark.lemma || item.mark.text).replace(/[^a-zA-Z]/g, '').toLowerCase()
-  const audio = new Audio(
-    `https://audio.beingfine.cn/speeches/UK/UK-speech/${word}.mp3`
-  )
-  audio.play().catch(() => {
+  pronResolve(word).then((r) => {
+    if (r) {
+      new Audio(r.src).play().catch(() => {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'
+        speechSynthesis.speak(u)
+      })
+      return
+    }
     const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'
     speechSynthesis.speak(u)

@@ -1,13 +1,8 @@
 import type { MarkExplainRequest } from '#shared/types'
+import { deepseekChat } from '../../utils/deepseek'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<MarkExplainRequest>(event)
-
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
 
   const typeLabel = body.type === 'word' ? '单词/词汇' : body.type === 'phrase' ? '短语/搭配' : '句子'
 
@@ -24,14 +19,14 @@ ${body.text}
 
 ## 要求
 ${body.type === 'word' ? `
+### 当前语境用法
+分析该词在当前段落中的具体含义和语用功能。
+
 ### 基本释义
 列出该词的核心含义（1~2个）。
 
 ### 其他常用用法
 列出该词在不同语境下的常见用法（简短说明+例句）。
-
-### 当前语境用法
-分析该词在当前段落中的具体含义和语用功能。
 ` : body.type === 'phrase' ? `
 ### 短语含义
 解释该短语/搭配的意思。
@@ -63,18 +58,14 @@ ${body.type === 'word' ? `
 
 输出格式（严格 JSON，不要额外文字）：
 {
-  "detail": "### 基本释义\\n...\\n### 其他常用用法\\n...",
+  "detail": "### 当前语境用法\\n...\\n### 基本释义\\n...",
   "phonetic": "/ɪɡˈzæmpəl/"
 }`
 
-  const response = await $fetch<{ choices: Array<{ message: { content: string } }> }>(
-    `${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: { model, messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 2500 }
-    })
-
-  const content = response.choices[0]?.message?.content || ''
+  const content = await deepseekChat(
+    [{ role: 'user', content: prompt }],
+    { temperature: 0.5, maxTokens: 2500 },
+  )
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     // 兜底：返回纯文本

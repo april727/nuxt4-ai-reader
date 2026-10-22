@@ -79,7 +79,7 @@
         :counts="folderCounts"
         :collapsed="sidebarCollapsed"
         @toggle="sidebarCollapsed = !sidebarCollapsed"
-        @select="activeFolder = $event"
+        @select="handleFolderSelect"
         @create="handleCreateFolder"
         @drop-on-folder="handleDropOnFolder"
         @delete-folder="handleDeleteFolder"
@@ -89,11 +89,21 @@
       />
     </aside>
 
+    <!-- 手机端抽屉遮罩 -->
+    <div v-if="isMobile && !sidebarCollapsed" class="sidebar-scrim" @click="sidebarCollapsed = true"></div>
+
     <!-- 右侧内容区 -->
     <main class="lib-main">
       <header class="lib-toolbar">
+      
         <div class="lib-toolbar-row">
           <div class="lib-toolbar-left">
+            <!-- 手机端：抽屉打开按钮 -->
+            <button v-if="isMobile" class="drawer-open-btn" @click="sidebarCollapsed = false" title="打开文件夹目录">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+              </svg>
+            </button>
             <h1 class="lib-title">{{ activeFolderName }}</h1>
             <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
           </div>
@@ -113,6 +123,11 @@
               {{ sortLabel }}
             </button>
           </div>
+      <!-- 便签按钮 -->
+      <button class="notes-trigger-btn" @click="showNotes = true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 21V4h11l5 5v12z"/><polyline points="14 4 14 10 20 10"/></svg>
+        <span>便签</span>
+      </button>
           <div class="lib-actions">
             <ToolbarActions
               @import-video="showVideoImport = true"
@@ -123,6 +138,7 @@
             />
           </div>
         </div>
+     
       </header>
 
       <!-- 搜索条 -->
@@ -204,6 +220,10 @@
         @close="showVideoImport = false"
       />
     </main>
+    <!-- 便签弹窗 -->
+    <ClientOnly>
+      <StickyNotesModal v-model="showNotes" />
+    </ClientOnly>
 
     <!-- 右键菜单 -->
     <Teleport to="body">
@@ -316,7 +336,7 @@
 import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
 
 useHead({ title: 'AI 阅读分析 - 书架' })
-
+const showNotes = ref(false)
 interface Folder { id: string; name: string }
 interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean }
 
@@ -331,19 +351,51 @@ const filterOptions = [
   { key: 'video', label: '视频' },
 ]
 
-// SSR 预取（不使用顶层 await 避免 Suspense 阻塞渲染）
+// 首屏数据改为纯客户端拉取（server:false）：SSR 阶段不带登录 cookie 会 401，且非 await 的
+// useAsyncData 服务端结果不会序列化到首屏，导致首次进入书架/侧栏为空、点一下文件夹才刷新。
+// getCachedData：返回首页时立即复用上次的客户端缓存（秒显），挂载后再后台静默刷新保鲜。
+const nuxtApp = useNuxtApp()
+function clientCached(key: string) {
+  return (nuxtApp.payload.data as Record<string, any>)?.[key] ?? (nuxtApp.static.data as Record<string, any>)?.[key]
+}
+
 const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', () =>
-  $fetch<Folder[]>('/api/folder/list'), { default: () => [] as Folder[] }
+  $fetch<Folder[]>('/api/folder/list'), {
+    default: () => [] as Folder[], server: false, lazy: true,
+    getCachedData: (key) => clientCached(key),
+  }
 )
 
 const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncData(
   () => `books-${activeFolder.value}`,
   () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
-  { watch: [activeFolder], default: () => [] as BookItem[] }
+  { watch: [activeFolder], default: () => [] as BookItem[], server: false, lazy: true, getCachedData: (key) => clientCached(key) }
 )
 
 const folderCounts = ref<Record<string, number>>({})
 const sidebarCollapsed = ref(false)
+
+// 视口变窄时自动折叠侧栏，变宽时自动展开；手动拖动仍可随时切换
+const NARROW_BREAKPOINT = 1024
+function syncSidebarByWidth() {
+  if (typeof window === 'undefined') return
+  sidebarCollapsed.value = window.innerWidth < NARROW_BREAKPOINT
+}
+onMounted(() => {
+  syncSidebarByWidth()
+  window.addEventListener('resize', syncSidebarByWidth)
+  // 已有缓存数据时：立即显示缓存（getCachedData 已生效），后台静默刷新最新
+  if ((folders.value?.length ?? 0) > 0) loadFolders()
+  if ((books.value?.length ?? 0) > 0) loadBooks()
+})
+onBeforeUnmount(() => window.removeEventListener('resize', syncSidebarByWidth))
+
+// 手机端抽屉：选中文件夹后自动收回
+const isMobile = useIsMobile()
+function handleFolderSelect(id: string) {
+  activeFolder.value = id
+  if (isMobile.value) sidebarCollapsed.value = true
+}
 function loadSidebarPref(): boolean {
   try {
     return localStorage.getItem('sidebar-collapsed') === 'true'
@@ -446,8 +498,8 @@ async function loadFolders() {
 }
 
 async function loadBooks() {
+  counts() // 与列表请求并行，计数徽章不再晚一拍
   try { await refreshBooks() } catch {}
-  counts()
 }
 
 async function handleVideoImported(result: { id: string; title: string }) {
@@ -563,9 +615,9 @@ async function processSingleFile(file: File) {
   if (TEXT_EXTS.includes(ext!)) {
     if (ext === 'pdf') {
       const fd = new FormData(); fd.append('file', file)
-      const result = await $fetch<{ text: string; filePath: string }>('/api/parse-pdf', { method: 'POST', body: fd })
+      const result = await $fetch<{ text: string; filePath: string; chapters?: any[] }>('/api/parse-pdf', { method: 'POST', body: fd })
       if (result?.text) {
-        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, folder: activeFolder.value, filePath: result.filePath } })
+        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, folder: activeFolder.value, filePath: result.filePath, chapters: result.chapters || [] } })
       }
     } else {
       const text = await file.text()
@@ -703,12 +755,17 @@ async function toggleComplete() {
   } catch (e: any) {}
 }
 
-async function handleModalText(text: string, filePath?: string) {
+async function handleModalText(text: string, filePath?: string, title?: string, chapters?: any[]) {
   uploading.value = true
   try {
+    // 用文件名（去掉扩展名）作为默认标题
+    const cleanTitle = title ? title.replace(/\.[^.]+$/, '').trim() : undefined
+    // 来源判定：带文件名的是上传/解析，不带的是粘贴（此前用 showPaste 判定，
+    // 但该状态从未被置为 true，粘贴也会被标成 upload）
+    const source = cleanTitle ? 'upload' : 'paste'
     const result = await $fetch<{ id: string }>('/api/text/save', {
       method: 'POST',
-      body: { text, source: showPaste.value ? 'paste' : 'upload', folder: activeFolder.value, filePath },
+      body: { text, source, title: cleanTitle, folder: activeFolder.value, filePath, chapters: chapters || [] },
     })
     closeModal(); await loadBooks()
     if (result.id) navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`)
@@ -750,6 +807,27 @@ function stopAutoRefresh() {
 </script>
 
 <style scoped>
+.notes-trigger-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #6b6963;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.notes-trigger-btn:hover {
+  color: #3d3591;
+  border-color: rgba(61, 53, 145, 0.2);
+  background: #f8f7ff;
+}
 /* ── Layout ── */
 .library-layout {
   display: flex;
@@ -1384,10 +1462,17 @@ function stopAutoRefresh() {
 /* ── 手机端 / 窄屏适配 ── */
 @media (max-width: 767px) {
   .library-layout { flex-direction: row; }
-  .lib-sidebar { position: absolute; z-index: 50; height: 100vh; }
-  .lib-sidebar.hidden { background: rgba(249, 248, 246, 0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-  .lib-sidebar:not(.hidden) { box-shadow: 4px 0 24px rgba(0,0,0,0.15); }
-  .lib-main { padding-left: 44px; }
+  /* 手机端抽屉：收起=完全隐藏（零遮挡），展开=悬浮抽屉 + 遮罩 */
+  .lib-sidebar { position: fixed; z-index: 300; left: 0; top: 0; height: 100dvh; width: min(78vw, 280px) !important; min-width: 0 !important; }
+  .lib-sidebar.hidden { display: none; }
+  .lib-sidebar:not(.hidden) { box-shadow: 8px 0 28px rgba(0,0,0,0.22); }
+  .sidebar-scrim { position: fixed; inset: 0; z-index: 290; background: rgba(0,0,0,0.35); }
+  .drawer-open-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; margin-right: 8px; flex-shrink: 0;
+    border: none; border-radius: 8px; background: transparent; color: #55534d; cursor: pointer;
+  }
+  .drawer-open-btn:hover { background: #f0efe9; }
   .sidebar-toggle { display: none; }
   .lib-main { width: 100%; padding: 0; }
 

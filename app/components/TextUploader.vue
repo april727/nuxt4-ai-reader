@@ -97,7 +97,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  submitText: [text: string, filePath?: string]
+  submitText: [text: string, filePath?: string, title?: string, chapters?: any[]]
   analyze: []
   clear: []
   batchDone: []
@@ -186,16 +186,16 @@ async function processSingle(file: File) {
   const ext = file.name.split('.').pop()?.toLowerCase()
   if (ext === 'pdf') {
     const fd = new FormData(); fd.append('file', file)
-    const result = await $fetch<{ text: string; filePath?: string }>('/api/parse-pdf', { method: 'POST', body: fd })
+    const result = await $fetch<{ text: string; filePath?: string; chapters?: any[] }>('/api/parse-pdf', { method: 'POST', body: fd })
     if (result?.text) {
-      emit('submitText', result.text, result.filePath)
+      emit('submitText', result.text, result.filePath, file.name, result.chapters)
     } else {
       throw new Error('PDF 解析后未提取到文本')
     }
   } else if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
     const text = await file.text()
     if (text.trim()) {
-      emit('submitText', text)
+      emit('submitText', text, undefined, file.name)
     }
   } else {
     throw new Error(`不支持的文件格式: ${ext}`)
@@ -208,9 +208,9 @@ async function saveFileDirectly(file: File) {
   if (TXT_EXTS.includes(ext!)) {
     if (ext === 'pdf') {
       const fd = new FormData(); fd.append('file', file)
-      const result = await $fetch<{ text: string; filePath: string }>('/api/parse-pdf', { method: 'POST', body: fd })
+      const result = await $fetch<{ text: string; filePath: string; chapters?: any[] }>('/api/parse-pdf', { method: 'POST', body: fd })
       if (result?.text) {
-        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, filePath: result.filePath } })
+        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, filePath: result.filePath, chapters: result.chapters || [] } })
       }
     } else {
       const text = await file.text()
@@ -246,15 +246,11 @@ function submitPaste() {
   const text = pasteText.value.trim()
   if (!text || uploadLoading.value) return
 
+  // 只交给父组件统一保存（此前这里还额外直接调了一次 /api/text/save，
+  // 导致同一次粘贴被写两遍，书架上出现两个内容相同的文件）
   emit('submitText', text)
   pasteText.value = ''
   showPasteArea.value = false
-
-  // 后台保存到服务端
-  $fetch('/api/text/save', {
-    method: 'POST',
-    body: { text, source: 'paste' },
-  }).catch(() => {})
 }
 
 // ---------- 清除 ----------

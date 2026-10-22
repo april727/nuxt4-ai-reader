@@ -1,16 +1,12 @@
-import { PROMPTS } from '../../utils/prompts'
+import { getPromptTemplate } from '../../utils/promptManager'
+import { deepseekChat } from '../../utils/deepseek'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ text: string }>(event)
   if (!body?.text?.trim()) throw createError({ statusCode: 400, message: '缺少文本内容' })
 
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-
-  const promptTemplate = PROMPTS['podcast_extract']
+  // 从 Prompt 管理器获取模板（失败时自动降级到本地常量）
+  const promptTemplate = await getPromptTemplate('podcast_extract')
 
   // 截断输入，留足 token 给 prompt
   const maxTextChars = 12000
@@ -21,23 +17,10 @@ export default defineEventHandler(async (event) => {
   const fullPrompt = promptTemplate + '\n\n## 待整理文本\n\n' + inputText
 
   try {
-    const response = await $fetch<{
-      choices: Array<{ message: { content: string } }>
-    }>(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: {
-        model,
-        messages: [{ role: 'user', content: fullPrompt }],
-        temperature: 0.3,
-        max_tokens: 6000,
-      },
-    })
-
-    const content = response.choices[0]?.message?.content || ''
+    const content = await deepseekChat(
+      [{ role: 'user', content: fullPrompt }],
+      { temperature: 0.3, maxTokens: 6000 },
+    )
     return { summary: content }
   } catch (err: any) {
     console.error('[podcast-extract] DeepSeek 调用失败:', err.message)

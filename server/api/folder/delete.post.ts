@@ -1,12 +1,12 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { queryOne, runQuery, deleteRowsFromTurso } from '../../utils/db'
 import { invalidateFolderCache } from '../../utils/folderCache'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ id: string }>(event)
   if (!body?.id) throw createError({ statusCode: 400 })
 
-  // 检查是否有书籍
-  const countRow = await queryOne('SELECT COUNT(*) as c FROM texts WHERE folder=?', [body.id])
+  // 检查是否有书籍（软删除的不算）
+  const countRow = await queryOne('SELECT COUNT(*) as c FROM texts WHERE folder=? AND deletedAt IS NULL', [body.id])
   const count = countRow?.c || 0
 
   if (count > 0) throw createError({ statusCode: 409, message: `该文件夹下有 ${count} 本书，请先移走或删除书籍` })
@@ -20,6 +20,8 @@ export default defineEventHandler(async (event) => {
   if (subCount > 0) throw createError({ statusCode: 409, message: `该文件夹下有 ${subCount} 个子文件夹，请先删除子文件夹` })
 
   await runQuery('DELETE FROM folders WHERE id=?', [body.id])
+  // 同步删除云端，防止定时拉取把已删除文件夹拉回本地
+  await deleteRowsFromTurso('folders', 'id', [body.id])
   invalidateFolderCache()
   return { ok: true }
 })

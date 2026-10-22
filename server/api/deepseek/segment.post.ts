@@ -1,5 +1,6 @@
 import type { Paragraph } from '#shared/types'
-import { PROMPTS } from '../../utils/prompts'
+import { getPromptTemplate } from '../../utils/promptManager'
+import { deepseekChat } from '../../utils/deepseek'
 
 type SegmentType = 'document' | 'subtitle'
 
@@ -80,15 +81,12 @@ function mergeTinyTails(segments: Paragraph[], minChars = 50): Paragraph[] {
   return segments
 }
 
-// prompt 模板嵌入代码，Netlify Functions 可用
-const segmentTemplate = PROMPTS['segment']
-
-function buildPrompt(inputText: string, overrides?: { minSentences: number; maxSentences: number }): string {
+function buildPrompt(template: string, inputText: string, overrides?: { minSentences: number; maxSentences: number }): string {
   const sizeRule = overrides
     ? `用户指定：每段 ${overrides.minSentences}-${overrides.maxSentences} 句。严格按照此范围分段，不参考内容类型。`
     : `根据内容类型自动决定（见下方对照表）。`
 
-  return segmentTemplate
+  return template
     .replace('{sizeRule}', sizeRule)
     .replace('{inputText}', inputText)
 }
@@ -102,14 +100,6 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{ text: string; type?: SegmentType; size?: SegmentSize }>(event)
   const segmentType: SegmentType = body.type || 'document'
 
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) {
-    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-  }
-
   const rawText = segmentType === 'subtitle' ? deduplicateText(body.text) : body.text
 
   const maxInputChars = 15000
@@ -117,27 +107,16 @@ export default defineEventHandler(async (event) => {
     ? rawText.slice(0, maxInputChars) + '\n\n[全文共 ' + rawText.length + ' 字符，此处仅提供前 ' + maxInputChars + ' 字符]'
     : rawText
 
-  const prompt = buildPrompt(inputText, body.size)
+  // 从 Prompt 管理器获取模板（失败时自动降级到本地常量）
+  const segmentTemplate = await getPromptTemplate('segment')
+  const prompt = buildPrompt(segmentTemplate, inputText, body.size)
 
   try {
-    const response = await $fetch<{
-      choices: Array<{ message: { content: string } }>
-    }>(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 12000,
-        response_format: { type: 'json_object' },
-      },
-    })
+    const content = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      { temperature: 0.1, maxTokens: 12000, responseFormat: { type: 'json_object' }, timeoutMs: 180_000 },
+    )
 
-    const content = response.choices[0]?.message?.content || ''
     let raw: Array<{ index: number; text: string }>
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {

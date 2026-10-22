@@ -39,11 +39,12 @@
     <!-- deck info -->
     <div class="fc-deck-info">
       <span class="fc-cat-label">{{ catLabel }}</span>
+      <span v-if="!dailyDate" class="fc-due">待复习 {{ sessionStats.dueReview }} · 新词 {{ sessionStats.newCount }}</span>
       <span class="fc-count" v-if="queue.length">{{ pad(currentIdx + 1) }} / {{ pad(queue.length) }}</span>
     </div>
 
     <!-- card stage -->
-    <div class="fc-stage" v-if="queue.length && currentWord">
+    <div class="fc-stage" v-if="queue.length && currentWord && !roundDone">
       <div class="fc-peek" />
       <button class="fc-side-arrow fc-side-left" @click.stop="prevCard" :disabled="currentIdx <= 0" aria-label="上一个">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
@@ -64,6 +65,7 @@
             <button class="fc-stamp" @click.stop="killCard" title="斩杀 · 不再出现" aria-label="斩杀">✕</button>
             <div class="fc-catalog">NO. {{ pad(currentWord.__index || currentIdx + 1) }}</div>
             <div class="fc-front-content">
+              <img v-if="cardData?.image" :src="cardData.image" class="fc-cue-img" alt="" />
               <div
                 class="fc-headword"
                 :class="{
@@ -95,6 +97,16 @@
                   <span class="fc-bc-ipa">{{ currentWord.phonetic }}</span>
                 </div>
                 <div class="fc-bc-meaning">{{ currentWord.meaning }}</div>
+                <div v-if="contextSentence" class="fc-bc-context">「{{ contextSentence }}」</div>
+                <div v-if="detailSections.length" class="fc-bc-section">
+                  <span class="fc-bc-label">标记解析</span>
+                  <div class="fc-mark-sections">
+                    <div v-for="s in detailSections" :key="s.key + s.title" class="fc-mark-sec">
+                      <div class="fc-mark-sec-title">{{ s.title }}</div>
+                      <MarkdownRenderer :content="s.body" class="fc-mark-sec-body" />
+                    </div>
+                  </div>
+                </div>
                 <div v-if="currentWord.example" class="fc-bc-section">
                   <span class="fc-bc-label">例句</span>
                   <div class="fc-bc-example">
@@ -142,6 +154,16 @@
               <template v-else-if="effectiveType === 'phrase'">
                 <div class="fc-bc-head"><span class="fc-bc-word">{{ currentWord.word }}</span></div>
                 <div class="fc-bc-meaning">{{ currentWord.meaning }}</div>
+                <div v-if="contextSentence" class="fc-bc-context">「{{ contextSentence }}」</div>
+                <div v-if="detailSections.length" class="fc-bc-section">
+                  <span class="fc-bc-label">标记解析</span>
+                  <div class="fc-mark-sections">
+                    <div v-for="s in detailSections" :key="s.key + s.title" class="fc-mark-sec">
+                      <div class="fc-mark-sec-title">{{ s.title }}</div>
+                      <MarkdownRenderer :content="s.body" class="fc-mark-sec-body" />
+                    </div>
+                  </div>
+                </div>
                 <div v-if="currentWord.example" class="fc-bc-section">
                   <span class="fc-bc-label">例句</span>
                   <div class="fc-bc-example">
@@ -175,6 +197,16 @@
                 <div class="fc-translation-block">
                   <span class="fc-trans-en">{{ currentWord.word }}</span>
                   <span class="fc-trans-zh">{{ currentWord.meaning }}</span>
+                </div>
+                <div v-if="contextSentence" class="fc-bc-context">「{{ contextSentence }}」</div>
+                <div v-if="detailSections.length" class="fc-bc-section">
+                  <span class="fc-bc-label">标记解析</span>
+                  <div class="fc-mark-sections">
+                    <div v-for="s in detailSections" :key="s.key + s.title" class="fc-mark-sec">
+                      <div class="fc-mark-sec-title">{{ s.title }}</div>
+                      <MarkdownRenderer :content="s.body" class="fc-mark-sec-body" />
+                    </div>
+                  </div>
                 </div>
                 <!-- AI enrichment loading -->
                 <div v-if="enrichLoading" class="fc-enrich-loading">
@@ -215,11 +247,25 @@
       </div>
     </div>
 
+    <!-- 本组完成 -->
+    <div v-if="roundDone && !loading" class="fc-done">
+      <div class="fc-done-badge">本组完成</div>
+      <div class="fc-done-stats">
+        <span>{{ sessionDone }} 张</span>
+        <span>剩余待学 {{ Math.max(0, sessionStats.available - sessionDone) }}</span>
+      </div>
+      <div class="fc-done-actions">
+        <button class="fc-done-primary" @click="loadWords">继续下一组</button>
+        <NuxtLink :to="backUrl" class="fc-done-link">返回单词本</NuxtLink>
+      </div>
+    </div>
+
     <!-- empty state -->
-    <div v-if="!queue.length && !loading" class="fc-empty">
+    <div v-if="!queue.length && !loading && !roundDone" class="fc-empty">
       <div class="fc-empty-icon">🎉</div>
-      <p>{{ isAllMastered ? '全部掌握！' : '当前没有需要学习的卡片' }}</p>
-      <button @click="resetQueue">重新开始</button>
+      <p>{{ isAllMastered ? '全部掌握！' : '今天没有到期的卡片' }}</p>
+      <button v-if="isAllMastered" @click="resetQueue">重新开始</button>
+      <NuxtLink v-else :to="backUrl" class="fc-done-link">返回单词本</NuxtLink>
     </div>
 
     <!-- face dots -->
@@ -247,7 +293,9 @@ useHead({
 const route = useRoute()
 const bookId = route.params.id as string
 const backUrl = computed(() =>
-  sourceFromQuery ? `/wordbooks/book/${sourceFromQuery}` : `/wordbooks/${bookId}`
+  cardType.value === 'mixed'
+    ? '/wordbooks'
+    : sourceFromQuery ? `/wordbooks/book/${sourceFromQuery}` : `/wordbooks/${bookId}`
 )
 
 interface Word {
@@ -281,6 +329,10 @@ const catMeta: Record<string, { label: string; stamp: string; accent: string; ac
 const words = ref<Word[]>([])
 const queue = ref<Word[]>([])
 const currentIdx = ref(0)
+const sessionStats = reactive({ dueLearn: 0, newCount: 0, dueReview: 0, available: 0, hasMore: false })
+const sessionDone = ref(0)
+const sessionTotal = ref(0)
+const roundDone = ref(false)
 const flipped = ref(false)
 const storyOpen = ref(false)
 const loading = ref(true)
@@ -303,10 +355,32 @@ const accentSoft = computed(() => catMeta[effectiveType.value]?.accentSoft || '#
 const currentWord = computed(() => queue.value[currentIdx.value] || null)
 const isAllMastered = computed(() => words.value.length > 0 && words.value.every(w => w.phase === 'mastered'))
 
-const enhData = computed<EnhData | null>(() => {
-  if (!currentWord.value?.enhancement) return null
-  try { return JSON.parse(currentWord.value.enhancement) } catch { return null }
-})
+interface ComposedCard {
+  wordId: string
+  headword: string
+  lemma: string
+  phonetic: string
+  pos: string
+  meaning: string
+  context: string
+  image: string
+  sections: Array<{ key: string; title: string; body: string }>
+  extras: EnhData | null
+  missing: string[]
+  sources: Record<string, 'mark' | 'ai' | 'none'>
+  needsAI: boolean
+  llm?: boolean
+  error?: string
+}
+
+const cardData = ref<ComposedCard | null>(null)
+const cardCache = new Map<string, ComposedCard>()
+
+const enhData = computed<EnhData | null>(() => cardData.value?.extras || null)
+const markSections = computed(() => cardData.value?.sections || [])
+const contextSentence = computed(() => cardData.value?.context || '')
+// 基本释义已单独展示，原形提示属于辅助信息，不重复渲染
+const detailSections = computed(() => markSections.value.filter(s => s.key !== 'meaning' && s.key !== 'lemma'))
 
 function pad(n: number) { return String(n).padStart(3, '0').slice(-2) }
 
@@ -334,40 +408,72 @@ function sourceBookId(type: string) {
   })[type] || 'wb_default'
 }
 
-// 从文字本进入时，bookId 随 tab 类型变化
-const effectiveBookId = computed(() =>
-  sourceFromQuery ? sourceBookId(cardType.value) : bookId
-)
+// 从文字本进入时，bookId 随 tab 类型变化；混合模式跨三个默认本
+const effectiveBookId = computed(() => {
+  if (cardType.value === 'mixed') return 'all'
+  return sourceFromQuery ? sourceBookId(cardType.value) : bookId
+})
 
 async function loadWords() {
   loading.value = true
   try {
-    const params = new URLSearchParams({ type: cardType.value })
     if (dailyDate) {
-      params.set('dailyDate', dailyDate)
-      params.set('dailyType', cardType.value)
+      // 每日卡片：按当天新增标记取卡，不走到期调度
+      const params = new URLSearchParams({ type: cardType.value, dailyDate, dailyType: cardType.value })
+      const data = await $fetch<{ words: Word[] }>(`/api/wordbooks/flashcard-words?${params}`)
+      words.value = data.words.map((w, i) => ({ ...w, __index: i + 1 }))
+      Object.assign(sessionStats, { dueLearn: 0, newCount: 0, dueReview: 0, available: words.value.length, hasMore: false })
     } else {
-      params.set('bookId', effectiveBookId.value)
+      // 正常模式：只取「到期 + 新词」，单次上限 40 张
+      const params = new URLSearchParams({ type: cardType.value })
       if (sourceFromQuery) params.set('source', sourceFromQuery)
+      const data = await $fetch<{
+        words: Word[]
+        stats: { dueLearn: number; newCount: number; dueReview: number }
+        available: number
+        hasMore: boolean
+      }>(`/api/wordbooks/${effectiveBookId.value}/review-queue?${params}`)
+      words.value = data.words.map((w, i) => ({ ...w, __index: i + 1 }))
+      Object.assign(sessionStats, data.stats, { available: data.available, hasMore: data.hasMore })
     }
-    const data = await $fetch<{ words: Word[] }>(`/api/wordbooks/flashcard-words?${params}`)
-    words.value = data.words.map((w, i) => ({ ...w, __index: i + 1 }))
   } catch { words.value = [] }
   loading.value = false
+  roundDone.value = false
+  sessionDone.value = 0
+  sessionTotal.value = words.value.length
   buildQueue()
 }
 
 function buildQueue() {
-  let list = words.value.filter(w => w.phase !== 'mastered')
-  list.sort((a, b) => {
-    if (a.phase === 'learn' && b.phase !== 'learn') return -1
-    if (b.phase === 'learn' && a.phase !== 'learn') return 1
-    return 0
-  })
-  queue.value = list
+  // 队列顺序由服务端决定：学习到期 → 新词 → 复习到期
+  queue.value = words.value.filter(w => w.phase !== 'mastered')
   currentIdx.value = 0
   flipped.value = false
   storyOpen.value = false
+  syncCardData()
+}
+
+/** 切换卡片时同步已缓存的组合数据；未加载过则先取本地组合（不调用模型） */
+function syncCardData() {
+  const w = currentWord.value
+  cardData.value = w ? (cardCache.get(w.id) || null) : null
+  enrichError.value = false
+  if (w) void loadCardMeta()
+}
+
+async function loadCardMeta() {
+  const w = currentWord.value
+  if (!w || cardCache.has(w.id)) return
+  try {
+    const res = await $fetch<ComposedCard>(`/api/wordbooks/${w.bookId || bookId}/words/card-meta`, {
+      query: { wordId: w.id, type: effectiveType.value },
+    })
+    if (currentWord.value?.id !== w.id) return
+    cardData.value = res
+    cardCache.set(w.id, res)
+    if (!w.meaning && res.meaning) w.meaning = res.meaning
+    if (!w.phonetic && res.phonetic) w.phonetic = res.phonetic
+  } catch { /* 交给翻面时的完整请求兜底 */ }
 }
 
 async function switchType(type: string) {
@@ -382,9 +488,9 @@ function onCardClick() {
   if (flipped.value && settings.autoSpeak && effectiveType.value === 'word') {
     setTimeout(() => pronounceCurrent(), 350)
   }
-  // 翻到背面时自动触发 AI 解析
-  if (flipped.value && !enhData.value && !enrichLoading.value) {
-    enrichCurrent()
+  // 翻到背面：已有解析直接展示；缺词根/近义词等再调模型补全
+  if (flipped.value && !enrichLoading.value) {
+    if (!cardData.value || (cardData.value.needsAI && !cardData.value.llm)) enrichCurrent()
   }
 }
 
@@ -406,21 +512,27 @@ function closeStory() {
 
 async function enrichCurrent() {
   if (enrichLoading.value || !currentWord.value) return
+  const w = currentWord.value
   enrichLoading.value = true
   enrichError.value = false
   try {
-    const res = await $fetch<EnhData & { wordId: string }>(
-      `/api/wordbooks/${currentWord.value.bookId || bookId}/words/flashcard-enrich`,
-      { method: 'POST', body: { wordId: currentWord.value.id, type: effectiveType.value } }
-    )
-    if (currentWord.value) {
-      currentWord.value.enhancement = JSON.stringify(res)
-      const idx = words.value.findIndex(w => w.id === currentWord.value!.id)
-      if (idx >= 0) words.value[idx].enhancement = currentWord.value.enhancement
+    // 组合式接口：标记解析已有的直接返回，只对缺失字段调用模型
+    const res = await $fetch<ComposedCard>(`/api/wordbooks/${w.bookId || bookId}/words/card`, {
+      method: 'POST',
+      body: { wordId: w.id, type: effectiveType.value },
+    })
+    cardData.value = res
+    cardCache.set(w.id, res)
+    // 回填词条缺失字段，列表/复习本也能受益
+    if (!w.meaning && res.meaning) w.meaning = res.meaning
+    if (!w.phonetic && res.phonetic) w.phonetic = res.phonetic
+    if (res.error) {
+      enrichError.value = true
+      showToast('部分内容生成失败，可点击重试')
     }
   } catch {
     enrichError.value = true
-    showToast('AI 解析失败，可点击重试')
+    showToast('卡片加载失败，可点击重试')
   }
   finally { enrichLoading.value = false }
 }
@@ -431,7 +543,7 @@ function prevCard() {
   currentIdx.value--
   flipped.value = false
   storyOpen.value = false
-  enrichError.value = false
+  syncCardData()
 }
 
 function nextCard() {
@@ -439,58 +551,49 @@ function nextCard() {
   currentIdx.value++
   flipped.value = false
   storyOpen.value = false
-  enrichError.value = false
+  syncCardData()
 }
 
 // ── rating ──
 async function rate(grade: 'again' | 'hard' | 'good' | 'easy') {
   if (!currentWord.value) return
   const w = currentWord.value
+  const prevPhase = w.phase
+  const prevNext = w.nextReview
 
-  let phase = w.phase
-  let learnCorrect = w.learnCorrect
-  let learnTotal = (w as any).learnTotal || 0
-  let learnWrong = (w as any).learnWrong || 0
-  let ease = w.ease || 2.5
-  let interval = w.interval || 0
-  let repetitions = w.repetitions || 0
-  let nextReview = ''
+  try {
+    // 调度算法在服务端（server/utils/srs.ts），前端只提交评分
+    const res = await $fetch<{ word: Word }>(`/api/wordbooks/${w.bookId || bookId}/words/review`, {
+      method: 'POST',
+      body: { wordId: w.id, grade },
+    })
+    Object.assign(w, res.word)
+  } catch {
+    showToast('保存失败，请重试')
+    return
+  }
 
-  learnTotal++
+  // 同步顶部计数，避免“待复习/新词”在整个会话里不变
+  const wasDue = prevNext && new Date(prevNext).getTime() <= Date.now()
+  if (prevPhase === 'learn' && !wasDue) sessionStats.newCount = Math.max(0, sessionStats.newCount - 1)
+  else if (prevPhase === 'learn') sessionStats.dueLearn = Math.max(0, sessionStats.dueLearn - 1)
+  else sessionStats.dueReview = Math.max(0, sessionStats.dueReview - 1)
+
+  sessionDone.value++
+  showToast(grade === 'again' ? '不错，稍后再来一次' : '已记录')
 
   if (grade === 'again') {
-    learnWrong++
-    learnCorrect = 0
-    if (phase === 'review') { interval = 1; ease = Math.max(1.3, ease - 0.2) }
-  } else {
-    learnCorrect++
-    if (grade === 'hard') { interval = Math.max(1, Math.round(interval * 1.2)) }
-    else if (grade === 'good') { interval = Math.max(1, Math.round((interval || 1) * ease)) }
-    else { interval = Math.max(1, Math.round((interval || 1) * ease * 1.3)); ease = Math.min(3.0, ease + 0.15) }
-    repetitions++
+    // 本轮末尾再出现一次，加深印象
+    queue.value.push({ ...w })
+    if (currentIdx.value < queue.value.length - 1) nextCard()
+    return
   }
-
-  if (phase === 'learn' && learnCorrect >= 3) { phase = 'review'; interval = 1 }
-  if (phase === 'review' && grade !== 'again') {
-    const d = new Date(); d.setDate(d.getDate() + interval); nextReview = d.toISOString()
-  }
-  if (phase === 'review' && grade === 'easy' && interval >= 21) { phase = 'mastered' }
-
-  await $fetch(`/api/wordbooks/${w.bookId || bookId}/words/${w.id}`, {
-    method: 'PATCH',
-    body: { phase, learnCorrect, learnTotal, learnWrong, ease, interval, repetitions, nextReview },
-  })
-
-  w.phase = phase; w.learnCorrect = learnCorrect
-  w.ease = ease; w.interval = interval; w.repetitions = repetitions; w.nextReview = nextReview
-
-  showToast(grade === 'again' ? '已加入复习队列' : '太棒了，已标记为「记住了」')
 
   if (currentIdx.value < queue.value.length - 1) {
     nextCard()
   } else {
-    buildQueue()
-    showToast(queue.value.length ? '进入下一轮' : '全部掌握！')
+    roundDone.value = true
+    flipped.value = false
   }
 }
 
@@ -537,7 +640,7 @@ async function killCard() {
   }
   flipped.value = false
   storyOpen.value = false
-  enrichError.value = false
+  syncCardData()
 }
 
 // keyboard
@@ -662,6 +765,21 @@ body.fc-page::before {
 .fc-deck-info { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
 .fc-cat-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); opacity: .8; text-transform: uppercase; letter-spacing: 1.5px; }
 .fc-count { font-family: var(--mono); font-size: 12px; color: var(--gold-soft); letter-spacing: .5px; }
+.fc-due { font-family: var(--mono); font-size: 11px; color: var(--text-muted); opacity: .85; letter-spacing: .5px; }
+
+/* 本组完成 */
+.fc-done { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 20px; }
+.fc-done-badge { font-family: var(--serif); font-size: 26px; font-weight: 700; color: var(--text-dark); }
+.fc-done-stats { display: flex; gap: 16px; font-family: var(--sans); font-size: 12.5px; color: var(--text-muted); }
+.fc-done-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 6px; }
+.fc-done-primary {
+  padding: 10px 26px; border-radius: 9px; border: 1px solid var(--accent);
+  background: var(--accent); color: #fff; font-family: var(--sans); font-size: 13.5px;
+  cursor: pointer; transition: opacity .15s;
+}
+.fc-done-primary:active { opacity: .85; }
+.fc-done-link { font-family: var(--sans); font-size: 12px; color: var(--text-muted); text-decoration: none; }
+.fc-done-link:hover { color: var(--accent); }
 
 /* ── empty ── */
 .fc-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 60px 20px; }
@@ -779,11 +897,33 @@ body.fc-page::before {
 .fc-tap-hint { font-family: var(--sans); font-size: 11.5px; color: var(--text-muted); letter-spacing: .4px; margin-top: 2px; }
 
 /* back content */
-.fc-back-content { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-top: 26px; }
+.fc-back-content { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-top: 26px; overflow-y: auto; }
 .fc-bc-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .fc-bc-word { font-family: var(--serif); font-weight: 800; font-size: 22px; color: var(--text-dark); }
 .fc-bc-ipa { font-family: var(--mono); font-size: 13px; color: var(--accent); }
 .fc-bc-meaning { font-family: var(--sans); font-size: 14.5px; color: var(--text-dark); font-weight: 600; }
+.fc-bc-context {
+  font-family: var(--serif); font-size: 13px; line-height: 1.75; color: var(--text-muted);
+  border-left: 2px solid var(--accent-soft); padding-left: 10px;
+}
+
+/* 标记解析章节（直接复用 mark.detail，不重复生成） */
+.fc-mark-sections { display: flex; flex-direction: column; gap: 12px; }
+.fc-mark-sec { display: flex; flex-direction: column; gap: 4px; }
+.fc-mark-sec-title {
+  font-family: var(--sans); font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  color: var(--accent); text-transform: none;
+}
+.fc-mark-sec-body { font-family: var(--serif); font-size: 13px; line-height: 1.75; color: var(--text-dark); }
+.fc-mark-sec-body :deep(p) { margin: 0 0 6px; }
+.fc-mark-sec-body :deep(ul), .fc-mark-sec-body :deep(ol) { margin: 4px 0 6px; padding-left: 18px; }
+.fc-mark-sec-body :deep(strong) { font-weight: 700; }
+
+/* 正面配图（来自标记解析里插入的图片） */
+.fc-cue-img {
+  max-width: 72%; max-height: 96px; object-fit: contain; border-radius: 6px;
+  margin-bottom: -4px;
+}
 
 .fc-bc-section { display: flex; flex-direction: column; gap: 5px; }
 .fc-bc-label {

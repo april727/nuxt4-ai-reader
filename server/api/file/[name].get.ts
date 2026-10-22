@@ -21,26 +21,31 @@ export default defineEventHandler(async (event) => {
 
   // ── R2 模式：生成签名 URL，302 跳转让浏览器直连 R2 ──
   if (useR2()) {
-    const head = await r2Head(name)
-    if (!head) {
-      const localPath = resolveFilePath(name)
-      if (!existsSync(localPath)) throw createError({ statusCode: 404, message: '文件不存在' })
-      setHeader(event, 'Content-Type', mimeMap[path.extname(name).toLowerCase()] || 'application/octet-stream')
-      setHeader(event, 'Content-Length', statSync(localPath).size)
-      return createReadStream(localPath)
+    try {
+      const head = await r2Head(name)
+      if (head) {
+        const ext = path.extname(name).toLowerCase()
+        if (['.mp4', '.webm', '.mov', '.ogg', '.mp3', '.wav', '.m4a'].includes(ext)) {
+          setHeader(event, 'Content-Type', mimeMap[ext] || 'application/octet-stream')
+          setHeader(event, 'Content-Length', head.ContentLength!)
+          setHeader(event, 'Accept-Ranges', 'bytes')
+          return r2GetStream(name)
+        }
+        const signedUrl = await r2SignedUrl(name, 3600)
+        sendRedirect(event, signedUrl, 302)
+        return
+      }
+      // R2 没有 → 落到本地
+    } catch (e: any) {
+      console.warn(`[file] R2 不可达，回退本地: ${name} (${e.message})`)
     }
 
-    const ext = path.extname(name).toLowerCase()
-    if (['.mp4', '.webm', '.mov', '.ogg', '.mp3', '.wav', '.m4a'].includes(ext)) {
-      setHeader(event, 'Content-Type', mimeMap[ext] || 'application/octet-stream')
-      setHeader(event, 'Content-Length', head.ContentLength!)
-      setHeader(event, 'Accept-Ranges', 'bytes')
-      return r2GetStream(name)
-    }
-
-    const signedUrl = await r2SignedUrl(name, 3600)
-    sendRedirect(event, signedUrl, 302)
-    return
+    // 回退本地文件系统（R2 不可达 / 对象不存在）
+    const localPath = resolveFilePath(name)
+    if (!existsSync(localPath)) throw createError({ statusCode: 404, message: '文件不存在' })
+    setHeader(event, 'Content-Type', mimeMap[path.extname(name).toLowerCase()] || 'application/octet-stream')
+    setHeader(event, 'Content-Length', statSync(localPath).size)
+    return createReadStream(localPath)
   }
 
   // ── 本地模式 ──

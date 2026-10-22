@@ -16,6 +16,8 @@ export default defineEventHandler(async (event) => {
   if (row.videoSubtitles) try { row.videoSubtitles = JSON.parse(row.videoSubtitles) } catch { row.videoSubtitles = null }
   if (row.videoMeta) try { row.videoMeta = JSON.parse(row.videoMeta) } catch { row.videoMeta = null }
   if (row.paragraphNotes) try { row.paragraphNotes = JSON.parse(row.paragraphNotes) } catch { row.paragraphNotes = [] }
+  if (row.paragraphNotesMap) try { row.paragraphNotesMap = JSON.parse(row.paragraphNotesMap) } catch { row.paragraphNotesMap = {} }
+  if (row.chapters) try { row.chapters = JSON.parse(row.chapters) } catch { row.chapters = [] }
 
   return row
 })

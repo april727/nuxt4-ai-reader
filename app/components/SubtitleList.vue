@@ -5,6 +5,20 @@
       <div class="sl-header-right">
         <button
           v-if="cues.length > 0"
+          class="sl-copy-btn"
+          :class="{ copied }"
+          :title="copied ? '已复制' : '复制全部字幕'"
+          @click="copySubtitles"
+        >
+          <svg v-if="!copied" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
+        <button
+          v-if="cues.length > 0"
           class="sl-reupload-btn"
           title="替换字幕"
           @click="$emit('reupload')"
@@ -110,6 +124,29 @@ function handleToggleSave(cue: Cue) {
 function handleToggleLoop(cue: Cue) {
   emit('toggle-loop', cue)
 }
+
+// 一键复制全部字幕内容
+const copied = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+async function copySubtitles() {
+  const text = props.cues.map(c => c.text).join('\n')
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // 旧浏览器兜底
+    const ta = document.createElement('textarea')
+    ta.value = text
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+  copied.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => { copied.value = false }, 1500)
+}
+onBeforeUnmount(() => { if (copyTimer) clearTimeout(copyTimer) })
 </script>
 
 <style scoped>
@@ -139,6 +176,28 @@ function handleToggleLoop(cue: Cue) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.sl-copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #b0ad9d;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.sl-copy-btn:hover {
+  color: #3d3591;
+  background: #f5f3ff;
+}
+.sl-copy-btn.copied {
+  color: #10b981;
+  background: #ecfdf5;
 }
 
 .sl-reupload-btn {

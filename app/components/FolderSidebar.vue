@@ -107,8 +107,12 @@
       <button class="fs-nav-btn" @click="navigateTo('/words/daily')">每日单词</button>
       <button class="fs-nav-btn" @click="navigateTo('/words/analysis')">学习分析</button>
       <button class="fs-nav-btn" @click="navigateTo('/reviews')">复习本</button>
+      <button class="fs-nav-btn" @click="navigateTo('/marks/review')">难点词</button>
+      <button class="fs-nav-btn" @click="navigateTo('/marks/clusters')">语义分组</button>
       <button class="fs-nav-btn" @click="navigateTo('/wordbooks')">单词本</button>
       <button class="fs-nav-btn" @click="navigateTo('/knowledge')">知识要点</button>
+      <button class="fs-nav-btn" @click="navigateTo('/recycle-bin')">回收站</button>
+      <button class="fs-nav-btn" @click="navigateTo('/settings/prompts')">Prompt 管理</button>
     </div>
     </template>
 
@@ -128,6 +132,12 @@
       </button>
       <button class="fs-collapsed-btn" title="知识要点" @click="navigateTo('/knowledge')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="回收站" @click="navigateTo('/recycle-bin')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+      </button>
+      <button class="fs-collapsed-btn" title="Prompt 管理" @click="navigateTo('/settings/prompts')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
       </button>
     </div>
 

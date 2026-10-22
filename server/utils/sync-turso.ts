@@ -12,13 +12,14 @@ import path from 'node:path'
 
 const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'folders', pkIdx: 0, columns: ['id', 'name', 'parent', 'isPrivate', 'passwordHash', 'createdAt'] },
-  { name: 'texts', pkIdx: 0, columns: ['id', 'title', 'text', 'source', 'folder', 'excerpt', 'filePath', 'analysis', 'segments', 'explanations', 'marks', 'readingPosition', 'paragraphChats', 'videoMeta', 'videoSubtitles', 'subtitlePractice', 'completedAt', 'notes', 'paragraphNotes', 'createdAt', 'updatedAt'] },
+  { name: 'texts', pkIdx: 0, columns: ['id', 'title', 'text', 'source', 'folder', 'excerpt', 'filePath', 'analysis', 'segments', 'explanations', 'marks', 'readingPosition', 'paragraphChats', 'videoMeta', 'videoSubtitles', 'subtitlePractice', 'completedAt', 'notes', 'paragraphNotes', 'paragraphNotesMap', 'chapters', 'cover', 'deletedAt', 'createdAt', 'updatedAt'] },
   { name: 'stats', pkIdx: 0, columns: ['textId', 'readCount', 'lastReadAt', 'markCount'] },
   { name: 'knowledge_points', pkIdx: 0, columns: ['id', 'content', 'note', 'sourceId', 'sourceTitle', 'sourceType', 'sourceContext', 'customGroup', 'tags', 'chatHistory', 'sortOrder', 'createdAt', 'updatedAt'] },
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
-  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'createdAt', 'updatedAt'] },
+  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'markId', 'detail', 'context', 'image', 'lastReviewedAt', 'reviewCount', 'lapses', 'type', 'paragraphId', 'startOffset', 'endOffset', 'dismissedAt', 'orphanedAt', 'createdAt', 'updatedAt'] },
   { name: 'daily_insights', pkIdx: 0, columns: ['date', 'content', 'createdAt'] },
-  { name: 'marks', pkIdx: 0, columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt'] },
+  { name: 'marks', pkIdx: 0, columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt', 'deletedAt'] },
+  { name: 'auth_logs', pkIdx: 0, columns: ['id', 'time', 'ip', 'ua', 'ok'] },
   { name: 'knowledge_pages', pkIdx: 0, columns: ['id', 'groupId', 'title', 'content', 'createdAt', 'updatedAt'] },
 ]
 
@@ -51,6 +52,24 @@ export async function syncToTurso(): Promise<SyncResult> {
 
   // 确保 Turso 表新增列存在（ALTER TABLE 补全）
   try { await turso.execute("ALTER TABLE words ADD COLUMN enhancement TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN markId TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN detail TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN context TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN image TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN lastReviewedAt TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN reviewCount INTEGER DEFAULT 0") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN lapses INTEGER DEFAULT 0") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN type TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN paragraphId TEXT DEFAULT ''") } catch {}
+  try { await turso.execute('ALTER TABLE words ADD COLUMN startOffset INTEGER DEFAULT 0') } catch {}
+  try { await turso.execute('ALTER TABLE words ADD COLUMN endOffset INTEGER DEFAULT 0') } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN dismissedAt TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE words ADD COLUMN orphanedAt TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN paragraphNotesMap TEXT DEFAULT '{}'") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN chapters TEXT DEFAULT '[]'") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN cover TEXT DEFAULT ''") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN deletedAt TEXT DEFAULT NULL") } catch {}
+  try { await turso.execute("ALTER TABLE marks ADD COLUMN deletedAt TEXT DEFAULT NULL") } catch {}
 
   const tables: SyncResult['tables'] = {}
   let totalInserted = 0, totalUpdated = 0, totalSkipped = 0
@@ -119,15 +138,27 @@ export async function syncToTurso(): Promise<SyncResult> {
       const cols = columns.join(',')
       const ph = columns.map(() => '?').join(',')
 
-      for (const row of toInsert) {
-        await turso.execute({ sql: `INSERT INTO ${name} (${cols}) VALUES (${ph})`, args: row })
+      // 批量写入：逐行 execute 在远程库上会因网络往返拖慢全量同步
+      const BATCH = 50
+      if (toInsert.length > 0) {
+        for (let i = 0; i < toInsert.length; i += BATCH) {
+          const stmts = toInsert.slice(i, i + BATCH).map(row => ({
+            sql: `INSERT INTO ${name} (${cols}) VALUES (${ph})`,
+            args: row,
+          }))
+          await turso.batch(stmts, 'write')
+        }
       }
 
       if (toUpdate.length > 0) {
         const pkCol = columns[pkIdx]
         const setClause = columns.map(c => `${c}=?`).join(',')
-        for (const { pk, row } of toUpdate) {
-          await turso.execute({ sql: `UPDATE ${name} SET ${setClause} WHERE ${pkCol}=?`, args: [...row, pk] })
+        for (let i = 0; i < toUpdate.length; i += BATCH) {
+          const stmts = toUpdate.slice(i, i + BATCH).map(({ pk, row }) => ({
+            sql: `UPDATE ${name} SET ${setClause} WHERE ${pkCol}=?`,
+            args: [...row, pk],
+          }))
+          await turso.batch(stmts, 'write')
         }
       }
 

@@ -23,14 +23,14 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 从 marks 独立表读取，按时间降序分页
+  // 从 marks 独立表读取（排除回收站中的软删除），按时间降序分页
   const markRows = await queryAll(
-    'SELECT * FROM marks ORDER BY createdAt DESC LIMIT ? OFFSET ?',
+    'SELECT * FROM marks WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?',
     [pageSize, offset]
   )
 
   // 统计总数
-  const countRow = await queryAll('SELECT COUNT(*) as c FROM marks')
+  const countRow = await queryAll('SELECT COUNT(*) as c FROM marks WHERE deletedAt IS NULL')
   const total = Number((countRow[0] as any)?.c ?? 0)
 
   const items = markRows.map((row: any) => {

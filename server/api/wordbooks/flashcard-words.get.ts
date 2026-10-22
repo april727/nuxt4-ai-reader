@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
     const dailyType = (query.dailyType as string) || type
     const rows = await queryAll(
       `SELECT DISTINCT text, type FROM marks
-       WHERE date(createdAt) = ? AND type = ?
+       WHERE date(createdAt) = ? AND type = ? AND deletedAt IS NULL
        ORDER BY text`,
       [dailyDate, dailyType]
     )

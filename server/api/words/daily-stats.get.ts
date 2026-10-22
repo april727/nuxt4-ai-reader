@@ -1,12 +1,13 @@
 import { queryAll } from '../../utils/db'
 
 export default defineEventHandler(async () => {
-  // 从 marks 表按日期 + 类型聚合统计
+  // 从 marks 表按日期 + 类型聚合统计（排除软删除）
   const rows = await queryAll(
     `SELECT date(createdAt) as d, type,
             COUNT(*) as cnt,
             COUNT(DISTINCT textId) as textCnt
      FROM marks
+     WHERE deletedAt IS NULL
      GROUP BY date(createdAt), type
      ORDER BY d DESC`
   )

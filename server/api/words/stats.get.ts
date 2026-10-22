@@ -19,7 +19,7 @@ export default defineEventHandler(async () => {
   }
 
   const textsWithMarks = await queryAll(
-    `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]'`
+    `SELECT id, marks FROM texts WHERE marks IS NOT NULL AND marks != '' AND marks != '[]' AND deletedAt IS NULL`
   )
   for (const row of textsWithMarks) {
     let marks: any[] = []

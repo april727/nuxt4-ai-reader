@@ -1,4 +1,6 @@
 import { queryAll, runQuery } from '../../../../utils/db'
+import { getPromptMessages } from '../../../../utils/promptManager'
+import { deepseekChat } from '../../../../utils/deepseek'
 
 // DeepSeek: 批量获取词性
 async function enrichPos(words: string[]): Promise<Map<string, string>> {
@@ -7,48 +9,14 @@ async function enrichPos(words: string[]): Promise<Map<string, string>> {
 
   for (let i = 0; i < words.length; i += batchSize) {
     const batch = words.slice(i, i + batchSize)
-    const prompt = `为以下英文单词标注词性。只返回JSON：
-{"words":[{"word":"xxx","pos":"n."}]}
-
-词性缩写对照：
-- n. 名词
-- v. 动词（含及物/不及物）
-- adj. 形容词
-- adv. 副词
-- pron. 代词
-- prep. 介词
-- conj. 连词
-- interj. 感叹词
-- art. 冠词
-- num. 数词
-- det. 限定词
-- modal. 情态动词
-- aux. 助动词
-
-单词列表：${batch.join(', ')}`
+    // 从 Prompt 管理器获取模板（失败时降级到本地常量）
+    const { system, user } = await getPromptMessages('enrich-pos', { wordList: batch.join(', ') })
 
     try {
-      const res = await $fetch<{ choices: { message: { content: string } }[] }>(
-        `${process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'}/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          },
-          body: {
-            model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
-            messages: [
-              { role: 'system', content: '你是词典专家。只返回JSON。' },
-              { role: 'user', content: prompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 2000,
-          },
-        }
+      const content = await deepseekChat(
+        [{ role: 'system', content: system }, { role: 'user', content: user }],
+        { temperature: 0.3, maxTokens: 2000 },
       )
-
-      const content = res.choices?.[0]?.message?.content || ''
       const jsonMatch = content.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const data = JSON.parse(jsonMatch[0])

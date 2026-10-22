@@ -1,4 +1,5 @@
 import { queryAll, queryOne, runQuery } from '../../../../utils/db'
+import { deepseekChat } from '../../../../utils/deepseek'
 
 function extractPhonetic(detail: string): string {
   const m = detail.match(/\[PHONETIC\]\s*\/([^/]+)\/\s*\[\/PHONETIC\]/)
@@ -45,26 +46,13 @@ async function queryAI(word: string): Promise<{ phonetic: string; meaning: strin
 {"phonetic":"/IPA/","meaning":"中文释义（含词性标记如 adj. 或 v.）","example":"英文例句","pos":"词性缩写如 n./v./adj./adv."}`
 
   try {
-    const res = await $fetch<{ choices: { message: { content: string } }[] }>(
-      `${process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'}/v1/chat/completions`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        },
-        body: {
-          model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
-          messages: [
-            { role: 'system', content: '只返回JSON。' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.3, max_tokens: 400,
-          response_format: { type: 'json_object' },
-        },
-      }
+    const content = await deepseekChat(
+      [
+        { role: 'system', content: '只返回JSON。' },
+        { role: 'user', content: prompt },
+      ],
+      { temperature: 0.3, maxTokens: 400, responseFormat: { type: 'json_object' } },
     )
-    const content = res.choices?.[0]?.message?.content || ''
     const m = content.match(/\{[\s\S]*\}/)
     return m ? JSON.parse(m[0]) : null
   } catch {

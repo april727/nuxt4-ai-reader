@@ -20,9 +20,9 @@ export default defineEventHandler(async (event) => {
     if (!posIndex.has(r.w as string)) posIndex.set(r.w as string, r.pos as string)
   }
 
-  // 从 marks 表读取指定日期的标记
+  // 从 marks 表读取指定日期的标记（排除软删除）
   const rows = await queryAll(
-    'SELECT * FROM marks WHERE date(createdAt) = ? ORDER BY createdAt DESC',
+    'SELECT * FROM marks WHERE date(createdAt) = ? AND deletedAt IS NULL ORDER BY createdAt DESC',
     [date]
   )
 

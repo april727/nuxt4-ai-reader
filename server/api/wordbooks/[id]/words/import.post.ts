@@ -1,4 +1,6 @@
 import { queryOne, runQuery } from '../../../../utils/db'
+import { getPromptMessages } from '../../../../utils/promptManager'
+import { deepseekChat } from '../../../../utils/deepseek'
 
 // DeepSeek AI 增强：批量获取音标+释义+例句
 async function enrichWords(words: string[]): Promise<{ word: string; phonetic: string; meaning: string; example: string; pos: string }[]> {
@@ -7,38 +9,20 @@ async function enrichWords(words: string[]): Promise<{ word: string; phonetic: s
 
   for (let i = 0; i < words.length; i += batchSize) {
     const batch = words.slice(i, i + batchSize)
-    const prompt = `请为以下 ${batch.length} 个英文单词/短语提供：
-1. 音标 (IPA格式)
-2. 简洁中文释义 (不超过15字)
-3. 一个地道英文例句
-4. 词性缩写 (如 n./v./adj./adv.，短语或句子填"")
-
-严格按JSON格式返回：{"words":[{"word":"xxx","phonetic":"/xxx/","meaning":"xxx","example":"xxx","pos":"n."}]}
-
-单词列表：${batch.join(', ')}`
+    // 从 Prompt 管理器获取模板（失败时降级到本地常量）
+    const { system, user } = await getPromptMessages('wordbook-import', {
+      count: String(batch.length),
+      wordList: batch.join(', '),
+    })
 
     try {
-      const res = await $fetch<{ choices: { message: { content: string } }[] }>(
-        `${process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'}/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          },
-          body: {
-            model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
-            messages: [
-              { role: 'system', content: '你是词典助手。只返回JSON，不说其他话。' },
-              { role: 'user', content: prompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 2000,
-          },
-        }
+      const content = await deepseekChat(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        { temperature: 0.3, maxTokens: 2000 },
       )
-
-      const content = res.choices?.[0]?.message?.content || ''
       const jsonMatch = content.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const data = JSON.parse(jsonMatch[0])

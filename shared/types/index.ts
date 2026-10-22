@@ -4,6 +4,13 @@ export interface Paragraph {
   start?: number; end?: number  // 视频字幕时间戳
 }
 
+export interface Chapter {
+  index: number
+  title: string
+  level: number   // 0=Part/Book, 1=Chapter, 2=Section
+  page: number    // 1-based 页码
+}
+
 export interface ArticleAnalysis {
   title: string; summary: string; background: string; tone: string; keyPoints: string[]
 }
@@ -34,11 +41,20 @@ export interface Mark {
   color: string
   detail: string
   note: string
+  /** 标记所在句子（卡片展示与记忆线索用） */
+  context?: string
+  /** 标记解释中的首张配图（卡片展示用） */
+  image?: string
   createdAt: string
+  deletedAt?: string   // 软删除时间（回收站）；为空表示正常
 }
 
 export interface ReadingPosition {
   paragraphId: string
+  /** 段落内的字符偏移（长段落精确位置标记，可选） */
+  charOffset?: number
+  /** 标记时选中的文字（红旗悬停提示用） */
+  selectedText?: string
   updatedAt: string
   videoTime?: number
 }

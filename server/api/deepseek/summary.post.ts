@@ -1,11 +1,7 @@
+import { deepseekChat } from '../../utils/deepseek'
+
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ text: string; title?: string }>(event)
-
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
   if (!body?.text?.trim()) throw createError({ statusCode: 400, message: '缺少文本内容' })
 
   // 只送前 8000 字符做快速摘要（比完整分析 15000 更少，响应更快）
@@ -27,23 +23,11 @@ ${inputText}
 请严格输出 JSON（不要其他内容）：
 {"title":"...","summary":"...","tags":["...","..."]}`
 
-  const response = await $fetch<{
-    choices: Array<{ message: { content: string } }>
-  }>(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 512,
-    },
-  })
+  const content = await deepseekChat(
+    [{ role: 'user', content: prompt }],
+    { temperature: 0.3, maxTokens: 512 },
+  )
 
-  const content = response.choices[0]?.message?.content || ''
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) throw createError({ statusCode: 500, message: 'AI 响应解析失败' })
 

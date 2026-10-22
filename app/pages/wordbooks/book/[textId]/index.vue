@@ -55,6 +55,12 @@
       >{{ t.label }}</button>
     </div>
 
+    <!-- 搜索 -->
+    <div class="wbk-filters">
+      <input v-model="searchInput" class="wbk-search" type="search" :placeholder="`搜索${typeLabel}或释义…`" spellcheck="false" />
+      <span class="wbk-total">共 {{ total }} 条</span>
+    </div>
+
     <!-- 词性筛选（仅单词 tab） -->
     <template v-if="activeType === 'word'">
       <div class="wbk-pos-bar" ref="posBarRef">
@@ -103,6 +109,12 @@
             <button class="wbk-del" @click.stop="deleteWord(w.id)">×</button>
           </div>
         </div>
+      </div>
+      <!-- 分页 -->
+      <div class="wbk-pager" v-if="total > pageSize">
+        <button :disabled="page <= 1 || loading" @click="page--">上一页</button>
+        <span>{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
+        <button :disabled="!hasMore || loading" @click="page++">下一页</button>
       </div>
     </div>
     </div>
@@ -187,13 +199,29 @@ const posCounts = computed(() => {
   return items
 })
 
-const posFilteredWords = computed(() =>
-  activePos.value ? words.value.filter(w => w.pos === activePos.value) : words.value
-)
+const searchInput = ref('')
+const searchQuery = ref('')
+const page = ref(1)
+const pageSize = 50
+const total = ref(0)
+const hasMore = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-const displayWords = computed(() =>
-  activeType.value === 'word' ? posFilteredWords.value : words.value
-)
+const displayWords = computed(() => words.value)
+
+function reloadFromFirstPage() {
+  if (page.value !== 1) page.value = 1
+  else loadWords()
+}
+
+watch(searchInput, (v) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchQuery.value = v.trim()
+    reloadFromFirstPage()
+  }, 300)
+})
+watch([activePos, page], reloadFromFirstPage)
 
 // ── 滑块指示器 ──
 const posBarRef = ref<HTMLElement | null>(null)
@@ -218,18 +246,33 @@ watch(activePos, updateIndicator)
 async function loadWords() {
   loading.value = true
   try {
+    const params = new URLSearchParams({
+      type: activeType.value,
+      page: String(page.value),
+      pageSize: String(pageSize),
+    })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+
     const [wData, info] = await Promise.all([
-      $fetch<{ words: WordItem[]; posCounts: Record<string, number> }>(`/api/wordbooks/book/${textId}/words?type=${activeType.value}`),
+      $fetch<{
+        words: WordItem[]
+        total: number
+        hasMore: boolean
+        posCounts: Record<string, number>
+      }>(`/api/wordbooks/book/${textId}/words?${params}`),
       textId === '__orphan__' ? Promise.resolve({ title: '其他' }) : $fetch<any>(`/api/text/${textId}`).catch(() => null),
     ])
     words.value = wData.words
+    total.value = wData.total
+    hasMore.value = wData.hasMore
     marksPosCounts.value = wData.posCounts
     bookTitle.value = info?.title || '加载中…'
   } catch { bookTitle.value = '加载失败' }
   loading.value = false
 }
 
-watch(activeType, () => { activePos.value = ''; loadWords() })
+watch(activeType, () => { activePos.value = ''; page.value = 1; loadWords() })
 
 // ── 显示控制 ──
 const showDetails = ref(true)
@@ -260,10 +303,15 @@ function toggleWord(id: string) {
 }
 
 function pronounceWord(word: string) {
-  const w = word.replace(/[^a-zA-Z]/g, '').toLowerCase()
-  if (!w) return
-  const audio = new Audio(`https://audio.beingfine.cn/speeches/UK/UK-speech/${w}.mp3`)
-  audio.play().catch(() => {
+  pronResolve(word).then((r) => {
+    if (r) {
+      new Audio(r.src).play().catch(() => {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'; u.rate = 0.85
+        speechSynthesis.speak(u)
+      })
+      return
+    }
     const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'; u.rate = 0.85
     speechSynthesis.speak(u)
@@ -301,8 +349,19 @@ async function handleAdd() {
 
 function goCards() { navigateTo(`/wordbooks/${currentBookId.value}/cards?source=${textId}&type=${activeType.value}`) }
 
-function exportTxt() {
-  const text = displayWords.value.map(w => w.word).join('\n')
+async function exportTxt() {
+  const all: WordItem[] = []
+  let p = 1
+  while (true) {
+    const params = new URLSearchParams({ type: activeType.value, page: String(p), pageSize: '200' })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+    const res = await $fetch<{ words: WordItem[]; hasMore: boolean }>(`/api/wordbooks/book/${textId}/words?${params}`)
+    all.push(...res.words)
+    if (!res.hasMore) break
+    p++
+  }
+  const text = all.map(w => w.word).join('\n')
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -545,4 +604,24 @@ onMounted(async () => {
   .wbk-header { padding: 0 14px; }
   .wbk-row { padding: 12px 14px; }
 }
+
+/* 搜索与分页 */
+.wbk-filters { display: flex; align-items: center; gap: 10px; padding: 8px 14px 4px; }
+.wbk-search {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 0.5px solid rgba(0,0,0,0.14);
+  border-radius: 8px; font-family: var(--sans, sans-serif); font-size: 12.5px;
+  background: #fff; outline: none; color: #334155;
+}
+.wbk-search:focus { border-color: #3d3591; }
+.wbk-total { font-family: var(--sans, sans-serif); font-size: 11.5px; color: #8a8880; white-space: nowrap; }
+.wbk-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px;
+  border-top: 0.5px solid rgba(0,0,0,0.06); font-family: var(--sans, sans-serif);
+  font-size: 12px; color: #8a8880;
+}
+.wbk-pager button {
+  padding: 5px 12px; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.12);
+  background: #fff; font-size: 12px; cursor: pointer; color: #5f5e5a;
+}
+.wbk-pager button:disabled { opacity: .45; cursor: default; }
 </style>

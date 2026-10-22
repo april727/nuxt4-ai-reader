@@ -1,15 +1,8 @@
 import type { ChatRequest, ChatMessage } from '#shared/types'
+import { deepseekChat } from '../../utils/deepseek'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<ChatRequest>(event)
-
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) {
-    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-  }
 
   const systemParts = [
     '你是一位专注、博学的阅读导师。你正在和用户讨论文章中一个具体段落的内容。',
@@ -30,21 +23,10 @@ export default defineEventHandler(async (event) => {
     content: systemParts.join('\n\n'),
   }
 
-  const response = await $fetch<{
-    choices: Array<{ message: { content: string } }>
-  }>(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      messages: [systemMessage, ...body.messages],
-      temperature: 0.7,
-      max_tokens: 2000,
-    },
+  const content = await deepseekChat([systemMessage, ...body.messages], {
+    temperature: 0.7,
+    maxTokens: 2000,
   })
 
-  return { content: response.choices[0]?.message?.content || '' }
+  return { content }
 })
