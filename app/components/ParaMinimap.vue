@@ -28,7 +28,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ jump: [index: number] }>()
 
 /** 刻度轨节距：2px 线 + 8px 间隙 */
-const PITCH = 10
+const PITCH = 12
 const MAX_HEIGHT_RATIO = 0.7
 const MAX_HEIGHT_PX = 600
 
@@ -318,8 +318,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* ── 刻度轨 ─────────────────────────────────── */
 .pm-rail {
-  /* 收窄到左留白内（10px），避免压住段落序号 */
-  padding: 8px 1px;
+  /* 放在左留白内，比初版略大便于点按，且不压段落序号 */
+  padding: 10px 3px;
   border-radius: 8px;
   cursor: pointer;
   background: rgba(252, 251, 249, 0.42);
@@ -332,18 +332,18 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
 }
 
-.pm-rail-track { position: relative; width: 10px; }
+.pm-rail-track { position: relative; width: 14px; }
 
 .pm-dash {
   position: absolute;
   right: 0;
-  width: 8px;
+  width: 12px;
   height: 2px;
   border-radius: 1px;
   background: #e4e2db;
   transition: width 0.2s cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.24s ease;
 }
-.pm-root.open .pm-dash { width: 6px; }
+.pm-root.open .pm-dash { width: 9px; }
 .pm-dash.is-past { background: #d8d5cb; }
 .pm-dash.is-future { background: #ebe9e2; }
 .pm-dash.is-current { background: #cfccc2; }
@@ -353,7 +353,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* 悬停联动：框内悬停哪一段，侧栏对应刻度同步加长加深 */
 .pm-dash.is-hover {
-  width: 10px !important;
+  width: 14px !important;
   background: #3d3591 !important;
   transition: width 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.16s ease;
 }
@@ -363,7 +363,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   position: absolute;
   top: 0;
   right: 0;
-  width: 10px;
+  width: 14px;
   height: 2px;
   border-radius: 1px;
   background: #1a1a18;
