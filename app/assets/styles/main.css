@@ -130,8 +130,8 @@ body {
 .reader-body { display: flex; flex: 1; overflow: hidden; }
 
 /* ---- 正文区 ---- */
-/* 左侧布局：8px 滚动条 + 10px 白边 + 20px 跳转轨道区 + 阅读区（共 38px） */
-.reader-article-pane { padding: 46px 0 36px 30px; overflow-y: scroll; scroll-behavior: smooth; flex-shrink: 0; background: var(--ra-bg, #ffffff); transition: background 0.3s; }
+/* 阅读容器居中：左（滚动条 8 + 内边距 10 = 18px）= 右（18px），允许右侧留白 */
+.reader-article-pane { padding: 46px 18px 36px 10px; overflow-y: scroll; scroll-behavior: smooth; flex-shrink: 0; background: var(--ra-bg, #ffffff); transition: background 0.3s; }
 /* 滚动条改到左侧；负 margin 让它浮在正文左边线外侧，不挤压段落 */
 .reader-article-pane { direction: rtl; scrollbar-width: thin; scrollbar-color: var(--ra-bg, #cbd5e1) transparent; }
 .reader-article-pane > * { direction: ltr; }
