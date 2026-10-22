@@ -266,7 +266,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
         <span
           class="pm-cursor"
           :class="{ 'is-linked': hoverTickIdx === currentTick }"
-          :style="{ transform: `translateY(${currentTick * PITCH}px)` }"
+          :style="{ '--pm-y': (currentTick * PITCH) + 'px' }"
         />
       </div>
     </div>
@@ -301,9 +301,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
-  /* 落在正文左侧留白（段落序号列的空白区），不再挡在正文与右侧面板之间。
-     12px 起：避开左侧 8px 滚动条，且不压住从 38px 开始的段落序号 */
-  left: 12px;
+  /* 左侧空白区为 8px 滚动条之后到 28px（宽 20px），轨道等宽且居中放置 */
+  left: 8px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
@@ -336,7 +335,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 .pm-dash {
   position: absolute;
-  right: 0;
+  /* 水平居中：宽度变化时向左右对称伸缩，而不是贴边单向拉伸 */
+  left: 50%;
+  transform: translateX(-50%);
   width: 12px;
   height: 2px;
   border-radius: 1px;
@@ -362,7 +363,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 .pm-cursor {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 50%;
+  /* 同时水平居中 + 垂直定位；宽度变化向左右对称展开 */
+  transform: translate(-50%, var(--pm-y, 0px));
   width: 14px;
   height: 2px;
   border-radius: 1px;
