@@ -41,6 +41,22 @@ const ready = ref(false)
 /** 当前悬停的段落下标（框内行与侧栏刻度共用同一状态，实现双向联动） */
 const hoverParaIndex = ref<number | null>(null)
 
+/**
+ * 轨道 X 坐标：实测首个序号圆标的中心，跨断点/设备精确同列对齐。
+ * 硬编码 left 在桌面端/移动端断点下需要分别维护，曾多次漏改导致轨道越界；
+ * 改为运行时测量后，阅读区内边距怎么变都自动跟随。
+ */
+const railLeft = ref<number | null>(null)
+function syncRailX() {
+  if (typeof document === 'undefined') return
+  const badge = document.querySelector('.para-num') as HTMLElement | null
+  if (!badge) return
+  const r = badge.getBoundingClientRect()
+  if (!r.width) return
+  // 轨道宽 20px（含内边距），中心对齐圆标中心
+  railLeft.value = Math.max(2, Math.round(r.left + r.width / 2 - 10))
+}
+
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── 刻度轨 ────────────────────────────────────────────
@@ -197,6 +213,60 @@ function selectRow(i: number) {
   if (window.matchMedia?.('(pointer: coarse)')?.matches) open.value = false
 }
 
+/**
+ * 移动端滑动选段（scrubbing）：手指按下列表后滑动，经过的行高亮预览，
+ * 抬起手指即跳转。列表接近上下边缘时自动滚动，长文也能选到任意段落。
+ */
+let scrubbing = false
+
+function rowFromPoint(x: number, y: number): number | null {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null
+  const row = el?.closest('.pm-row') as HTMLElement | null
+  if (!row || !listEl.value) return null
+  const rows = listEl.value.querySelectorAll('.pm-row')
+  const idx = Array.prototype.indexOf.call(rows, row)
+  return idx >= 0 ? idx : null
+}
+
+function previewRowAt(x: number, y: number) {
+  const i = rowFromPoint(x, y)
+  if (i == null) return
+  hoverParaIndex.value = i
+  const row = listEl.value?.querySelectorAll('.pm-row')[i] as HTMLElement | undefined
+  row?.scrollIntoView({ block: 'nearest' })
+}
+
+function onListTouchStart(e: TouchEvent) {
+  if (!window.matchMedia?.('(pointer: coarse)')?.matches) return
+  const t = e.touches[0]
+  if (!t) return
+  scrubbing = true
+  previewRowAt(t.clientX, t.clientY)
+}
+
+function onListTouchMove(e: TouchEvent) {
+  if (!scrubbing) return
+  // 接管手势：滑动期间列表不自行滚动，由 scrubbing 逻辑驱动
+  e.preventDefault()
+  const t = e.touches[0]
+  if (!t) return
+  previewRowAt(t.clientX, t.clientY)
+  // 接近上下边缘时自动滚动列表
+  const list = listEl.value
+  if (!list) return
+  const r = list.getBoundingClientRect()
+  if (t.clientY < r.top + 44) list.scrollTop -= 10
+  else if (t.clientY > r.bottom - 44) list.scrollTop += 10
+}
+
+function onListTouchEnd() {
+  if (!scrubbing) return
+  scrubbing = false
+  const i = hoverParaIndex.value
+  hoverParaIndex.value = null
+  if (i != null) selectRow(i)
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && open.value) { open.value = false; return }
   if (!open.value) return
@@ -221,7 +291,13 @@ onMounted(() => {
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown)
   requestAnimationFrame(() => { ready.value = true })
+  // 段落是异步加载的，字体/图片也会影响首帧布局：延迟补测几次
+  setTimeout(syncRailX, 300)
+  setTimeout(syncRailX, 1200)
 })
+
+// 段落数量变化（加载/重分段）后重新测量轨道 X
+watch(() => props.paragraphs.length, () => nextTick(() => syncRailX()))
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
@@ -241,6 +317,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
     ref="rootEl"
     class="pm-root"
     :class="{ open, ready }"
+    :style="railLeft != null ? { left: railLeft + 'px' } : undefined"
     @pointerenter="onRootEnter"
     @pointerleave="onRootLeave"
   >
@@ -278,7 +355,14 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
           <span class="pm-panel-title">段落</span>
           <span class="pm-panel-count">{{ currentIndex + 1 }} / {{ paragraphs.length }}</span>
         </div>
-        <div ref="listEl" class="pm-list">
+        <div
+          ref="listEl"
+          class="pm-list"
+          @touchstart="onListTouchStart"
+          @touchmove="onListTouchMove"
+          @touchend="onListTouchEnd"
+          @touchcancel="onListTouchEnd"
+        >
           <button
             v-for="r in rows"
             :key="r.i"
@@ -308,7 +392,6 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   z-index: 45;
   opacity: 0;
   transition: opacity 0.36s ease, transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
-  touch-action: none;
   -webkit-tap-highlight-color: transparent;
 }
 .pm-root.ready { opacity: 0.55; }
@@ -324,6 +407,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   background: rgba(252, 251, 249, 0.42);
   backdrop-filter: blur(8px) saturate(1.05);
   -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  touch-action: none;
   transition: background 0.22s ease, box-shadow 0.22s ease;
 }
 .pm-rail:hover {
@@ -389,6 +473,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   transform: translateY(-50%);
   width: 252px;
   max-height: 66vh;
+  /* 允许面板内纵向触摸滚动；scrubbing 时由 JS preventDefault 接管 */
+  touch-action: pan-y;
+  touch-action: pan-y;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -519,10 +606,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* 移动端：面板更宽、行更高，便于点按 */
 @media (max-width: 767px) {
-  /* 阅读区左内边距 20px（+8px 滚动条 → 紫色块 28px 起），序号 40~62（中心 51）；
-     轨道 41~61px 与序号同列，与桌面端对齐逻辑一致，避免落在紫色区外 */
-  .pm-root { left: 41px; }
-  .pm-panel { width: min(72vw, 258px); max-height: 60vh; }
+  /* 轨道 X 由 JS 实测（syncRailX）自动对齐序号列，无需断点硬编码 */
+  .pm-panel { width: min(72vw, 258px); max-height: 60vh; touch-action: pan-y; }
   .pm-row { padding: 10px 7px; }
   .pm-row-text { font-size: 13px; }
 }

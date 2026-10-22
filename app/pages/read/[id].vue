@@ -5034,7 +5034,7 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
   .reader-app { height: 100dvh; }
   .reader-layout { flex-direction: column; flex: 1; min-height: 0; }
   .reader-body { flex-direction: column; flex: 1; min-height: 0; }
-  .reader-article-pane { flex: 1 1 0; min-height: 0; width: 100% !important; max-width: 100% !important; padding: 0 0 0 20px; overflow-y: auto; }
+  .reader-article-pane { flex: 1 1 0; min-height: 0; width: 100% !important; max-width: 100% !important; padding: 0; overflow-y: auto; }
   .article-body { font-size: 15px; line-height: 1.85; }
   .reader-toolbar { padding: 8px 12px; flex-wrap: wrap; gap: 4px; }
   .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }
