@@ -301,8 +301,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
-  /* 左侧空白区为 8px 滚动条之后到 28px（宽 20px），轨道等宽且居中放置 */
-  left: 8px;
+  /* 位置固定：落在「白边(10px) 与紫色阅读区之间」的 20px 空档（18~38px），
+     不随内容滚动；滚动条占 0~8px，序号从 48px 起，三者互不重叠 */
+  left: 18px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
