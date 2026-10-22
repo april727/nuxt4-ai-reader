@@ -772,6 +772,16 @@
       </div>
     </Teleport>
 
+    <!-- 段落迷你地图（右侧边缘，桌面与移动端通用） -->
+    <ParaMinimap
+      :paragraphs="paragraphs"
+      :current-index="Math.max(0, currentParaIdx)"
+      :marks="activeMarks"
+      :offset-right="minimapOffsetRight"
+      :hidden="showPdf"
+      @jump="jumpToPara"
+    />
+
     <!-- 浮动翻译卡片 -->
     <TranslateCard
       :visible="tc.visible"
@@ -989,6 +999,15 @@ const { rawText, title, paragraphs, analysis, chatHistory, activeParagraphId, ri
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 const isMobile = useIsMobile()
+
+// 段落迷你地图避让：桌面端右侧解释区占宽（CSS: 40%，钳制 320~500px）
+const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
+function syncViewportWidth() {
+  if (typeof window === 'undefined') return
+  viewportWidth.value = window.innerWidth
+}
+onMounted(() => { syncViewportWidth(); window.addEventListener('resize', syncViewportWidth) })
+onBeforeUnmount(() => window.removeEventListener('resize', syncViewportWidth))
 
 // 顶栏收起/展开（记忆到 localStorage）
 const topbarHidden = ref(false)
@@ -1338,6 +1357,12 @@ function loadPanelPref(): boolean {
 onMounted(() => {
   showAnalysisPanel.value = loadPanelPref()
 })
+/** 段落迷你地图需要避让的右侧宽度：解释区展开时贴到文章区右缘 */
+const minimapOffsetRight = computed(() => {
+  if (isMobile.value || !showAnalysisPanel.value) return 0
+  return Math.round(Math.min(500, Math.max(320, viewportWidth.value * 0.4)))
+})
+
 function toggleAnalysisPanel() {
   showAnalysisPanel.value = !showAnalysisPanel.value
   try { localStorage.setItem('analysis-panel-visible', String(showAnalysisPanel.value)) } catch {}
@@ -3820,10 +3845,13 @@ function jumpToReadingPos() {
 }
 
 /** 点击顶栏进度圆点 → 选中并跳转到对应段落 */
+/** 点击段落导航（迷你地图 / 顶栏进度点）→ 选中该段并跳转，右侧解释区同步跟随 */
 function jumpToPara(index: number) {
   const p = paragraphs.value[index]
   if (!p) return
   article.setActiveParagraph(p.id)
+  // 右侧「理解」区加载该段解释（缓存优先）——与正文内直接点击段落的行为保持一致
+  loadExplanationEditor(p.id)
   nextTick(() => {
     const el = document.querySelector(`.para-block[data-id="${p.id}"]`)
     if (el) {
