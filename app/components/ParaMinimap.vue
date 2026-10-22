@@ -301,8 +301,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
-  /* 落在正文左侧留白（段落序号列的空白区），不再挡在正文与右侧面板之间 */
-  left: 2px;
+  /* 落在正文左侧留白（段落序号列的空白区），不再挡在正文与右侧面板之间。
+     12px 起：避开左侧 8px 滚动条，且不压住从 38px 开始的段落序号 */
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
@@ -515,6 +516,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* 移动端：面板更宽、行更高，便于点按 */
 @media (max-width: 767px) {
+  /* 移动端阅读区左留白较窄（20px），轨道贴到 2px 起，避免压住序号 */
+  .pm-root { left: 2px; }
   .pm-panel { width: min(72vw, 258px); max-height: 60vh; }
   .pm-row { padding: 10px 7px; }
   .pm-row-text { font-size: 13px; }

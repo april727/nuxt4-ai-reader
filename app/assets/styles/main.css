@@ -130,8 +130,8 @@ body {
 .reader-body { display: flex; flex: 1; overflow: hidden; }
 
 /* ---- 正文区 ---- */
-/* 正文铺满：左右各留 10px、顶部再加 10px 呼吸空间；滚动条不占正文宽度 */
-.reader-article-pane { padding: 46px 10px 36px; overflow-y: scroll; scroll-behavior: smooth; flex-shrink: 0; background: var(--ra-bg, #ffffff); transition: background 0.3s; }
+/* 正文右贴边（消除与解释区之间的空档），左侧留出较宽空白容纳段落跳转轨道 */
+.reader-article-pane { padding: 46px 0 36px 28px; overflow-y: scroll; scroll-behavior: smooth; flex-shrink: 0; background: var(--ra-bg, #ffffff); transition: background 0.3s; }
 /* 滚动条改到左侧；负 margin 让它浮在正文左边线外侧，不挤压段落 */
 .reader-article-pane { direction: rtl; scrollbar-width: thin; scrollbar-color: var(--ra-bg, #cbd5e1) transparent; }
 .reader-article-pane > * { direction: ltr; }
@@ -166,8 +166,8 @@ body {
   align-items: baseline;
   column-gap: 10px;
   margin-bottom: 22px;
-  /* 底色铺满整宽；左右各 10px 让高亮块与阅读区留白对齐 */
-  padding: 0 10px;
+  /* 高亮块右缘贴齐正文区右边界；左侧 10px 让序号与底色留出间距 */
+  padding: 0 0 0 10px;
   border-radius: 10px;
   cursor: pointer; transition: background 0.15s; position: relative;
 }
