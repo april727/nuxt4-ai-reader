@@ -166,8 +166,8 @@ body {
   align-items: baseline;
   column-gap: 10px;
   margin-bottom: 22px;
-  /* 左内边距 2px：序号圆标落在 40~62px，与下方跳转轨道（41~61px）同列对齐 */
-  padding: 0 7px 0 2px;
+  /* 左内边距 12px：序号不紧贴块左缘；圆标 50~72px（中心 61），与轨道同列居中 */
+  padding: 0 7px 0 12px;
   border-radius: 10px;
   cursor: pointer; transition: background 0.15s; position: relative;
 }

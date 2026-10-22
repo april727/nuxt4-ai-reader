@@ -301,8 +301,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
-  /* 与序号圆标同列对齐：序号占 40~62px（中心 51），轨道 41~61px（中心 51） */
-  left: 41px;
+  /* 跟随序号列：圆标 50~72px（中心 61），轨道 51~71px（中心 61），精确同列 */
+  left: 51px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
