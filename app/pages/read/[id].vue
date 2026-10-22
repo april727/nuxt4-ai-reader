@@ -1097,22 +1097,46 @@ async function onExplainEditorPaste(e: ClipboardEvent) {
     const file = item.getAsFile()
     if (!file) return
     try {
-      const form = new FormData()
       const compressed = await compressImageFile(file)
+
+      // ── 立即反馈：先用本地 blob 地址占位，图片马上可见；上传放后台 ──
+      const blobUrl = URL.createObjectURL(compressed)
+      const placeholder = `\n\n![图片](${blobUrl})\n\n`
+      const el0 = explainEditorEl.value
+      if (el0) {
+        const start = el0.selectionStart ?? el0.value.length
+        const end = el0.selectionEnd ?? start
+        explainSourceContent.value = el0.value.slice(0, start) + placeholder + el0.value.slice(end)
+        explainManuallyEdited.value = true
+        await nextTick()
+        el0.focus()
+        el0.setSelectionRange(start + placeholder.length, start + placeholder.length)
+      } else {
+        explainSourceContent.value += placeholder
+        explainManuallyEdited.value = true
+      }
+
+      const form = new FormData()
       form.append('file', compressed, (compressed as File).name || 'paste.webp')
       form.append('id', id)
       const result = await $fetch<{ url: string }>('/api/upload/image', { method: 'POST', body: form })
-      const el = explainEditorEl.value
-      if (el) {
-        const start = el.selectionStart ?? el.value.length
-        const end = el.selectionEnd ?? start
-        const md = `\n\n![图片](${result.url})\n\n`
-        explainSourceContent.value = el.value.slice(0, start) + md + el.value.slice(end)
+
+      // 上传完成 → 用唯一 blob 地址定位占位符并替换为正式地址
+      const realMd = `\n\n![图片](${result.url})\n\n`
+      if (explainSourceContent.value.includes(blobUrl)) {
+        explainSourceContent.value = explainSourceContent.value.replace(blobUrl, result.url)
         explainManuallyEdited.value = true
-        await nextTick()
-        el.focus()
-        el.setSelectionRange(start + md.length, start + md.length)
+      } else if (el0 && el0.value.includes(blobUrl)) {
+        el0.value = el0.value.replace(blobUrl, result.url)
+        explainSourceContent.value = el0.value
+        explainManuallyEdited.value = true
+      } else {
+        // 占位符已被用户删除 → 追加到末尾，避免图片丢失
+        explainSourceContent.value += realMd
+        explainManuallyEdited.value = true
       }
+      URL.revokeObjectURL(blobUrl)
+      saveExplanationContent()
     } catch (err: any) {
       alert('图片上传失败: ' + (err?.message || ''))
     }
@@ -3393,19 +3417,34 @@ async function uploadParaImage(paraId: string, file: File | Blob, filename = 'im
   if (!para) return
   try {
     const compressed = await compressImageFile(file)
+
+    // ── 立即反馈：先把本地 blob 预览地址插进段落文本，图片马上出现 ──
+    const blobUrl = URL.createObjectURL(compressed)
+    const pendingMd = `\n\n![](${blobUrl})`
+    const pendingText = para.text + pendingMd
+    article.updateParagraphText(paraId, pendingText)
+
     const form = new FormData()
     form.append('file', compressed, (compressed as File).name || filename)
     form.append('id', id)
 
     const result = await $fetch<{ url: string }>('/api/upload/image', { method: 'POST', body: form })
-    // 将 Markdown 图片语法插入段落文本末尾（之后可编辑移动到任意位置）
-    const imgMd = `\n\n![](${result.url})`
-    const newText = para.text + imgMd
+
+    // 上传完成 → 把 blob 地址替换为正式地址并持久化
+    const newText = pendingText.replace(blobUrl, result.url)
     article.updateParagraphText(paraId, newText)
     $fetch('/api/text/update-segment', { method: 'POST', body: { textId: id, segmentId: paraId, text: newText } }).catch(() => {})
+    URL.revokeObjectURL(blobUrl)
     progressMsg.value = '图片已插入段落末尾，可编辑移动位置'
     setTimeout(() => { if (progressMsg.value?.startsWith('图片已插入')) progressMsg.value = '' }, 2500)
   } catch (e: any) {
+    // 上传失败 → 移除刚插入的本地预览，避免残留死图
+    const blobText = paragraphs.value.find(p => p.id === paraId)?.text || ''
+    if (blobText.includes('blob:')) {
+      const cleaned = blobText.replace(/\n\n!\[\]\(blob:[^)]*\)/g, '')
+      article.updateParagraphText(paraId, cleaned)
+      $fetch('/api/text/update-segment', { method: 'POST', body: { textId: id, segmentId: paraId, text: cleaned } }).catch(() => {})
+    }
     alert('图片上传失败: ' + (e?.message || ''))
   }
 }
