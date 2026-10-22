@@ -301,9 +301,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
-  /* 轨道叠在紫色阅读区内部：紧贴段落块左缘（块从 38px 起），
-     占 40~60px；序号已右移至 64px 起，互不重叠。位置固定、不随内容滚动 */
-  left: 40px;
+  /* 与序号圆标同列对齐：序号占 40~62px（中心 51），轨道 41~61px（中心 51） */
+  left: 41px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
