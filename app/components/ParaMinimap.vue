@@ -519,8 +519,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* 移动端：面板更宽、行更高，便于点按 */
 @media (max-width: 767px) {
-  /* 移动端阅读区左留白较窄（20px），轨道贴到 2px 起，避免压住序号 */
-  .pm-root { left: 2px; }
+  /* 阅读区左内边距 20px（+8px 滚动条 → 紫色块 28px 起），序号 40~62（中心 51）；
+     轨道 41~61px 与序号同列，与桌面端对齐逻辑一致，避免落在紫色区外 */
+  .pm-root { left: 41px; }
   .pm-panel { width: min(72vw, 258px); max-height: 60vh; }
   .pm-row { padding: 10px 7px; }
   .pm-row-text { font-size: 13px; }
