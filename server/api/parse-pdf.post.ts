@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { execSync } from 'node:child_process'
+import { execSync, execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 export interface PdfChapter {
@@ -43,6 +43,34 @@ function parseWithPyMuPDF4LLM(pdfPath: string): PdfParseResult | null {
   }
 }
 
+// ====== pdfjs-dist 回退（纯 JS，无 Python 依赖） ======
+// 场景：服务器/本机没有 pymupdf4llm 时，Python 路径必然失败。
+// pdfjs-dist 已是项目依赖，用它抽取文字层，保证 PDF 上传始终可用。
+// 注意：pdfjs 不能在 Nitro worker 内直接跑（会让 worker 退出），
+// 因此交给当前 Node 二进制启动的子进程执行。
+function parseWithPdfJs(pdfPath: string): PdfParseResult | null {
+  try {
+    const result = execFileSync(process.execPath, [path.resolve('server/scripts/parse_pdf_js.mjs'), pdfPath], {
+      encoding: 'utf-8',
+      timeout: 120_000,
+      maxBuffer: 50 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const stdout = String(result).trim()
+    if (!stdout || stdout.startsWith('PDF_PARSE_ERROR')) {
+      console.warn('[parse-pdf] pdfjs 回退失败:', stdout)
+      return null
+    }
+    const parsed = JSON.parse(stdout)
+    if (!parsed?.markdown?.trim()) return null
+    // 纯 JS 回退不做章节识别
+    return { markdown: parsed.markdown, chapters: [] }
+  } catch (err: any) {
+    console.warn('[parse-pdf] pdfjs 子进程调用失败:', err?.message || err)
+    return null
+  }
+}
+
 // ====== 路由处理 ======
 // PDF 仅负责解析+暂存临时文件；数据库写入由 text/save 统一处理
 export default defineEventHandler(async (event) => {
@@ -60,9 +88,18 @@ export default defineEventHandler(async (event) => {
   const pdfPath = path.join(uploadsDir, `${Date.now()}_${safeName}`)
   await writeFile(pdfPath, fileEntry.data)
 
-  const result = parseWithPyMuPDF4LLM(pdfPath)
+  // 优先 pymupdf4llm（版面感知、能识别章节）；失败则回退纯 JS 解析
+  let result = parseWithPyMuPDF4LLM(pdfPath)
+  let parser = 'pymupdf4llm'
   if (!result) {
-    throw createError({ statusCode: 500, message: 'PDF 解析失败（缺少 Python / pymupdf4llm 环境）' })
+    result = parseWithPdfJs(pdfPath)
+    parser = 'pdfjs'
+  }
+  if (!result) {
+    throw createError({
+      statusCode: 500,
+      message: 'PDF 解析失败：pymupdf4llm 不可用，且 pdfjs 未能提取文字层',
+    })
   }
 
   // 扫描版 / 无文字层检测：去掉页码标记后正文文字过少即视为无效
@@ -75,6 +112,6 @@ export default defineEventHandler(async (event) => {
     text: result.markdown,
     chapters: result.chapters,
     filePath: path.basename(pdfPath),
-    parser: 'pymupdf4llm',
+    parser,
   }
 })
