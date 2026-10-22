@@ -166,8 +166,8 @@ body {
   align-items: baseline;
   column-gap: 10px;
   margin-bottom: 22px;
-  /* 底色通到右侧分隔线；右 7px 只把文字向内收，不产生白边 */
-  padding: 0 7px 0 10px;
+  /* 左内边距 26px：给叠在块内的跳转轨道（40~60px）让位，序号从 64px 起 */
+  padding: 0 7px 0 26px;
   border-radius: 10px;
   cursor: pointer; transition: background 0.15s; position: relative;
 }
