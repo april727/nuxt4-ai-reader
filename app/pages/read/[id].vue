@@ -435,14 +435,6 @@
         </template>
       </article>
 
-      <!-- 阅读赛道（把中间闲置分隔缝做成游戏竖条，移动端隐藏） -->
-      <GameRail
-        :current-para-idx="currentParaIdx"
-        :total-paras="paragraphs.length"
-        :marked-count="activeMarkedWordCount"
-        :hidden="isMobile"
-      />
-
       <!-- 可拖拽分割线（移动端隐藏） -->
       <div class="panel-divider" :class="{ hidden: isMobile }"></div>
 
@@ -1495,13 +1487,6 @@ const tabs = [
 const currentParaIdx = computed(() => {
   if (!activeParagraphId.value) return 0
   return paragraphs.value.findIndex(p => p.id === activeParagraphId.value)
-})
-
-/** 当前段落的生词标记数（驱动阅读赛道：读得越细跑得越快） */
-const activeMarkedWordCount = computed(() => {
-  const pid = activeParagraphId.value
-  if (!pid) return 0
-  return activeMarks.value.filter(m => m.paraId === pid && m.type === 'word').length
 })
 
 /** 超过 80 段时用滑动窗口显示 dots，避免溢出顶栏 */
@@ -4980,8 +4965,6 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
   .reader-toolbar .reader-icon-btn { width: 28px; height: 28px; padding: 4px; }
   .panel-divider.hidden { display: none; }
   .panel-divider { display: none; }
-  /* 移动端隐藏阅读赛道竖条（竖向空间有限，且会挤压正文） */
-  :deep(.game-rail) { display: none !important; }
   .reader-header { padding: 10px 16px; }
   .reader-header h1 { font-size: 18px; }
   .page-header { padding: 10px 16px; }
