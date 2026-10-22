@@ -120,7 +120,13 @@
               :title="it.source"
               @click="useImage(it, i)"
             >
-              <img :src="proxyUrl(it.thumb)" alt="" loading="lazy" />
+              <img
+                :src="thumbSrc(it.thumb)"
+                alt=""
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="onThumbError(it.thumb)"
+              />
             </button>
           </div>
 
@@ -241,6 +247,22 @@ async function onEditDetailPaste(e: ClipboardEvent) {
 // ── 自动配图 ──
 function proxyUrl(u: string) {
   return `/api/images/proxy?url=${encodeURIComponent(u)}`
+}
+
+/**
+ * 缩略图直连优先。
+ * 之前所有缩略图都走 /api/images/proxy，服务端要逐张下载：
+ * 正常站点约 0.3s，慢站点实测 5~6s，一屏十几张就会长时间空白。
+ * <img> 本身不需要 CORS，直接引用外链即可；个别防盗链站点才回退到代理。
+ */
+const thumbFallback = reactive<Record<string, boolean>>({})
+
+function thumbSrc(u: string) {
+  return thumbFallback[u] ? proxyUrl(u) : u
+}
+
+function onThumbError(u: string) {
+  if (!thumbFallback[u]) thumbFallback[u] = true
 }
 
 function openImagePicker() {

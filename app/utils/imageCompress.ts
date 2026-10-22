@@ -7,11 +7,13 @@
  */
 
 export interface CompressOptions {
-  /** 最长边像素，默认 1600 */
+  /** 最长边像素，默认 1280（阅读区实际显示宽度通常 < 900px） */
   maxEdge?: number
   /** webp 质量，0–1 */
   quality?: number
   mime?: 'image/webp' | 'image/jpeg'
+  /** 目标体积上限（字节）。超过则自动降质/降尺寸重压，默认 320KB */
+  maxBytes?: number
 }
 
 export async function compressImageFile(
@@ -20,7 +22,7 @@ export async function compressImageFile(
 ): Promise<File | Blob> {
   if (!import.meta.client) return file
 
-  const { maxEdge = 1600, quality = 0.82, mime = 'image/webp' } = opts
+  const { maxEdge = 1280, quality = 0.74, mime = 'image/webp', maxBytes = 320 * 1024 } = opts
   const type = file.type || ''
   if (!type.startsWith('image/')) return file
   // 动图与矢量图缩放会丢帧或失真，直接原样上传
@@ -48,9 +50,37 @@ export async function compressImageFile(
     // 压缩没有收益时保留原图
     if (scale === 1 && blob.size >= file.size) return file
 
-    const base = (file as File).name?.replace(/\.[^.]+$/, '') || 'image'
+    const baseRaw = (file as File).name || 'image'
+    const baseName = String(baseRaw).replace(/\.[^.]+$/, '') || 'image'
     const ext = mime === 'image/webp' ? '.webp' : '.jpg'
-    return new File([blob], `${base}${ext}`, { type: mime })
+
+    let out = blob
+    // 体积自适应：上传带宽约 100KB/s，超过预算会明显拖慢交互，逐级降质再压
+    if (out.size > maxBytes) {
+      for (const q of [0.62, 0.5]) {
+        const next = await new Promise<Blob | null>(r => canvas.toBlob(r, mime, q))
+        if (!next) break
+        out = next
+        if (out.size <= maxBytes) break
+      }
+    }
+    // 仍超预算则按比例缩小尺寸再压一次（兜底，避免极端大图）
+    if (out.size > maxBytes * 2) {
+      const s2 = Math.sqrt(maxBytes / out.size)
+      canvas.width = Math.max(1, Math.round(width * s2))
+      canvas.height = Math.max(1, Math.round(height * s2))
+      const ctx2 = canvas.getContext('2d')
+      if (ctx2) {
+        ctx2.imageSmoothingQuality = 'high'
+        const bmp2 = await createImageBitmap(out)
+        ctx2.drawImage(bmp2, 0, 0, canvas.width, canvas.height)
+        bmp2.close?.()
+        const next = await new Promise<Blob | null>(r => canvas.toBlob(r, mime, 0.7))
+        if (next) out = next
+      }
+    }
+
+    return new File([out], `${baseName}${ext}`, { type: mime })
   } catch {
     return file
   }

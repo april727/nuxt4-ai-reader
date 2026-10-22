@@ -94,7 +94,13 @@
 
           <div v-if="cover.candidates.length" class="rs-cover-grid">
             <button v-for="(c, i) in cover.candidates" :key="c.full" class="rs-cover-cell" @click="applyCandidate(c, i)">
-              <img :src="proxy(c.thumb)" alt="" loading="lazy" />
+              <img
+                :src="thumbSrc(c.thumb)"
+                alt=""
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="onThumbError(c.thumb)"
+              />
               <span v-if="cover.busy === i" class="rs-cover-busy">应用中…</span>
             </button>
           </div>
@@ -180,6 +186,15 @@ function openWords(r: Resource) {
 // ── 封面 ──
 function proxy(u: string) {
   return `/api/images/proxy?url=${encodeURIComponent(u)}`
+}
+
+/** 缩略图直连优先，防盗链站点失败后回退服务端代理（避免整屏等待） */
+const thumbFallback = reactive<Record<string, boolean>>({})
+function thumbSrc(u: string) {
+  return thumbFallback[u] ? proxy(u) : u
+}
+function onThumbError(u: string) {
+  if (!thumbFallback[u]) thumbFallback[u] = true
 }
 
 function openCover(r: Resource) {

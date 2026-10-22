@@ -5,7 +5,9 @@ import { storeImage } from '../../utils/imageStore'
  * R2 优先，失败回退本地；文件名用内容指纹，重复粘贴不会产生冗余文件。
  */
 export default defineEventHandler(async (event) => {
+  const t0 = Date.now()
   const form = await readMultipartFormData(event)
+  const tRead = Date.now()
   if (!form?.length) throw createError({ statusCode: 400, message: '未收到文件' })
 
   const file = form.find(f => f.name === 'file')
@@ -19,5 +21,6 @@ export default defineEventHandler(async (event) => {
 
   const stored = await storeImage(Buffer.from(file.data), contentType, textId)
 
+  console.log(`[upload/image] 读取 ${tRead - t0}ms | 存储 ${Date.now() - tRead}ms | ${stored.storage} ${stored.bytes}B`)
   return { url: stored.url, storage: stored.storage, bytes: stored.bytes }
 })
