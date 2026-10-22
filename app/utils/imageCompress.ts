@@ -86,6 +86,49 @@ export async function compressImageFile(
   }
 }
 
+/**
+ * Worker 版压缩：解码/缩放/编码全部在子线程，主线程零卡顿。
+ * 供"粘贴乐观反馈"使用 —— 插入预览后立刻调它，输入不会感到任何停顿。
+ * 环境不支持（无 Worker / 无 OffscreenCanvas）时自动回退主线程版本。
+ */
+export function compressImageAsync(
+  file: File | Blob,
+  opts: CompressOptions = {},
+): Promise<File | Blob> {
+  return new Promise((resolve, reject) => {
+    if (!import.meta.client) { resolve(file); return }
+    const supportsWorker =
+      typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined'
+    if (!supportsWorker) {
+      compressImageFile(file, opts).then(resolve, reject)
+      return
+    }
+    try {
+      const worker = new Worker(
+        new URL('./image-compress.worker.js', import.meta.url),
+        { type: 'module' },
+      )
+      worker.onmessage = (ev: MessageEvent) => {
+        const d = ev.data as { ok: boolean; blob?: Blob; name?: string; error?: string }
+        worker.terminate()
+        if (d.ok && d.blob) {
+          resolve(new File([d.blob], d.name || 'image.webp', { type: d.blob.type }))
+        } else {
+          // Worker 内失败 → 回退主线程压缩
+          compressImageFile(file, opts).then(resolve, reject)
+        }
+      }
+      worker.onerror = () => {
+        worker.terminate()
+        compressImageFile(file, opts).then(resolve, reject)
+      }
+      worker.postMessage({ file, opts })
+    } catch {
+      compressImageFile(file, opts).then(resolve, reject)
+    }
+  })
+}
+
 /** 人类可读体积，用于提示压缩收益 */
 export function formatBytes(bytes: number): string {
   if (!bytes) return '0 B'

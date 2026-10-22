@@ -1118,7 +1118,7 @@ async function onExplainEditorPaste(e: ClipboardEvent) {
     // ── 后台：压缩 → 上传 → 原位替换为正式地址 ──
     ;(async () => {
       try {
-        const compressed = await compressImageFile(file)
+        const compressed = await compressImageAsync(file)
         const form = new FormData()
         form.append('file', compressed, (compressed as File).name || 'paste.webp')
         form.append('id', id)
@@ -3433,7 +3433,7 @@ async function uploadParaImage(paraId: string, file: File | Blob, filename = 'im
   // ── 后台：压缩 → 上传 → 替换为正式地址并持久化 ──
   ;(async () => {
     try {
-      const compressed = await compressImageFile(file)
+      const compressed = await compressImageAsync(file)
       const form = new FormData()
       form.append('file', compressed, (compressed as File).name || filename)
       form.append('id', id)
