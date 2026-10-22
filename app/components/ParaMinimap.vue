@@ -23,9 +23,7 @@ const props = withDefaults(defineProps<{
   currentIndex: number
   marks?: MarkLite[]
   hidden?: boolean
-  /** 右侧需要避让的像素宽度（桌面端解释区占位） */
-  offsetRight?: number
-}>(), { marks: () => [], hidden: false, offsetRight: 0 })
+}>(), { marks: () => [], hidden: false })
 
 const emit = defineEmits<{ jump: [index: number] }>()
 
@@ -243,7 +241,6 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
     ref="rootEl"
     class="pm-root"
     :class="{ open, ready }"
-    :style="{ right: (offsetRight + 6) + 'px' }"
     @pointerenter="onRootEnter"
     @pointerleave="onRootLeave"
   >
@@ -304,6 +301,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 <style scoped>
 .pm-root {
   position: fixed;
+  /* 落在正文左侧留白（段落序号列的空白区），不再挡在正文与右侧面板之间 */
+  left: 2px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
@@ -318,8 +317,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* ── 刻度轨 ─────────────────────────────────── */
 .pm-rail {
-  padding: 10px 6px;
-  border-radius: 10px;
+  /* 收窄到左留白内（10px），避免压住段落序号 */
+  padding: 8px 1px;
+  border-radius: 8px;
   cursor: pointer;
   background: rgba(252, 251, 249, 0.42);
   backdrop-filter: blur(8px) saturate(1.05);
@@ -331,18 +331,18 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
 }
 
-.pm-rail-track { position: relative; width: 18px; }
+.pm-rail-track { position: relative; width: 10px; }
 
 .pm-dash {
   position: absolute;
   right: 0;
-  width: 10px;
+  width: 8px;
   height: 2px;
   border-radius: 1px;
   background: #e4e2db;
   transition: width 0.2s cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.24s ease;
 }
-.pm-root.open .pm-dash { width: 8px; }
+.pm-root.open .pm-dash { width: 6px; }
 .pm-dash.is-past { background: #d8d5cb; }
 .pm-dash.is-future { background: #ebe9e2; }
 .pm-dash.is-current { background: #cfccc2; }
@@ -352,7 +352,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 
 /* 悬停联动：框内悬停哪一段，侧栏对应刻度同步加长加深 */
 .pm-dash.is-hover {
-  width: 16px !important;
+  width: 10px !important;
   background: #3d3591 !important;
   transition: width 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.16s ease;
 }
@@ -362,7 +362,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   position: absolute;
   top: 0;
   right: 0;
-  width: 18px;
+  width: 10px;
   height: 2px;
   border-radius: 1px;
   background: #1a1a18;
@@ -378,7 +378,9 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 /* ── 面板 ───────────────────────────────────── */
 .pm-panel {
   position: absolute;
-  right: calc(100% + 4px);
+  /* 轨道在左缘，面板向右展开压住正文，而不是飞出屏幕外 */
+  left: calc(100% + 4px);
+  right: auto;
   top: 50%;
   transform: translateY(-50%);
   width: 252px;
@@ -386,7 +388,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 9px 5px 9px 11px;
+  padding: 9px 10px 9px 6px;
   border-radius: 14px;
   background: rgba(252, 251, 249, 0.82);
   backdrop-filter: blur(18px) saturate(1.1);
@@ -503,7 +505,7 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
 .pm-pop-enter-from,
 .pm-pop-leave-to {
   opacity: 0;
-  transform: translateY(-50%) translateX(10px) scale(0.985);
+  transform: translateY(-50%) translateX(-10px) scale(0.985);
 }
 .pm-pop-enter-to,
 .pm-pop-leave-from {

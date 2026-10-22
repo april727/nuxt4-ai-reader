@@ -777,7 +777,6 @@
       :paragraphs="paragraphs"
       :current-index="Math.max(0, currentParaIdx)"
       :marks="activeMarks"
-      :offset-right="minimapOffsetRight"
       :hidden="showPdf"
       @jump="jumpToPara"
     />
@@ -999,15 +998,6 @@ const { rawText, title, paragraphs, analysis, chatHistory, activeParagraphId, ri
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 const isMobile = useIsMobile()
-
-// 段落迷你地图避让：桌面端右侧解释区占宽（CSS: 40%，钳制 320~500px）
-const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
-function syncViewportWidth() {
-  if (typeof window === 'undefined') return
-  viewportWidth.value = window.innerWidth
-}
-onMounted(() => { syncViewportWidth(); window.addEventListener('resize', syncViewportWidth) })
-onBeforeUnmount(() => window.removeEventListener('resize', syncViewportWidth))
 
 // 顶栏收起/展开（记忆到 localStorage）
 const topbarHidden = ref(false)
@@ -1356,11 +1346,6 @@ function loadPanelPref(): boolean {
 }
 onMounted(() => {
   showAnalysisPanel.value = loadPanelPref()
-})
-/** 段落迷你地图需要避让的右侧宽度：解释区展开时贴到文章区右缘 */
-const minimapOffsetRight = computed(() => {
-  if (isMobile.value || !showAnalysisPanel.value) return 0
-  return Math.round(Math.min(500, Math.max(320, viewportWidth.value * 0.4)))
 })
 
 function toggleAnalysisPanel() {
