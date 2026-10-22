@@ -417,6 +417,24 @@ export async function runQuery(sql: string, params?: any[]) {
   return result
 }
 
+/**
+ * 执行写操作并返回受影响行数。
+ * 用于「乐观并发」：带条件的 UPDATE 若未命中（行数为 0），说明数据已被他人改动。
+ */
+export async function runQueryCount(sql: string, params?: any[]): Promise<number> {
+  if (USE_TURSO) {
+    const db = await getTursoDb()
+    const r = await db.execute({ sql, args: params || [] })
+    return Number(r?.rowsAffected || 0)
+  }
+  const db = await getSqljsDb()
+  db.run(sql, params)
+  const n = Number(db.getRowsModified?.() || 0)
+  saveDbSqljs()
+  scheduleSyncToTurso()
+  return n
+}
+
 export async function queryAll(sql: string, params?: any[]): Promise<any[]> {
   if (USE_TURSO) {
     const db = await getTursoDb()

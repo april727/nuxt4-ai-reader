@@ -1,4 +1,4 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { queryOne, runQuery, runQueryCount } from '../../utils/db'
 import { safeParse } from '../../utils/subtitle'
 import type { SubtitleCue } from '#shared/types'
 
@@ -62,8 +62,8 @@ export default defineEventHandler(async (event) => {
   const id = body?.id
   if (!id) throw createError({ statusCode: 400, message: '缺少文本 ID' })
 
-  // 从 DB 读取文本
-  const row = await queryOne('SELECT text, source, videoSubtitles FROM texts WHERE id=?', [id])
+  // 从 DB 读取文本（同时取出 segments 快照，用于写入时的并发保护）
+  const row = await queryOne('SELECT text, source, videoSubtitles, segments FROM texts WHERE id=?', [id])
   if (!row) throw createError({ statusCode: 404, message: '文本不存在' })
 
   const rawText = row.text || ''
@@ -95,6 +95,26 @@ async function runAsyncSegment(
   row: any,
 ) {
   let segments: Array<{ id: string; index: number; text: string; start?: number; end?: number }> = []
+
+  /**
+   * 并发保护快照：后台分段期间用户可能已经手动整理段落（合并/删除/插入）。
+   * 若这期间 segments 变了，本次后台结果就必须丢弃 —— 否则会把用户
+   * 已经合并掉的段落"复活"，这正是"整理后一段时间段落又乱掉"的原因。
+   */
+  const segmentsSnapshot = String(row?.segments ?? '')
+
+  /** 条件写入：只有 segments 与快照一致时才落库 */
+  async function commitSegments(next: any[]): Promise<boolean> {
+    const applied = await runQueryCount(
+      `UPDATE texts SET segments=?, explanations=?, paragraphChats=? WHERE id=? AND COALESCE(segments,'')=?`,
+      [JSON.stringify(next), '', '', id, segmentsSnapshot],
+    )
+    if (!applied) {
+      console.warn(`[segment-async] ${id} 分段期间段落已被手动修改，放弃本次写入（避免覆盖用户整理结果）`)
+      return false
+    }
+    return true
+  }
 
   try {
     if (mode === 'podcast') {
@@ -138,12 +158,9 @@ async function runAsyncSegment(
       }
     }
 
-    // 更新 DB
-    await runQuery(
-      `UPDATE texts SET segments=?, explanations=?, paragraphChats=? WHERE id=?`,
-      [JSON.stringify(segments), '', '', id],
-    )
-    console.log(`[segment-async] ${id} 分段完成: ${segments.length} 段`)
+    // 更新 DB（条件写入：期间用户整理过段落则不覆盖）
+    const ok = await commitSegments(segments)
+    if (ok) console.log(`[segment-async] ${id} 分段完成: ${segments.length} 段`)
   } catch (err: any) {
     console.error(`[segment-async] ${id} 分段失败:`, err.message)
     // 失败时写入本地兜底分段
@@ -152,10 +169,7 @@ async function runAsyncSegment(
         method: 'POST',
         body: { text, type: isVideo ? 'subtitle' : 'document' },
       })
-      await runQuery(
-        `UPDATE texts SET segments=?, explanations=?, paragraphChats=? WHERE id=?`,
-        [JSON.stringify(fallbackResult), '', '', id],
-      )
+      await commitSegments(fallbackResult)
     } catch { /* 彻底失败，保持原样 */ }
   }
 }

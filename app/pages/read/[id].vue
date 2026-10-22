@@ -3256,12 +3256,23 @@ function pollSegments() {
       const freshSegs = data?.segments
       const currentSegs = article.paragraphs.value
 
-      // 段数变了 或 内容变了 → 分段已完成
+      // 段数变了 → 分段已完成并落库
       if (freshSegs?.length && freshSegs.length !== currentSegs.length) {
         article.setParagraphs(freshSegs)
         article.clearParagraphCaches()
         segmenting.value = false
         if (segmentPollTimer) { clearInterval(segmentPollTimer); segmentPollTimer = null }
+        return
+      }
+
+      // 段数没变但后台任务已结束：
+      // 多为「分段期间用户手动整理过段落，结果被并发保护丢弃」，不必继续空等
+      const st = await $fetch<{ running: boolean }>('/api/text/segment-status', { query: { id: route.params.id } }).catch(() => null)
+      if (st && st.running === false) {
+        segmenting.value = false
+        if (segmentPollTimer) { clearInterval(segmentPollTimer); segmentPollTimer = null }
+        progressMsg.value = '分段未应用（段落已被手动修改）'
+        setTimeout(() => { if (progressMsg.value === '分段未应用（段落已被手动修改）') progressMsg.value = '' }, 4000)
       }
     } catch { /* 继续等待 */ }
   }, 3000)
