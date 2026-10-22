@@ -135,7 +135,19 @@ function cancelClose() {
   if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
 }
 
+/** 悬停意图：必须停留这么久才展开，避免从正文移向右侧面板时"路过即触发" */
+const HOVER_INTENT_MS = 400
+/** 离开后延迟收起，容忍指针短暂掠过 */
+const CLOSE_DELAY_MS = 320
+
+let openTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelOpen() {
+  if (openTimer) { clearTimeout(openTimer); openTimer = null }
+}
+
 function openPanel() {
+  cancelOpen()
   cancelClose()
   if (open.value) return
   open.value = true
@@ -143,13 +155,32 @@ function openPanel() {
 }
 
 function scheduleClose() {
+  cancelOpen()
   cancelClose()
-  closeTimer = setTimeout(() => { open.value = false; hoverParaIndex.value = null }, 220)
+  closeTimer = setTimeout(() => { open.value = false; hoverParaIndex.value = null }, CLOSE_DELAY_MS)
 }
 
 function togglePanel() {
+  cancelOpen()
   if (open.value) { open.value = false; hoverParaIndex.value = null }
   else openPanel()
+}
+
+/**
+ * 指针进入：只有鼠标才走「悬停意图」，且需停留 HOVER_INTENT_MS。
+ * 触摸设备不预展开，必须点按（避免阅读时手指滑过就弹面板）。
+ */
+function onRootEnter(e: PointerEvent) {
+  if (e.pointerType !== 'mouse') return
+  cancelClose()
+  if (open.value) return
+  cancelOpen()
+  openTimer = setTimeout(() => { openTimer = null; openPanel() }, HOVER_INTENT_MS)
+}
+
+function onRootLeave() {
+  cancelOpen()
+  scheduleClose()
 }
 
 function scrollActiveIntoView() {
@@ -199,6 +230,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocPointerDown)
   cancelClose()
+  cancelOpen()
 })
 
 // 跳转后让选中行保持可见
@@ -212,8 +244,8 @@ watch(() => props.currentIndex, () => { if (open.value) nextTick(() => scrollAct
     class="pm-root"
     :class="{ open, ready }"
     :style="{ right: (offsetRight + 6) + 'px' }"
-    @pointerenter="openPanel"
-    @pointerleave="scheduleClose"
+    @pointerenter="onRootEnter"
+    @pointerleave="onRootLeave"
   >
     <!-- 常驻刻度轨：短细线，只作位置提示 -->
     <div
