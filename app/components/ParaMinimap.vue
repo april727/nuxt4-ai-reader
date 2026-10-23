@@ -42,19 +42,42 @@ const ready = ref(false)
 const hoverParaIndex = ref<number | null>(null)
 
 /**
- * 轨道 X 坐标：实测首个序号圆标的中心，跨断点/设备精确同列对齐。
- * 硬编码 left 在桌面端/移动端断点下需要分别维护，曾多次漏改导致轨道越界；
- * 改为运行时测量后，阅读区内边距怎么变都自动跟随。
+ * 轨道 X 坐标：实测序号圆标中心，跨断点/设备精确同列对齐。
+ *
+ * 为什么不用硬编码 left：桌面/移动两个断点各有一个值，多次漏改导致轨道越界。
+ * 为什么不能只测一次：手机首帧可能先按桌面布局测量，媒体查询生效后布局才变化，
+ * 若不重测，轨道会停在旧位置（表现为"手机上轨道偏右压住正文"）。
+ * 因此：挂载 + 断点重试 + ResizeObserver + 面板展开时都重新测。
  */
 const railLeft = ref<number | null>(null)
+
+/** 取第一个「真实可见」的序号圆标做基准，避免命中隐藏节点（如桌面双栏残留） */
+function pickBadge(): HTMLElement | null {
+  const list = document.querySelectorAll('.para-num')
+  for (const el of Array.from(list) as HTMLElement[]) {
+    const r = el.getBoundingClientRect()
+    if (r.width > 0 && r.height > 0) return el
+  }
+  return null
+}
+
 function syncRailX() {
   if (typeof document === 'undefined') return
-  const badge = document.querySelector('.para-num') as HTMLElement | null
+  const badge = pickBadge()
   if (!badge) return
   const r = badge.getBoundingClientRect()
   if (!r.width) return
-  // 轨道宽 20px（含内边距），中心对齐圆标中心
-  railLeft.value = Math.max(2, Math.round(r.left + r.width / 2 - 10))
+  // 用轨道真实宽度的一半做补偿（宽高随缩放/断点可能变化，不能写死 10）
+  const railW = rootEl.value?.getBoundingClientRect().width || 20
+  let next = Math.round(r.left + r.width / 2 - railW / 2)
+  // 夹取：不得跑出阅读区左边界（测量异常/过渡态时兜底）
+  const pane = document.querySelector('.reader-article-pane')
+  if (pane) {
+    const pr = pane.getBoundingClientRect()
+    next = Math.max(Math.round(pr.left) + 2, next)
+  }
+  next = Math.max(2, next)
+  if (next !== railLeft.value) railLeft.value = next
 }
 
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -283,7 +306,13 @@ function onDocPointerDown(e: PointerEvent) {
   if (rootEl.value && !rootEl.value.contains(e.target as Node)) open.value = false
 }
 
-function onResize() { viewportH.value = window.innerHeight }
+function onResize() {
+  viewportH.value = window.innerHeight
+  syncRailX()
+}
+
+/** 监听阅读区尺寸变化：断点切换、字体加载、侧栏开合都会改变序号列的 x */
+let paneObserver: ResizeObserver | null = null
 
 onMounted(() => {
   onResize()
@@ -291,18 +320,34 @@ onMounted(() => {
   document.addEventListener('keydown', onKeydown)
   document.addEventListener('pointerdown', onDocPointerDown)
   requestAnimationFrame(() => { ready.value = true })
-  // 段落是异步加载的，字体/图片也会影响首帧布局：延迟补测几次
+
+  // 断点切换/布局变化后自动重测（手机首帧常先按桌面布局渲染）
+  const pane = document.querySelector('.reader-article-pane')
+  if (pane && typeof ResizeObserver !== 'undefined') {
+    paneObserver = new ResizeObserver(() => syncRailX())
+    paneObserver.observe(pane)
+  }
+  window.visualViewport?.addEventListener('resize', syncRailX)
+
+  // 段落异步加载、字体/图片影响布局：多拍补测兜住
+  syncRailX()
+  setTimeout(syncRailX, 120)
   setTimeout(syncRailX, 300)
   setTimeout(syncRailX, 1200)
 })
 
 // 段落数量变化（加载/重分段）后重新测量轨道 X
 watch(() => props.paragraphs.length, () => nextTick(() => syncRailX()))
+// 面板展开时再校准一次，保证弹出的位置与轨道严格对齐
+watch(open, (v) => { if (v) nextTick(() => syncRailX()) })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   document.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', onDocPointerDown)
+  window.visualViewport?.removeEventListener('resize', syncRailX)
+  paneObserver?.disconnect()
+  paneObserver = null
   cancelClose()
   cancelOpen()
 })
