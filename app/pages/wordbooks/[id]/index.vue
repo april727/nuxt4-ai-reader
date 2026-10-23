@@ -224,7 +224,11 @@ function locateWord(w: Word) {
 function pronounceWord(word: string) {
   pronResolve(word).then((r) => {
     if (r) {
-      new Audio(r.src).play().catch(() => {
+      // 音库防盗链：禁用 Referer，否则发布域会被 CDN 403
+
+      const a = new Audio(); a.referrerPolicy = 'no-referrer'; a.src = r.src
+
+      a.play().catch(() => {
         const u = new SpeechSynthesisUtterance(word)
         u.lang = 'en-GB'; u.rate = 0.85
         speechSynthesis.speak(u)

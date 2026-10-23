@@ -35,6 +35,28 @@ const hitCache: Record<string, boolean> = {}
 /** 服务端不可用时置位，之后不再反复尝试服务端 */
 let serverDown = false
 
+/**
+ * 音库防盗链：audio.beingfine.cn 对陌生 Referer 返回 403（实测发布域被拒、localhost 放行）。
+ * 两个应对：
+ *   1. 音频元素设 referrerPolicy='no-referrer'，浏览器干脆不发 Referer（首选，零成本）
+ *   2. 仍失败则改走本站代理 /api/pronounce/audio（服务端无 Referer，必定可播）
+ */
+const AUDIO_PROXY = '/api/pronounce/audio'
+
+export function proxyAudioUrl(src: string): string {
+  if (!src) return src
+  if (src.startsWith(AUDIO_PROXY)) return src
+  if (!/^https?:\/\//i.test(src)) return src
+  return `${AUDIO_PROXY}?u=${encodeURIComponent(src)}`
+}
+
+/** 统一创建音频元素：禁用 Referer，避免音库防盗链 403 */
+function newAudioEl(): HTMLAudioElement {
+  const a = new Audio()
+  try { a.referrerPolicy = 'no-referrer' } catch {}
+  return a
+}
+
 export function pronUrlOf(word: string, accent: Accent = 'UK'): string {
   const a = (ACCENTS as readonly string[]).includes(accent) ? accent : 'UK'
   return `${BASE}/${a}/${a}-speech/${word}.mp3`
@@ -47,7 +69,7 @@ export { pronCandidates }
 function audioProbe(url: string): Promise<'yes' | 'no' | 'timeout'> {
   return new Promise((resolve) => {
     let a: HTMLAudioElement
-    try { a = new Audio() } catch { resolve('no'); return }
+    try { a = newAudioEl() } catch { resolve('no'); return }
     let settled = false
     const timer = setTimeout(() => finish('timeout'), 6000)
     function finish(v: 'yes' | 'no' | 'timeout') {
@@ -266,8 +288,8 @@ export function pronAnalyze(text: string, accent: Accent = 'UK'): Promise<PronAn
 
 export interface PronPlayer {
   playOne(src: string, wordIndex?: number): void
-  /** 播放一个音频并等待播完（Promise 版，供需要等待的场景使用） */
-  playOneAsync(src: string): Promise<void>
+  /** 播放一个音频并等待播完（Promise 版）；返回是否真正播出声音，供上层决定是否回退合成音 */
+  playOneAsync(src: string): Promise<boolean>
   playQueue(items: { src: string; wordIndex?: number }[]): void
   isPlaying(): boolean
   stop(): void
@@ -277,7 +299,7 @@ export interface PronPlayer {
 /** 串行播放器：放完一段再播下一段（换 src 立即 play 会被浏览器吞音），词间 220ms */
 export function createPronPlayer(options?: { gapMs?: number; onWord?: (i: number) => void; onEnd?: () => void; onError?: () => void }): PronPlayer {
   if (import.meta.server) {
-    return { playOne() {}, playOneAsync: () => Promise.resolve(), playQueue() {}, isPlaying: () => false, stop() {}, destroy() {} }
+    return { playOne() {}, playOneAsync: () => Promise.resolve(false), playQueue() {}, isPlaying: () => false, stop() {}, destroy() {} }
   }
   const opt = options || {}
   const gap = opt.gapMs == null ? 220 : opt.gapMs
@@ -293,7 +315,7 @@ export function createPronPlayer(options?: { gapMs?: number; onWord?: (i: number
   let audio: HTMLAudioElement | null = null
 
   function ctx(): HTMLAudioElement {
-    if (!audio) { audio = new Audio(); audio.preload = 'auto' }
+    if (!audio) { audio = newAudioEl(); audio.preload = 'auto' }
     return audio
   }
   function clearTimer() { if (timer) { clearTimeout(timer); timer = null } }
@@ -318,6 +340,14 @@ export function createPronPlayer(options?: { gapMs?: number; onWord?: (i: number
     a.onended = () => { if (myToken !== token) return; cursor < queue.length ? later(myToken, gap) : finish(myToken) }
     a.onerror = () => {
       if (myToken !== token) return
+      // 防盗链 403 等加载失败 → 同一段改走服务端代理再试一次（src 被替换后不会重复触发）
+      const proxied = proxyAudioUrl(item.src)
+      if (proxied !== item.src) {
+        item.src = proxied
+        cursor--
+        later(myToken, 40)
+        return
+      }
       if (cursor < queue.length) later(myToken, 60)
       else { finish(myToken); onError() }
     }
@@ -339,9 +369,9 @@ export function createPronPlayer(options?: { gapMs?: number; onWord?: (i: number
       token++; playing = true; queue = [{ src, wordIndex: wordIndex == null ? -1 : wordIndex }]; cursor = 0
       step(token)
     },
-    playOneAsync(src: string) {
-      return new Promise<void>((resolve) => {
-        if (!src) { resolve(); return }
+    playOneAsync(src: string): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        if (!src) { resolve(false); return }
         const myToken = token + 1
         this.stop()
         token = myToken; playing = true
@@ -349,24 +379,48 @@ export function createPronPlayer(options?: { gapMs?: number; onWord?: (i: number
         const a = ctx()
         detach()
         let settled = false
-        const fin = () => { if (settled) return; settled = true; resolve() }
-        a.onended = () => { if (myToken !== token) { fin(); return } fin() }
-        a.onerror = () => { if (myToken !== token) { fin(); return } fin() }
-        a.src = src
+        let ok = false
+        let curSrc = src
+        let retried = false
+        const fin = (success: boolean) => {
+          if (settled) return
+          settled = true
+          resolve(success || ok)
+        }
+        const fail = () => {
+          if (myToken !== token) { fin(false); return }
+          // 首次失败 → 改走服务端代理再试（应对音库防盗链 403）
+          const proxied = proxyAudioUrl(curSrc)
+          if (!retried && proxied !== curSrc) {
+            retried = true
+            curSrc = proxied
+            setTimeout(() => {
+              if (settled || myToken !== token) { fin(false); return }
+              a.src = curSrc
+              const p2 = a.play()
+              if (p2 && p2.catch) p2.catch(() => fin(false))
+            }, 60)
+            return
+          }
+          fin(false)
+        }
+        a.onended = () => { ok = true; fin(true) }
+        a.onerror = () => fail()
+        a.src = curSrc
         const p = a.play()
         if (p && p.catch) {
           p.catch(() => {
             // 播放被拦截（自动播放策略/网络抖动）：重试一次
-            if (myToken !== token) { fin(); return }
+            if (myToken !== token) { fin(false); return }
             setTimeout(() => {
-              if (myToken !== token) { fin(); return }
+              if (settled || myToken !== token) { fin(false); return }
               const p2 = a.play()
-              if (p2 && p2.catch) p2.catch(() => fin())
-              setTimeout(fin, 6000)
+              if (p2 && p2.catch) p2.catch(() => fail())
             }, 120)
           })
         }
-        setTimeout(fin, 10000)
+        // 播完才有 onended；兜底超时按"未成功"处理
+        setTimeout(() => fin(ok), 10000)
       })
     },
     playQueue(items: { src: string; wordIndex?: number }[][]) {

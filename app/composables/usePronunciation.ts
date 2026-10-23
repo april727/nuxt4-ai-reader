@@ -26,9 +26,9 @@ export function resolveWordAudio(word: string, accent: 'UK' | 'US' = 'UK') {
 
 /**
  * 等待一个音频播完（供阻塞式调用）。
- * 用共享播放器的 Promise 版，避免每次 new Audio 造成并发打断。
+ * 返回是否真正播出声音 —— 失败时上层要回退合成音（音库防盗链 403 等）。
  */
-function playAndWait(src: string): Promise<void> {
+function playAndWait(src: string): Promise<boolean> {
   return player().playOneAsync(src)
 }
 
@@ -55,7 +55,9 @@ export function usePronunciation() {
 
     const r = await pronResolve(word)
     if (r) {
-      await playAndWait(r.src)
+      // 播不出来（防盗链 403 / 解码失败）也要出声 → 回退合成音
+      const ok = await playAndWait(r.src)
+      if (!ok) speakFallback(word)
       isPlaying.value = false
       options?.onEnd?.()
       return
@@ -65,12 +67,13 @@ export function usePronunciation() {
     options?.onEnd?.()
   }
 
-  /** 非阻塞发音（列表快速播放）：命中用共享串行播放器，未命中回退合成音 */
+  /** 非阻塞发音（列表快速播放）：命中用共享串行播放器，未命中/播放失败回退合成音 */
   function pronounceSimple(word: string) {
     if (!import.meta.client) return
-    pronResolve(word).then((r) => {
-      if (r) { player().playOne(r.src); return }
-      speakFallback(word)
+    pronResolve(word).then(async (r) => {
+      if (!r) { speakFallback(word); return }
+      const ok = await player().playOneAsync(r.src)
+      if (!ok) speakFallback(word)
     })
   }
 

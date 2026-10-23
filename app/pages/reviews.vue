@@ -262,7 +262,11 @@ function playWord(item: MarkItem) {
   const word = (item.mark.lemma || item.mark.text).replace(/[^a-zA-Z]/g, '').toLowerCase()
   pronResolve(word).then((r) => {
     if (r) {
-      new Audio(r.src).play().catch(() => {
+      // 音库防盗链：禁用 Referer，否则发布域会被 CDN 403
+
+      const a = new Audio(); a.referrerPolicy = 'no-referrer'; a.src = r.src
+
+      a.play().catch(() => {
         const u = new SpeechSynthesisUtterance(word)
         u.lang = 'en-GB'
         speechSynthesis.speak(u)
