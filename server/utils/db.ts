@@ -29,7 +29,7 @@ async function getTursoDb(): Promise<any> {
 
 async function createTablesTurso() {
   const db = tursoClient!
-  await db.execute(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY,title TEXT,text TEXT,source TEXT,folder TEXT DEFAULT 'default',excerpt TEXT,filePath TEXT,analysis TEXT,segments TEXT,explanations TEXT,marks TEXT,readingPosition TEXT,paragraphChats TEXT DEFAULT '',videoMeta TEXT DEFAULT '',videoSubtitles TEXT DEFAULT '',subtitlePractice TEXT DEFAULT '',completedAt TEXT DEFAULT NULL,notes TEXT DEFAULT '',paragraphNotes TEXT DEFAULT '[]',paragraphNotesMap TEXT DEFAULT '{}',chapters TEXT DEFAULT '[]',cover TEXT DEFAULT '',deletedAt TEXT DEFAULT NULL,createdAt TEXT,updatedAt TEXT)`)
+  await db.execute(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY,title TEXT,text TEXT,source TEXT,folder TEXT DEFAULT 'default',excerpt TEXT,filePath TEXT,analysis TEXT,segments TEXT,explanations TEXT,marks TEXT,readingPosition TEXT,paragraphChats TEXT DEFAULT '',videoMeta TEXT DEFAULT '',videoSubtitles TEXT DEFAULT '',subtitlePractice TEXT DEFAULT '',completedAt TEXT DEFAULT NULL,notes TEXT DEFAULT '',paragraphNotes TEXT DEFAULT '[]',paragraphNotesMap TEXT DEFAULT '{}',chapters TEXT DEFAULT '[]',cover TEXT DEFAULT '',deletedAt TEXT DEFAULT NULL,contentKind TEXT DEFAULT 'text',annotations TEXT DEFAULT '[]',createdAt TEXT,updatedAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY,name TEXT,parent TEXT DEFAULT '',isPrivate INTEGER DEFAULT 0,passwordHash TEXT DEFAULT '',createdAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY,readCount INTEGER DEFAULT 0,lastReadAt TEXT,markCount INTEGER DEFAULT 0)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS knowledge_points (id TEXT PRIMARY KEY,content TEXT NOT NULL,note TEXT DEFAULT '',sourceId TEXT DEFAULT '',sourceTitle TEXT DEFAULT '',sourceType TEXT DEFAULT 'selection',sourceContext TEXT DEFAULT '',customGroup TEXT DEFAULT '',tags TEXT DEFAULT '[]',chatHistory TEXT DEFAULT '[]',sortOrder INTEGER DEFAULT 0,createdAt TEXT,updatedAt TEXT)`)
@@ -69,6 +69,10 @@ async function createTablesTurso() {
     ['knowledge_points','customGroup',"TEXT DEFAULT ''"],['knowledge_points','chatHistory',"TEXT DEFAULT '[]'"],
     ['marks','deletedAt','TEXT DEFAULT NULL'],
     ['texts','deletedAt','TEXT DEFAULT NULL'],
+    // 内容形态：text=文字阅读（默认），sheet=图片试卷（画布 + 标注）
+    ['texts','contentKind',"TEXT DEFAULT 'text'"],
+    // 试卷标注：叠加层数据（bbox 归一化坐标 + kind），原图像素不修改
+    ['texts','annotations',"TEXT DEFAULT '[]'"],
   ]) {
     try { await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`) } catch {}
   }
@@ -169,7 +173,7 @@ async function getSqljsDb(): Promise<any> {
 }
 
 function createTablesSqljs() {
-  sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT, folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT, analysis TEXT, segments TEXT, explanations TEXT, marks TEXT, readingPosition TEXT, paragraphChats TEXT, createdAt TEXT, updatedAt TEXT, chapters TEXT DEFAULT '[]', cover TEXT DEFAULT '', deletedAt TEXT DEFAULT NULL)`)
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT, folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT, analysis TEXT, segments TEXT, explanations TEXT, marks TEXT, readingPosition TEXT, paragraphChats TEXT, createdAt TEXT, updatedAt TEXT, chapters TEXT DEFAULT '[]', cover TEXT DEFAULT '', deletedAt TEXT DEFAULT NULL, contentKind TEXT DEFAULT 'text', annotations TEXT DEFAULT '[]')`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT, parent TEXT DEFAULT '', createdAt TEXT)`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY, readCount INTEGER DEFAULT 0, lastReadAt TEXT, markCount INTEGER DEFAULT 0)`)
   // 段落结构历史（与 Turso 分支保持一致）
@@ -188,6 +192,8 @@ function createTablesSqljs() {
   try { sqljsDb.run("ALTER TABLE texts ADD COLUMN chapters TEXT DEFAULT '[]'") } catch {}
   try { sqljsDb.run("ALTER TABLE texts ADD COLUMN cover TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run('ALTER TABLE texts ADD COLUMN deletedAt TEXT DEFAULT NULL') } catch {}
+  try { sqljsDb.run("ALTER TABLE texts ADD COLUMN contentKind TEXT DEFAULT 'text'") } catch {}
+  try { sqljsDb.run("ALTER TABLE texts ADD COLUMN annotations TEXT DEFAULT '[]'") } catch {}
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS knowledge_points (id TEXT PRIMARY KEY, content TEXT NOT NULL, note TEXT DEFAULT '', sourceId TEXT DEFAULT '', sourceTitle TEXT DEFAULT '', sourceType TEXT DEFAULT 'selection', sourceContext TEXT DEFAULT '', customGroup TEXT DEFAULT '', tags TEXT DEFAULT '[]', sortOrder INTEGER DEFAULT 0, createdAt TEXT, updatedAt TEXT)`)
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN customGroup TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN chatHistory TEXT DEFAULT '[]'") } catch {}

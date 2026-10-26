@@ -604,7 +604,10 @@ async function handleDropOnFolder(folderId: string) {
 function openBook(id: string) {
   const book = books.value.find(b => b.id === id)
   const folder = encodeURIComponent(activeFolder.value)
-  if (book && videoSources.includes(book.source)) {
+  // 图片试卷走画布模式，不能进文字阅读页
+  if (book && (book as any).contentKind === 'sheet') {
+    navigateTo(`/sheet/${id}`)
+  } else if (book && videoSources.includes(book.source)) {
     navigateTo(`/watch/${id}?folder=${folder}`)
   } else {
     navigateTo(`/read/${id}?folder=${folder}`)

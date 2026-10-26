@@ -18,6 +18,7 @@ export default defineEventHandler(async (event) => {
   if (row.paragraphNotes) try { row.paragraphNotes = JSON.parse(row.paragraphNotes) } catch { row.paragraphNotes = [] }
   if (row.paragraphNotesMap) try { row.paragraphNotesMap = JSON.parse(row.paragraphNotesMap) } catch { row.paragraphNotesMap = {} }
   if (row.chapters) try { row.chapters = JSON.parse(row.chapters) } catch { row.chapters = [] }
+  if (row.annotations) try { row.annotations = JSON.parse(row.annotations) } catch { row.annotations = [] }
 
   return row
 })

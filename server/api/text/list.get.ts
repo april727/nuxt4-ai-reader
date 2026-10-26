@@ -48,7 +48,7 @@ export default defineEventHandler(async (event) => {
    *   aiSeg   = 是否含 AI 分段标记（原来的 includes('"id":"p-') 改由 SQL 判断）
    * 段落数随合并/重新分段变化，必须实时算，不能缓存进 stats。
    */
-  const COLS = `id,title,source,folder,excerpt,createdAt,completedAt,filePath,videoMeta,nextReviewAt,reviewCount,reviewIntervalDays,
+  const COLS = `id,title,source,folder,excerpt,createdAt,completedAt,filePath,videoMeta,nextReviewAt,reviewCount,reviewIntervalDays,contentKind,
     LENGTH(text) AS chars,
     (LENGTH(text) - LENGTH(REPLACE(text, ' ', '')) + 1) AS words,
     CASE WHEN segments IS NULL OR segments = '' THEN 0

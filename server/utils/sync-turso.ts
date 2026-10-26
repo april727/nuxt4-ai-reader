@@ -12,7 +12,7 @@ import path from 'node:path'
 
 const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'folders', pkIdx: 0, columns: ['id', 'name', 'parent', 'isPrivate', 'passwordHash', 'createdAt'] },
-  { name: 'texts', pkIdx: 0, columns: ['id', 'title', 'text', 'source', 'folder', 'excerpt', 'filePath', 'analysis', 'segments', 'explanations', 'marks', 'readingPosition', 'paragraphChats', 'videoMeta', 'videoSubtitles', 'subtitlePractice', 'completedAt', 'notes', 'paragraphNotes', 'paragraphNotesMap', 'chapters', 'cover', 'deletedAt', 'createdAt', 'updatedAt'] },
+  { name: 'texts', pkIdx: 0, columns: ['id', 'title', 'text', 'source', 'folder', 'excerpt', 'filePath', 'analysis', 'segments', 'explanations', 'marks', 'readingPosition', 'paragraphChats', 'videoMeta', 'videoSubtitles', 'subtitlePractice', 'completedAt', 'notes', 'paragraphNotes', 'paragraphNotesMap', 'chapters', 'cover', 'deletedAt', 'contentKind', 'annotations', 'createdAt', 'updatedAt'] },
   { name: 'stats', pkIdx: 0, columns: ['textId', 'readCount', 'lastReadAt', 'markCount'] },
   { name: 'knowledge_points', pkIdx: 0, columns: ['id', 'content', 'note', 'sourceId', 'sourceTitle', 'sourceType', 'sourceContext', 'customGroup', 'tags', 'chatHistory', 'sortOrder', 'createdAt', 'updatedAt'] },
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
@@ -70,6 +70,8 @@ export async function syncToTurso(): Promise<SyncResult> {
   try { await turso.execute("ALTER TABLE texts ADD COLUMN chapters TEXT DEFAULT '[]'") } catch {}
   try { await turso.execute("ALTER TABLE texts ADD COLUMN cover TEXT DEFAULT ''") } catch {}
   try { await turso.execute("ALTER TABLE texts ADD COLUMN deletedAt TEXT DEFAULT NULL") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN contentKind TEXT DEFAULT 'text'") } catch {}
+  try { await turso.execute("ALTER TABLE texts ADD COLUMN annotations TEXT DEFAULT '[]'") } catch {}
   try { await turso.execute("ALTER TABLE marks ADD COLUMN deletedAt TEXT DEFAULT NULL") } catch {}
 
   const tables: SyncResult['tables'] = {}

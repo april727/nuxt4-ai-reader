@@ -2,6 +2,7 @@
   <div class="rs-page">
     <PageHeader title="资源" active="resources" back-to="/" back-label="书架">
       <template #actions>
+        <NuxtLink to="/sheet/new" class="rs-hdr-link">图片试卷</NuxtLink>
         <NuxtLink to="/wordbooks" class="rs-hdr-link">单词本</NuxtLink>
       </template>
     </PageHeader>
