@@ -105,6 +105,9 @@
               </svg>
             </button>
             <h1 class="lib-title">{{ activeFolderName }}</h1>
+            <button v-if="reviewDueCount" class="review-chip" @click="openReviewToday" :title="`${reviewDueCount} 篇到期需要复习`">
+              今日复习 · {{ reviewDueCount }}
+            </button>
             <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
           </div>
           <div class="lib-filter-bar">
@@ -519,7 +522,23 @@ const showRename = ref(false)
 const renameText = ref('')
 const renameBookId = ref('')
 
-const activeFolderName = computed(() => folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹')
+const activeFolderName = computed(() => {
+  if (activeFolder.value === 'review_today') return '今日复习'
+  return folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹'
+})
+
+/** 今日到期篇数：驱动标题旁的「今日复习」入口 */
+const reviewDueCount = ref(0)
+async function refreshReviewDue() {
+  try {
+    const list = await $fetch<any[]>('/api/text/list?folder=review_today')
+    reviewDueCount.value = Array.isArray(list) ? list.length : 0
+  } catch { reviewDueCount.value = 0 }
+}
+function openReviewToday() {
+  activeFolder.value = 'review_today'
+  navigateTo({ path: '/', query: { folder: 'review_today' } })
+}
 
 // 防止框选文字时误关闭弹窗
 function safeClose(closeFn: () => void) {
@@ -822,7 +841,7 @@ async function fetchUrl() {
 }
 
 onMounted(() => {
-  counts(); startAutoRefresh()
+  counts(); startAutoRefresh(); refreshReviewDue()
   try {
     const saved = localStorage.getItem('fetch-url-block-mode')
     if (saved === 'small' || saved === 'large') blockMode.value = saved
@@ -992,6 +1011,8 @@ function stopAutoRefresh() {
   text-overflow: ellipsis;
 }
 
+.review-chip{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:3px 10px;border:1px solid rgba(186,117,23,.35);border-radius:20px;background:#fdf6e8;color:#9a6207;font-size:12px;cursor:pointer;font-family:inherit}
+.review-chip:hover{background:#faedd2}
 .lib-count {
   font-size: 13px;
   color: #a09e97;
