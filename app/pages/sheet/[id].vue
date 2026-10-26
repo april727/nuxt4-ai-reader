@@ -258,7 +258,10 @@ function onKey(e: KeyboardEvent) {
 }
 
 function goBack() {
-  navigateTo('/resources')
+  // 试卷是书架里的一本书，返回到它所在的文件夹（默认文件夹 = 首页），
+  // 不回资源页——资源页是词库/资源，跟试卷不属于同一条路径
+  const folder = (route.query.folder as string) || 'default'
+  navigateTo(folder && folder !== 'default' ? `/?folder=${encodeURIComponent(folder)}` : '/')
 }
 </script>
 

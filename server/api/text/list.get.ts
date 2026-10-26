@@ -36,8 +36,29 @@ export default defineEventHandler(async (event) => {
     } catch {}
     return map
   }
+  /**
+   * 图片试卷没有正文，卡片需要「首页缩略图 + 页数」。
+   * 只对 contentKind='sheet' 的行取 segments（试卷数量少），
+   * 不能并进主查询——那会让 410 篇正文的 segments 全被读回，正是 COLS 刻意规避的。
+   */
+  async function getSheetInfo(): Promise<Map<string, { thumb: string; pages: number }>> {
+    const map = new Map<string, { thumb: string; pages: number }>()
+    try {
+      const rows = await queryAll(
+        "SELECT id, segments FROM texts WHERE contentKind='sheet' AND deletedAt IS NULL",
+      )
+      for (const r of rows) {
+        try {
+          const pages = JSON.parse(r.segments || '[]')
+          if (!Array.isArray(pages) || !pages.length) continue
+          map.set(r.id, { thumb: String(pages[0]?.url || ''), pages: pages.length })
+        } catch {}
+      }
+    } catch {}
+    return map
+  }
   // 统计与标记聚合并行，避免串行叠加等待
-  const [statsMap, markTypeMap] = await Promise.all([getStats(), getMarkTypes()])
+  const [statsMap, markTypeMap, sheetMap] = await Promise.all([getStats(), getMarkTypes(), getSheetInfo()])
 
   let rows: any[]
   /**
@@ -81,13 +102,18 @@ export default defineEventHandler(async (event) => {
     if (thumbnail) {
       thumbnail = thumbnail.startsWith('http') ? thumbnail : `/api/file/${thumbnail}`
     }
+    // 图片试卷：缩略图取第一页，页数取自 pages 数组（比 SQL 数 "id": 更准）
+    const sheet = sheetMap.get(r.id)
+    if (!thumbnail && sheet?.thumb) thumbnail = sheet.thumb
     const aiSegmented = Number(r.aiSeg) === 1
     return {
       id: r.id, title: r.title || '未命名', source: r.source || 'paste', folder: r.folder || r.folder,
+      contentKind: r.contentKind || 'text',
       excerpt: r.excerpt || '', createdAt: r.createdAt, completedAt: r.completedAt || null,
       length: Number(r.chars) || 0,
       words: Number(r.words) || 0,
       paraCount: Number(r.paraCount) || 0,
+      sheetPages: sheet?.pages || 0,
       readCount: s.readCount || 0, lastReadAt: s.lastReadAt || '', markCount: s.markCount || 0,
       nextReviewAt: r.nextReviewAt || null, reviewCount: Number(r.reviewCount) || 0,
       markTypes: markTypeMap.get(r.id) || { word: 0, phrase: 0, sentence: 0 },

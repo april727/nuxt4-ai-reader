@@ -1,7 +1,7 @@
 <template>
   <div class="sn">
     <header class="sn-head">
-      <button class="sn-back" @click="navigateTo('/resources')">←</button>
+      <button class="sn-back" @click="navigateTo('/')">←</button>
       <h1>新建图片试卷</h1>
     </header>
 

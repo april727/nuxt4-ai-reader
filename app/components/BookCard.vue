@@ -9,7 +9,7 @@
   >
     <div class="doc-thumb">
       <img
-        v-if="isVideo && thumbnail"
+        v-if="(isVideo || isSheet) && thumbnail"
         :src="thumbnail"
         class="thumb-cover"
         alt=""
@@ -34,12 +34,13 @@
       >
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
         <polyline points="14 2 14 8 20 8"/>
+        <template v-if="isSheet"><circle cx="8.5" cy="13.5" r="1.5"/><polyline points="21 19 16 14 5 21"/></template>
         <template v-if="isPdf"><line x1="9" y1="13" x2="16" y2="13"/><line x1="9" y1="17" x2="14" y2="17"/></template>
         <template v-if="isText">
           <line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="16" y2="16"/>
         </template>
       </svg>
-      <span v-if="!isVideo || !thumbnail" class="thumb-label">{{ sourceLabel }}</span>
+      <span v-if="(!isVideo && !isSheet) || !thumbnail" class="thumb-label">{{ sourceLabel }}</span>
     </div>
     <div class="doc-body">
       <h3 class="doc-title" :class="{ 'ai-segmented': aiSegmented }">{{ title }}</h3>
@@ -47,6 +48,9 @@
         <span class="stats-left">
           <template v-if="isVideo && duration">
             <span class="stat">{{ formatDuration(duration) }}</span>
+          </template>
+          <template v-else-if="isSheet">
+            <span class="stat">{{ sheetPages ? `${sheetPages} 页` : '图片试卷' }}</span>
           </template>
           <template v-else>
             <span v-if="words" class="stat">{{ fmtCount(words) }} 词</span>
@@ -96,6 +100,10 @@ const props = defineProps<{
   /** 分类标记数：单词 / 短语 / 句子 */
   markTypes?: { word: number; phrase: number; sentence: number }
   createdAt?: string
+  /** 'text' | 'sheet'，图片试卷走画布页而不是文字阅读页 */
+  contentKind?: string
+  /** 图片试卷的页数 */
+  sheetPages?: number
 }>()
 
 const emptyMarkTypes = { word: 0, phrase: 0, sentence: 0 }
@@ -128,16 +136,19 @@ function fmtDate(s?: string): string {
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
 const isVideo = computed(() => videoSources.includes(props.source))
-const isPdf = computed(() => props.source?.toLowerCase().includes('.pdf') || props.source === 'upload')
-const isWeb = computed(() => props.source?.startsWith('http'))
-const isText = computed(() => !isVideo.value && !isPdf.value && !isWeb.value)
+const isSheet = computed(() => props.contentKind === 'sheet')
+const isPdf = computed(() => !isSheet.value && (props.source?.toLowerCase().includes('.pdf') || props.source === 'upload'))
+const isWeb = computed(() => !isSheet.value && !!props.source?.startsWith('http'))
+const isText = computed(() => !isVideo.value && !isSheet.value && !isPdf.value && !isWeb.value)
 const coverTypeClass = computed(() => {
+  if (isSheet.value) return 'thumb-sheet'
   if (isVideo.value) return 'thumb-video'
   if (isPdf.value) return 'thumb-pdf'
   if (isWeb.value) return 'thumb-web'
   return 'thumb-text'
 })
 const sourceLabel = computed(() => {
+  if (isSheet.value) return '试卷'
   if (isVideo.value) {
     if (props.source === 'youtube') return 'YouTube'
     if (props.source === 'bilibili') return 'B站'
@@ -264,6 +275,10 @@ function formatDuration(seconds: number): string {
 .thumb-web .doc-thumb { background: #ebf7f1; color: #187a52; }
 .thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
 .thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
+.thumb-sheet .doc-thumb { background: #faf6ee; color: #8a6a3c; }
+/* 试卷是整页扫描，裁边会切掉题干，改成完整显示 */
+.thumb-sheet .thumb-cover { object-fit: contain; background: #fff; }
+.thumb-sheet .thumb-fallback { width: 34px; height: 34px; }
 
 .thumb-label {
   font-size: 10.5px;

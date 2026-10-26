@@ -178,6 +178,8 @@
           :thumbnail="(book as any).thumbnail"
           :completed-at="(book as any).completedAt"
           :ai-segmented="(book as any).aiSegmented"
+          :content-kind="(book as any).contentKind"
+          :sheet-pages="(book as any).sheetPages"
           :draggable="true"
           :style="{ '--enter-delay': Math.min(i * 0.03, 0.6) + 's' }"
           @dragstart="handleBookDragStart($event, book.id)"
@@ -365,7 +367,7 @@ import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
 useHead({ title: 'AI 阅读分析 - 书架' })
 const showNotes = ref(false)
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean; readCount?: number; markCount?: number; words?: number; paraCount?: number; createdAt?: string; markTypes?: { word: number; phrase: number; sentence: number } }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean; readCount?: number; markCount?: number; words?: number; paraCount?: number; createdAt?: string; markTypes?: { word: number; phrase: number; sentence: number }; contentKind?: string; sheetPages?: number; thumbnail?: string }
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
@@ -604,9 +606,9 @@ async function handleDropOnFolder(folderId: string) {
 function openBook(id: string) {
   const book = books.value.find(b => b.id === id)
   const folder = encodeURIComponent(activeFolder.value)
-  // 图片试卷走画布模式，不能进文字阅读页
+  // 图片试卷走画布模式，不能进文字阅读页；带上 folder 让返回时回到同一个文件夹
   if (book && (book as any).contentKind === 'sheet') {
-    navigateTo(`/sheet/${id}`)
+    navigateTo(`/sheet/${id}?folder=${folder}`)
   } else if (book && videoSources.includes(book.source)) {
     navigateTo(`/watch/${id}?folder=${folder}`)
   } else {
