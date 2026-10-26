@@ -167,6 +167,9 @@
           :source="book.source"
           :read-count="book.readCount"
           :mark-count="book.markCount"
+          :words="book.words"
+          :para-count="book.paraCount"
+          :created-at="book.createdAt"
           :duration="book.duration"
           :thumbnail="(book as any).thumbnail"
           :completed-at="(book as any).completedAt"
@@ -358,7 +361,7 @@ import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
 useHead({ title: 'AI 阅读分析 - 书架' })
 const showNotes = ref(false)
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean; readCount?: number; markCount?: number; words?: number; paraCount?: number; createdAt?: string }
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
