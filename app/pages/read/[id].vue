@@ -2247,10 +2247,10 @@ function saveEdit(pid: string) {
   }
 
   article.updateParagraphText(pid, newText)
-  $fetch('/api/text/update-segment', {
+  queueSegmentsOp(() => $fetch<any>('/api/text/update-segment', {
     method: 'POST',
     body: { textId: id, segmentId: pid, text: newText },
-  }).catch(() => {})
+  })).catch(() => {})
   editingParagraphId.value = null
   editText.value = ''
   editPreview.value = false
@@ -2330,12 +2330,15 @@ function confirmInsert() {
 
   // 更新本地状态
   article.setParagraphs(newParagraphs)
+  paragraphEditVersion.value++
 
-  // 持久化到数据库
-  $fetch('/api/text/insert-segment', {
+  // 持久化到数据库（串行入队）
+  queueSegmentsOp(() => $fetch<any>('/api/text/insert-segment', {
     method: 'POST',
     body: { textId: id, beforeParagraphId: pos.position === 'before' ? pos.paragraphId : undefined, afterParagraphId: pos.position === 'after' ? pos.paragraphId : undefined, segmentId: newId, text },
-  }).catch(() => {})
+  }))
+    .then(res => adoptServerSegments(res?.segments))
+    .catch(() => { refreshParagraphs() })
 
   cancelInsert()
 }
@@ -2400,19 +2403,50 @@ async function deleteParagraph(pid: string) {
     article.setActiveParagraph(null)
   }
 
-  // 持久化
+  // 持久化（串行入队）
+  paragraphEditVersion.value++
   try {
-    await $fetch('/api/text/delete-segment', {
+    const res = await queueSegmentsOp(() => $fetch<any>('/api/text/delete-segment', {
       method: 'POST',
       body: { textId: id, segmentId: pid },
-    })
+    }))
+    adoptServerSegments(res?.segments)
     progressMsg.value = `段落 ${idx + 1} 已删除`
     setTimeout(() => { if (progressMsg.value?.startsWith('段落')) progressMsg.value = '' }, 2000)
   } catch {
+    paragraphEditVersion.value++
+    await refreshParagraphs()
     progressError.value = true
-    progressMsg.value = '删除失败，请刷新后重试'
+    progressMsg.value = '删除失败，已同步服务端结构'
     setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
   }
+}
+
+// ── 段落结构写操作：串行 + 以服务端为准 ──
+/**
+ * 为什么必须串行：
+ * 每次合并/插入/删除都是「整份 segments 读改写」。用户连点时两个请求会读到同一份旧结构，
+ * 各自合并各自的段，后写的覆盖先写的 —— 结果就是段落数量对不上、合并后的段落内容错序。
+ * 服务端已按文章加锁并做 CAS，客户端再串一遍，既少走冲突重试，也保证请求顺序与用户操作一致。
+ */
+let segmentsOpChain: Promise<any> = Promise.resolve()
+let pendingSegmentOps = 0
+
+/** 段落结构版本：任何手动整理 +1，后台轮询据此判断是否需要放弃覆盖 */
+const paragraphEditVersion = ref(0)
+
+function queueSegmentsOp<T>(fn: () => Promise<T>): Promise<T> {
+  pendingSegmentOps++
+  const run = segmentsOpChain.then(fn, fn)
+  segmentsOpChain = run.then(() => undefined, () => undefined)
+  return run.finally(() => { pendingSegmentOps-- }) as Promise<T>
+}
+
+/** 队列排空后用服务端结构对齐本地，避免本地乐观状态长期偏离真相 */
+function adoptServerSegments(segs?: any[]) {
+  if (!segs?.length) return
+  if (pendingSegmentOps > 0) return // 还有排队中的操作，等最后一个再对齐
+  article.setParagraphs(segs)
 }
 
 // ── 段落合并 ──
@@ -2471,17 +2505,30 @@ async function mergeWithBelow(upperId: string) {
   article.setCachedExplanation(upper.id, 'explain', '')
   article.setCachedExplanation(upper.id, 'translate', '')
 
-  // 持久化
+  paragraphEditVersion.value++
+
+  // 持久化（串行入队，避免并发覆盖）
   try {
-    await $fetch('/api/text/merge-segments', {
+    const res = await queueSegmentsOp(() => $fetch<any>('/api/text/merge-segments', {
       method: 'POST',
       body: { textId: id, upperParagraphId: upperId, lowerParagraphId: lower.id },
-    })
-    progressMsg.value = '段落已合并'
-    setTimeout(() => { if (progressMsg.value === '段落已合并') progressMsg.value = '' }, 2000)
+    }))
+
+    if (res?.conflict) {
+      // 服务端结构已经变了（例如后台分段刚写入）：以服务端为准重新对齐，不做二次猜测
+      progressMsg.value = '段落结构已更新，已同步最新结果'
+      setTimeout(() => { if (progressMsg.value === '段落结构已更新，已同步最新结果') progressMsg.value = '' }, 3000)
+    } else {
+      progressMsg.value = '段落已合并'
+      setTimeout(() => { if (progressMsg.value === '段落已合并') progressMsg.value = '' }, 2000)
+    }
+    adoptServerSegments(res?.segments)
   } catch {
+    // 失败时不留"半合并"的本地状态：回读服务端结构
+    paragraphEditVersion.value++
+    await refreshParagraphs()
     progressError.value = true
-    progressMsg.value = '合并失败，请刷新后重试'
+    progressMsg.value = '合并失败，已同步服务端结构'
     setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
   }
 }
@@ -3270,14 +3317,27 @@ let segmentPollTimer: ReturnType<typeof setInterval> | null = null
 
 function pollSegments() {
   if (segmentPollTimer) clearInterval(segmentPollTimer)
+  /** 轮询开始时的结构版本：期间用户手动整理过就不再覆盖 */
+  const versionAtStart = paragraphEditVersion.value
+  /** 按 id 序列判断结构是否变化（只看段数会误判：合并两段又拆回两段时长度相同） */
+  const sameStructure = (a: any[], b: any[]) =>
+    a.length === b.length && a.every((s, i) => s?.id === b[i]?.id)
+
   segmentPollTimer = setInterval(async () => {
     try {
+      // 用户在等待期间整理过段落：后台结果已被服务端并发保护丢弃，这里更不能覆盖本地
+      if (paragraphEditVersion.value !== versionAtStart) {
+        segmenting.value = false
+        if (segmentPollTimer) { clearInterval(segmentPollTimer); segmentPollTimer = null }
+        return
+      }
+
       const data = await $fetch<any>(`/api/text/${route.params.id}`)
       const freshSegs = data?.segments
       const currentSegs = article.paragraphs.value
 
-      // 段数变了 → 分段已完成并落库
-      if (freshSegs?.length && freshSegs.length !== currentSegs.length) {
+      // 结构变了 → 分段已完成并落库
+      if (freshSegs?.length && !sameStructure(freshSegs, currentSegs)) {
         article.setParagraphs(freshSegs)
         article.clearParagraphCaches()
         segmenting.value = false
@@ -3367,10 +3427,10 @@ async function cleanParagraph(pid: string, ptext: string) {
       }
       if (marksChanged) saveMarks()
       // 持久化
-      $fetch('/api/text/update-segment', {
+      queueSegmentsOp(() => $fetch<any>('/api/text/update-segment', {
         method: 'POST',
         body: { textId: id, segmentId: pid, text: cleaned },
-      }).catch(() => {})
+      })).catch(() => {})
     }
   } catch (e: any) {
     // 静默失败

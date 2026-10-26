@@ -1,4 +1,4 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { mutateSegments } from '../../utils/segmentsStore'
 import { resolveFilePath } from '../../utils/storage'
 import { useR2, r2Delete } from '../../utils/r2'
 import { unlinkSync, existsSync } from 'node:fs'
@@ -24,19 +24,16 @@ export default defineEventHandler(async (event) => {
     if (existsSync(p)) unlinkSync(p)
   } catch {}
 
-  const segRow = await queryOne('SELECT segments FROM texts WHERE id=?', [body.id])
-  if (!segRow) throw createError({ statusCode: 404 })
-
-  let segments: any[] = []
-  try { segments = JSON.parse(segRow.segments || '[]') } catch {}
-
-  const para = segments.find((s: any) => s.id === body.paragraphId)
-  if (para?.images) {
-    para.images = para.images.filter((n: string) => n !== body.imageName)
-  }
-
-  await runQuery('UPDATE texts SET segments=?,updatedAt=? WHERE id=?',
-    [JSON.stringify(segments), new Date().toISOString(), body.id])
+  // 改 segments 走统一串行通道：图片增删也会重写整份段落数组，
+  // 若与合并/插入并发，整份覆盖会把对方的改动顶掉
+  await mutateSegments(body.id, (segments) => {
+    const para = segments.find((s: any) => s.id === body.paragraphId)
+    if (!para?.images?.length) return { segments, changed: false }
+    const next = para.images.filter((n: string) => n !== body.imageName)
+    if (next.length === para.images.length) return { segments, changed: false }
+    para.images = next
+    return { segments, changed: true }
+  })
 
   return { ok: true }
 })

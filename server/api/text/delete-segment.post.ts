@@ -1,4 +1,4 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { mutateSegments } from '../../utils/segmentsStore'
 import { snapshotText } from '../../utils/textHistory'
 import { existsSync, unlinkSync } from 'node:fs'
 import { resolveFilePath } from '../../utils/storage'
@@ -15,21 +15,58 @@ export default defineEventHandler(async (event) => {
 
   // 删除前留快照
   await snapshotText(body.textId, '删除段落')
-  const row = await queryOne('SELECT * FROM texts WHERE id=?', [body.textId])
-  if (!row) throw createError({ statusCode: 404, message: '文本不存在' })
 
-  // 解析现有数据
-  let segs: any[] = []
-  try { segs = JSON.parse(row.segments || '[]') } catch {}
+  // 先把图片文件名拿出来，删除成功后再清理文件（避免写库失败却已删图）
+  let imageNames: string[] = []
 
-  const segIdx = segs.findIndex((s: any) => s.id === body.segmentId)
-  if (segIdx === -1) throw createError({ statusCode: 404, message: '段落不存在' })
+  const result = await mutateSegments(body.textId, (segs, row) => {
+    const segIdx = segs.findIndex((s: any) => s.id === body.segmentId)
+    if (segIdx === -1) {
+      // 已被删除（重试/并发）→ 幂等
+      return { segments: segs, changed: false, meta: { reason: 'already_deleted' } }
+    }
+    const seg = segs[segIdx]
+    if (seg.images?.length) imageNames = [...seg.images]
 
-  const seg = segs[segIdx]
+    const patch: Record<string, string> = {}
 
-  // 清理段落关联的图片文件（兼容新旧路径格式）
-  if (seg.images?.length) {
-    for (const imgName of seg.images) {
+    // 标记
+    let marks: any[] = []
+    try { marks = row.marks ? JSON.parse(row.marks) : [] } catch {}
+    const keptMarks = marks.filter((m: any) => m?.paragraphId !== body.segmentId)
+    if (keptMarks.length !== marks.length) patch.marks = JSON.stringify(keptMarks)
+
+    // 解释缓存
+    let explanations: Record<string, string> = {}
+    try { explanations = row.explanations ? JSON.parse(row.explanations) : {} } catch {}
+    let expChanged = false
+    for (const key of Object.keys(explanations)) {
+      if (key.startsWith(body.segmentId + ':')) { delete explanations[key]; expChanged = true }
+    }
+    if (expChanged) patch.explanations = JSON.stringify(explanations)
+
+    // 段落对话
+    let paragraphChats: Record<string, any[]> = {}
+    try { paragraphChats = row.paragraphChats ? JSON.parse(row.paragraphChats) : {} } catch {}
+    if (paragraphChats[body.segmentId]) {
+      delete paragraphChats[body.segmentId]
+      patch.paragraphChats = JSON.stringify(paragraphChats)
+    }
+
+    // 阅读位置
+    let readingPosition: any = null
+    try { readingPosition = row.readingPosition ? JSON.parse(row.readingPosition) : null } catch {}
+    if (readingPosition?.paragraphId === body.segmentId) {
+      patch.readingPosition = ''
+    }
+
+    segs.splice(segIdx, 1)
+    return { segments: segs, changed: true, patch }
+  })
+
+  // 删除生效后再清理图片文件
+  if (result.changed) {
+    for (const imgName of imageNames) {
       try {
         const imgPath = resolveFilePath(imgName)
         if (existsSync(imgPath)) unlinkSync(imgPath)
@@ -39,52 +76,10 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 删除该段落
-  segs.splice(segIdx, 1)
-  for (let i = 0; i < segs.length; i++) {
-    if (segs[i].index !== i) {
-      segs[i].index = i
-    }
+  return {
+    ok: true,
+    applied: result.changed,
+    reason: result.meta?.reason || '',
+    segments: result.segments,
   }
-
-  // 清理此段落的标记
-  let marks: any[] = []
-  try { marks = row.marks ? JSON.parse(row.marks) : [] } catch {}
-  marks = marks.filter((m: any) => m.paragraphId !== body.segmentId)
-
-  // 清理此段落的 AI 缓存
-  let explanations: Record<string, string> = {}
-  try { explanations = row.explanations ? JSON.parse(row.explanations) : {} } catch {}
-  for (const key of Object.keys(explanations)) {
-    if (key.startsWith(body.segmentId + ':')) {
-      delete explanations[key]
-    }
-  }
-
-  // 清理此段落的对话历史
-  let paragraphChats: Record<string, any[]> = {}
-  try { paragraphChats = row.paragraphChats ? JSON.parse(row.paragraphChats) : {} } catch {}
-  delete paragraphChats[body.segmentId]
-
-  // 清理阅读位置
-  let readingPosition: any = null
-  try { readingPosition = row.readingPosition ? JSON.parse(row.readingPosition) : null } catch {}
-  if (readingPosition?.paragraphId === body.segmentId) {
-    readingPosition = null
-  }
-
-  await runQuery(
-    `UPDATE texts SET segments=?,marks=?,explanations=?,paragraphChats=?,readingPosition=?,updatedAt=? WHERE id=?`,
-    [
-      JSON.stringify(segs),
-      JSON.stringify(marks),
-      JSON.stringify(explanations),
-      JSON.stringify(paragraphChats),
-      readingPosition ? JSON.stringify(readingPosition) : '',
-      new Date().toISOString(),
-      body.textId,
-    ]
-  )
-
-  return { ok: true, segments: segs }
 })

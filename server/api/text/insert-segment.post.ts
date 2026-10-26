@@ -1,4 +1,4 @@
-import { queryOne, runQuery } from '../../utils/db'
+import { mutateSegments } from '../../utils/segmentsStore'
 import { snapshotText } from '../../utils/textHistory'
 
 export default defineEventHandler(async (event) => {
@@ -19,40 +19,30 @@ export default defineEventHandler(async (event) => {
 
   // 插入前留快照
   await snapshotText(body.textId, '插入段落')
-  const row = await queryOne('SELECT segments FROM texts WHERE id=?', [body.textId])
-  if (!row) throw createError({ statusCode: 404 })
 
-  let segs: any[] = []
-  try { segs = JSON.parse(row.segments || '[]') } catch {}
-
-  // 定位参考段落位置
   const refId = body.beforeParagraphId || body.afterParagraphId
-  let refIdx = segs.findIndex((s: any) => s.id === refId)
-  if (refIdx === -1) throw createError({ statusCode: 404, message: '参考段落不存在' })
 
-  // 计算插入位置
-  const insertIdx = body.beforeParagraphId ? refIdx : refIdx + 1
-
-  // 创建新段落
-  const newSeg = {
-    id: body.segmentId,
-    index: insertIdx,
-    text: body.text.trim(),
-  }
-
-  // 插入并重排索引
-  segs.splice(insertIdx, 0, newSeg)
-  for (let i = 0; i < segs.length; i++) {
-    if (segs[i].index !== i) {
-      segs[i].index = i
+  const result = await mutateSegments(body.textId, (segs) => {
+    const refIdx = segs.findIndex((s: any) => s.id === refId)
+    if (refIdx === -1) {
+      // 参考段落已不存在（结构被并发改过）：不插入，返回最新结构让客户端对齐
+      return { segments: segs, changed: false, conflict: true, meta: { reason: 'ref_missing' } }
     }
+    if (segs.some((s: any) => s.id === body.segmentId)) {
+      // 同一段落已插入过（重试）→ 幂等
+      return { segments: segs, changed: false, meta: { reason: 'already_inserted' } }
+    }
+
+    const insertIdx = body.beforeParagraphId ? refIdx : refIdx + 1
+    segs.splice(insertIdx, 0, { id: body.segmentId, index: insertIdx, text: body.text.trim() })
+    return { segments: segs, changed: true }
+  })
+
+  return {
+    ok: true,
+    applied: result.changed,
+    conflict: !!result.conflict,
+    reason: result.meta?.reason || '',
+    segments: result.segments,
   }
-
-  await runQuery('UPDATE texts SET segments=?,updatedAt=? WHERE id=?', [
-    JSON.stringify(segs),
-    new Date().toISOString(),
-    body.textId,
-  ])
-
-  return { ok: true, segments: segs }
 })
