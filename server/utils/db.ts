@@ -65,7 +65,7 @@ async function createTablesTurso() {
     ['words','markId',"TEXT DEFAULT ''"],['words','detail',"TEXT DEFAULT ''"],['words','context',"TEXT DEFAULT ''"],['words','image',"TEXT DEFAULT ''"],
     ['words','lastReviewedAt',"TEXT DEFAULT ''"],['words','reviewCount',"INTEGER DEFAULT 0"],['words','lapses',"INTEGER DEFAULT 0"],
     ['words','type',"TEXT DEFAULT ''"],['words','paragraphId',"TEXT DEFAULT ''"],['words','startOffset',"INTEGER DEFAULT 0"],['words','endOffset',"INTEGER DEFAULT 0"],
-    ['words','dismissedAt',"TEXT DEFAULT ''"],['words','orphanedAt',"TEXT DEFAULT ''"],
+    ['words','dismissedAt',"TEXT DEFAULT ''"],['words','orphanedAt',"TEXT DEFAULT ''"],['words','archivedAt','TEXT DEFAULT NULL'],
     ['knowledge_points','customGroup',"TEXT DEFAULT ''"],['knowledge_points','chatHistory',"TEXT DEFAULT '[]'"],
     ['marks','deletedAt','TEXT DEFAULT NULL'],
     ['texts','deletedAt','TEXT DEFAULT NULL'],
