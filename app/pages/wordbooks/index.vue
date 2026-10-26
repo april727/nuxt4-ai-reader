@@ -45,11 +45,11 @@
           v-for="t in tabs" :key="t.key"
           class="wb-tab" :class="{ active: tab === t.key }"
           @click="tab = t.key"
-        >{{ t.label }}</button>
+        >{{ t.label }}<span v-if="t.count" class="wb-tab-num">{{ t.count }}</span></button>
       </div>
 
       <div class="wb-search-row">
-        <input v-model="search" class="wb-search" type="search" placeholder="搜索分组…" spellcheck="false" />
+        <input v-model="search" class="wb-search" type="search" :placeholder="`搜索${activeTabLabel}…`" spellcheck="false" />
       </div>
 
       <div class="wb-list">
@@ -57,6 +57,7 @@
         <div v-else-if="!groups.length" class="wb-empty">
           <p v-if="search.trim()">没有匹配「{{ search.trim() }}」的分组</p>
           <p v-else-if="tab === 'custom'">还没有自定义分组</p>
+          <p v-else-if="tab === 'article'">还没有文章本 —— 阅读时标记生词会自动为那篇文章建一个</p>
           <p v-else>还没有单词本</p>
           <p class="wb-empty-hint">
             {{ tab === 'custom' ? '点右上角 + 新建一个分组' : '阅读标记会自动汇总到这里' }}
@@ -65,7 +66,7 @@
         </div>
 
         <button
-          v-for="g in visibleGroups" :key="g.kind + g.id"
+          v-for="g in pageGroups" :key="g.id"
           class="wb-card" @click="openGroup(g)"
         >
           <div class="wb-card-top">
@@ -77,17 +78,18 @@
           <div class="wb-progress"><i :style="{ width: g.pct + '%' }"></i></div>
           <div class="wb-card-foot">
             <span>
-              {{ g.total }} 词 · {{ g.pct }}%<template v-if="g.readCount"> · 读过 {{ g.readCount }} 次</template>
+              {{ g.total }} 词 · {{ g.pct }}%<template v-if="g.kind === 'article' && g.lastAt"> · 最近 {{ shortDate(g.lastAt) }}</template><template v-if="g.readCount"> · 读过 {{ g.readCount }} 次</template>
             </span>
             <span class="wb-card-link">查看</span>
           </div>
         </button>
 
-        <button
-          v-if="groups.length > visibleGroups.length"
-          class="wb-more"
-          @click="visible += 20"
-        >加载更多 · 还有 {{ groups.length - visibleGroups.length }} 组</button>
+        <!-- 分页 -->
+        <div v-if="totalPages > 1" class="wb-pager">
+          <button class="wb-pager-btn" :disabled="page <= 1" @click="page--">上一页</button>
+          <span class="wb-pager-info">{{ page }} / {{ totalPages }} · 共 {{ groups.length }} 组</span>
+          <button class="wb-pager-btn" :disabled="page >= totalPages" @click="page++">下一页</button>
+        </div>
       </div>
     </div>
 
@@ -122,48 +124,71 @@ interface Group {
   fresh: number
   pct: number
   href: string
-  kind: 'article' | 'collection'
-  isDefault?: number
+  kind: 'default' | 'custom' | 'article'
+  /** 文章本：最近一次标记时间 */
+  lastAt?: string
   readCount?: number
-  lastReadAt?: string
 }
 
 const collections = ref<Group[]>([])
 const loading = ref(true)
-const tab = ref<'all' | 'custom'>('all')
+const tab = ref<'default' | 'custom' | 'article'>('default')
 const search = ref('')
 const showCreateModal = ref(false)
 const newName = ref('')
 const importFile = ref<File | null>(null)
 
-const tabs = [
-  { key: 'all' as const, label: '全部' },
-  { key: 'custom' as const, label: '我的分组' },
-]
-
 function pct(mastered: number, total: number) {
   return total > 0 ? Math.min(100, Math.round((mastered / total) * 100)) : 0
 }
 
-const overview = computed(() => collections.value.reduce(
+const defaultGroups = computed(() => collections.value.filter(g => g.kind === 'default'))
+const customGroups = computed(() => collections.value.filter(g => g.kind === 'custom'))
+const articleGroups = computed(() => collections.value
+  .filter(g => g.kind === 'article')
+  .sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || ''))))
+
+const tabs = computed(() => [
+  { key: 'default' as const, label: '默认本', count: defaultGroups.value.length },
+  { key: 'custom' as const, label: '我的分组', count: customGroups.value.length },
+  { key: 'article' as const, label: '文章本', count: articleGroups.value.length },
+])
+const activeTabLabel = computed(() => tabs.value.find(t => t.key === tab.value)?.label || '分组')
+
+/**
+ * 总览只统计「默认本 + 我的分组」：
+ * 文章本与默认本收录的是同一批标记（一篇一个本），一起相加会让待复习数虚高一倍。
+ */
+const overview = computed(() => [...defaultGroups.value, ...customGroups.value].reduce(
   (acc, g) => ({ due: acc.due + g.due, fresh: acc.fresh + g.fresh, mastered: acc.mastered + g.mastered }),
   { due: 0, fresh: 0, mastered: 0 },
 ))
 
 const pendingTotal = computed(() => overview.value.due + overview.value.fresh)
 
-const customCollections = computed(() => collections.value.filter(g => !g.isDefault))
-
 const groups = computed(() => {
-  const list = tab.value === 'all' ? collections.value : customCollections.value
+  const list = tab.value === 'default'
+    ? defaultGroups.value
+    : tab.value === 'custom' ? customGroups.value : articleGroups.value
   const q = search.value.trim().toLowerCase()
   return q ? list.filter(g => g.title.toLowerCase().includes(q)) : list
 })
 
-// 文章分组可能上百个，分批渲染
-const visible = ref(20)
-const visibleGroups = computed(() => groups.value.slice(0, visible.value))
-watch([tab, search], () => { visible.value = 20 })
+// 分页：文章本可达数百个，一页 12 组，翻页而不是无限滚动
+const PER_PAGE = 12
+const page = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil(groups.value.length / PER_PAGE)))
+const pageGroups = computed(() => groups.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
+watch([tab, search], () => { page.value = 1 })
+watch(totalPages, (n) => { if (page.value > n) page.value = n })
+
+/** 2026-10-26T08:29:05.921Z → 10-26 */
+function shortDate(iso?: string) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 async function load() {
   loading.value = true
@@ -173,17 +198,19 @@ async function load() {
     collections.value = cRows.map((b) => {
       const total = Number(b.wordCount) || 0
       const mastered = Number(b.masteredCount) || 0
+      const id = String(b.id)
+      const kind: Group['kind'] = Number(b.isDefault) ? 'default' : id.startsWith('wb_t_') ? 'article' : 'custom'
       return {
-        id: b.id,
+        id,
         title: b.name,
         total,
         mastered,
         due: Number(b.dueCount) || 0,
         fresh: Number(b.newCount) || 0,
         pct: pct(mastered, total),
-        href: `/wordbooks/${b.id}`,
-        kind: 'collection' as const,
-        isDefault: Number(b.isDefault) || 0,
+        href: `/wordbooks/${id}`,
+        kind,
+        lastAt: b.lastAt || '',
       }
     })
   } catch {}
@@ -256,6 +283,10 @@ onMounted(load)
   border-bottom: 2px solid transparent; transition: all .12s;
 }
 .wb-tab.active { color: #3d3591; border-bottom-color: #3d3591; font-weight: 500; }
+.wb-tab-num {
+  margin-left: 5px; padding: 0 5px; border-radius: 6px; background: #eeedfe;
+  color: #6b62c0; font-size: 10px; font-variant-numeric: tabular-nums;
+}
 
 .wb-search-row { padding: 10px 20px 0; }
 .wb-notice {
@@ -299,12 +330,20 @@ onMounted(load)
   background: #fff; color: #3d3591; border-radius: 7px; font-size: 12px;
   font-family: 'DM Sans', sans-serif; cursor: pointer;
 }
-.wb-more {
-  margin-top: 2px; padding: 9px; width: 100%; border: 0.5px dashed rgba(0,0,0,0.14);
-  border-radius: 10px; background: transparent; color: #8a8880; font-size: 12px;
-  font-family: 'DM Sans', sans-serif; cursor: pointer;
+.wb-pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 6px; padding: 10px 12px; background: #fff;
+  border: 0.5px solid rgba(0,0,0,0.07); border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
 }
-.wb-more:hover { border-color: rgba(61,53,145,0.35); color: #3d3591; }
+.wb-pager-btn {
+  padding: 5px 12px; border: 0.5px solid rgba(0,0,0,0.12); border-radius: 7px;
+  background: #fff; color: #3d3591; font-size: 12px; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; transition: border-color .15s;
+}
+.wb-pager-btn:hover:not(:disabled) { border-color: rgba(61,53,145,0.4); }
+.wb-pager-btn:disabled { color: #c3c1ba; cursor: default; }
+.wb-pager-info { font-size: 11.5px; color: #8a8880; font-variant-numeric: tabular-nums; }
 
 /* Modal 保持原样 */
 .modal-overlay { position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; }

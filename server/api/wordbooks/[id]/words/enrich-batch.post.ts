@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   if (!bookId) throw createError({ statusCode: 400 })
 
   // 1. 获取本单词本中无含义的词条
-  const allWords = await queryAll('SELECT id, word, meaning FROM words WHERE bookId=?', [bookId])
+  const allWords = await queryAll("SELECT id, word, meaning FROM words WHERE bookId=? AND (archivedAt IS NULL OR archivedAt='')", [bookId])
   const targets: Array<{ id: string; word: string }> = []
   for (const w of allWords) {
     if (wordIds?.length) {

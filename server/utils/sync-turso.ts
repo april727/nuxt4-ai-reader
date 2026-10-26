@@ -16,7 +16,7 @@ const TABLES: Array<{ name: string; columns: string[]; pkIdx: number }> = [
   { name: 'stats', pkIdx: 0, columns: ['textId', 'readCount', 'lastReadAt', 'markCount'] },
   { name: 'knowledge_points', pkIdx: 0, columns: ['id', 'content', 'note', 'sourceId', 'sourceTitle', 'sourceType', 'sourceContext', 'customGroup', 'tags', 'chatHistory', 'sortOrder', 'createdAt', 'updatedAt'] },
   { name: 'wordbooks', pkIdx: 0, columns: ['id', 'name', 'isDefault', 'sortOrder', 'createdAt'] },
-  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'markId', 'detail', 'context', 'image', 'lastReviewedAt', 'reviewCount', 'lapses', 'type', 'paragraphId', 'startOffset', 'endOffset', 'dismissedAt', 'orphanedAt', 'createdAt', 'updatedAt'] },
+  { name: 'words', pkIdx: 0, columns: ['id', 'bookId', 'word', 'phonetic', 'meaning', 'example', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'repetitions', 'nextReview', 'source', 'pos', 'enhancement', 'markId', 'detail', 'context', 'image', 'lastReviewedAt', 'reviewCount', 'lapses', 'type', 'paragraphId', 'startOffset', 'endOffset', 'dismissedAt', 'orphanedAt', 'archivedAt', 'createdAt', 'updatedAt'] },
   { name: 'daily_insights', pkIdx: 0, columns: ['date', 'content', 'createdAt'] },
   { name: 'marks', pkIdx: 0, columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt', 'deletedAt'] },
   { name: 'auth_logs', pkIdx: 0, columns: ['id', 'time', 'ip', 'ua', 'ok'] },
@@ -65,6 +65,7 @@ export async function syncToTurso(): Promise<SyncResult> {
   try { await turso.execute('ALTER TABLE words ADD COLUMN endOffset INTEGER DEFAULT 0') } catch {}
   try { await turso.execute("ALTER TABLE words ADD COLUMN dismissedAt TEXT DEFAULT ''") } catch {}
   try { await turso.execute("ALTER TABLE words ADD COLUMN orphanedAt TEXT DEFAULT ''") } catch {}
+  try { await turso.execute('ALTER TABLE words ADD COLUMN archivedAt TEXT DEFAULT NULL') } catch {}
   try { await turso.execute("ALTER TABLE texts ADD COLUMN paragraphNotesMap TEXT DEFAULT '{}'") } catch {}
   try { await turso.execute("ALTER TABLE texts ADD COLUMN chapters TEXT DEFAULT '[]'") } catch {}
   try { await turso.execute("ALTER TABLE texts ADD COLUMN cover TEXT DEFAULT ''") } catch {}

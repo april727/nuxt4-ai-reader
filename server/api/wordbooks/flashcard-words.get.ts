@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
     for (const row of rows) {
       const targetBook = TYPE_TO_BOOK[row.type as string] || 'wb_default'
       const w = await queryOne(
-        'SELECT * FROM words WHERE bookId=? AND LOWER(word)=LOWER(?)',
+        'SELECT * FROM words WHERE bookId=? AND LOWER(word)=LOWER(?) AND (archivedAt IS NULL OR archivedAt=\'\')',
         [targetBook, (row.text as string).trim()]
       )
       if (w) result.push({ ...w, cardType: row.type })
@@ -47,14 +47,14 @@ export default defineEventHandler(async (event) => {
     if (source && source !== '__orphan__') {
       // 从特定文本/书籍进入时，按 source + bookId 双重过滤
       const words = await queryAll(
-        'SELECT * FROM words WHERE source=? AND bookId=? AND phase != ? ORDER BY createdAt DESC',
+        "SELECT * FROM words WHERE source=? AND bookId=? AND phase != ? AND (archivedAt IS NULL OR archivedAt='') ORDER BY createdAt DESC",
         [source, bookId, 'mastered']
       )
       return { words: words.map(w => ({ ...w, cardType: w.cardType || inferredType })) }
     }
 
     const words = await queryAll(
-      'SELECT * FROM words WHERE bookId=? AND phase != ? ORDER BY createdAt DESC',
+      "SELECT * FROM words WHERE bookId=? AND phase != ? AND (archivedAt IS NULL OR archivedAt='') ORDER BY createdAt DESC",
       [bookId, 'mastered']
     )
     return { words: words.map(w => ({ ...w, cardType: w.cardType || inferredType })) }
@@ -63,11 +63,11 @@ export default defineEventHandler(async (event) => {
   // ── 兜底：按 type 映射到默认单词本 ──
   if (type === 'mixed') {
     const words = await queryAll(
-      `SELECT *, 'word' as cardType FROM words WHERE bookId='wb_default' AND phase != 'mastered'
+      `SELECT *, 'word' as cardType FROM words WHERE bookId='wb_default' AND phase != 'mastered' AND (archivedAt IS NULL OR archivedAt='')
        UNION ALL
-       SELECT *, 'phrase' as cardType FROM words WHERE bookId='wb_phrases' AND phase != 'mastered'
+       SELECT *, 'phrase' as cardType FROM words WHERE bookId='wb_phrases' AND phase != 'mastered' AND (archivedAt IS NULL OR archivedAt='')
        UNION ALL
-       SELECT *, 'sentence' as cardType FROM words WHERE bookId='wb_sentences' AND phase != 'mastered'
+       SELECT *, 'sentence' as cardType FROM words WHERE bookId='wb_sentences' AND phase != 'mastered' AND (archivedAt IS NULL OR archivedAt='')
        ORDER BY createdAt DESC`
     )
     return { words }
@@ -77,7 +77,7 @@ export default defineEventHandler(async (event) => {
   if (!defaultBookId) throw createError({ statusCode: 400, message: 'Invalid type' })
 
   const words = await queryAll(
-    'SELECT * FROM words WHERE bookId=? AND phase != ? ORDER BY createdAt DESC',
+    "SELECT * FROM words WHERE bookId=? AND phase != ? AND (archivedAt IS NULL OR archivedAt='') ORDER BY createdAt DESC",
     [defaultBookId, 'mastered']
   )
   return { words: words.map(w => ({ ...w, cardType: type })) }

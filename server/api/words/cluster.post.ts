@@ -9,7 +9,7 @@ async function callDeepSeek(messages: Array<{ role: string; content: string }>):
 
 export default defineEventHandler(async () => {
   // 获取全部词汇
-  const rows = await queryAll('SELECT word, meaning, pos, phase FROM words ORDER BY createdAt DESC')
+  const rows = await queryAll("SELECT word, meaning, pos, phase FROM words WHERE (archivedAt IS NULL OR archivedAt='') ORDER BY createdAt DESC")
 
   if (!rows.length) throw createError({ statusCode: 404, message: '暂无词汇数据' })
 

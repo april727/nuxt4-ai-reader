@@ -102,34 +102,83 @@ async function syncMarksTable(textId: string, title: string, folder: string, old
   }
 }
 
-// 同步已删除/软删除的标记：从 words 表中删除对应单词
+// 同步标记的删除态到 words 表
+//
+// 三态处理（关键：软删除不能真删词条）：
+// - 彻底移除（标记从数组里消失）→ 硬删除词条
+// - 软删除（进回收站）        → 归档：置 archivedAt，词条与学习进度原样保留
+// - 从回收站恢复             → 取消归档：清空 archivedAt
+//
+// 旧实现「软删除即删词条」，恢复时会重建一条新 id 的词条，复习进度/熟练度全部丢失。
+// 归档后由各查询侧过滤，词条在用户视角等于消失，但数据仍在。
+
+/** 词条定位条件：优先 markId；历史数据（markId 为空）按「本 + 词形」兜底 */
+const LOCATE_WORD_SQL = `(markId=? AND markId<>'') OR (markId='' AND bookId=? AND source=? AND LOWER(word)=LOWER(?))`
+
+/** 生成定位参数；note 类型没有默认本映射，此时 bookId 传空串，兜底分支自然不命中 */
+function locateArgs(mark: any, textId: string): any[] | null {
+  const wordText = extractLemma(mark) || String(mark.text || '').trim()
+  if (!wordText) return null
+  return [mark.id, MARK_TO_BOOK[mark.type] || '', textId, wordText]
+}
+
 async function cleanupDeletedMarks(textId: string, oldMarksJson: string, newMarksJson: string) {
   let oldMarks: any[] = []
   let newMarks: any[] = []
   try { oldMarks = JSON.parse(oldMarksJson) } catch {}
   try { newMarks = JSON.parse(newMarksJson) } catch {}
 
-  const newIds = new Set(newMarks.map((m: any) => m.id).filter(Boolean))
-  // 彻底移除的 + 软删除的（deletedAt 非空）
-  const deleted = oldMarks.filter((m: any) => m.id && (!newIds.has(m.id) || newMarks.find((n: any) => n.id === m.id)?.deletedAt))
-  if (!deleted.length) return
+  const newMap = new Map<string, any>()
+  for (const m of newMarks) if (m?.id) newMap.set(m.id, m)
 
-  for (const mark of deleted) {
-    const lemma = extractLemma(mark)
-    const wordText = lemma || (mark.text || '').trim()
-    if (!wordText) continue
-    const bookId = MARK_TO_BOOK[mark.type]
-    if (!bookId) continue
-    // 以 markId 为准删除；历史数据（markId 为空）按词形兜底
-    await runQuery(
-      `DELETE FROM words WHERE (markId=? AND markId<>'') OR (markId='' AND bookId=? AND source=? AND LOWER(word)=LOWER(?))`,
-      [mark.id, bookId, textId, wordText],
-    )
+  const removed: any[] = []   // 彻底移除
+  const archived: any[] = []  // 新进入回收站
+  const restored: any[] = []  // 从回收站恢复
+  for (const m of oldMarks) {
+    if (!m.id) continue
+    const next = newMap.get(m.id)
+    if (!next) removed.push(m)
+    else if (!m.deletedAt && next.deletedAt) archived.push(m)
+    else if (m.deletedAt && !next.deletedAt) restored.push(m)
+  }
+  if (!removed.length && !archived.length && !restored.length) return
+
+  const now = new Date().toISOString()
+
+  for (const mark of removed) {
+    const args = locateArgs(mark, textId)
+    if (!args) continue
+    await runQuery(`DELETE FROM words WHERE ${LOCATE_WORD_SQL}`, args)
     // 同步删除云端 words，防止被拉回单词本
-    await runOnTurso(
-      `DELETE FROM words WHERE (markId=? AND markId<>'') OR (markId='' AND bookId=? AND source=? AND LOWER(word)=LOWER(?))`,
-      [mark.id, bookId, textId, wordText],
-    )
+    await runOnTurso(`DELETE FROM words WHERE ${LOCATE_WORD_SQL}`, args)
+  }
+
+  for (const mark of archived) {
+    const args = locateArgs(mark, textId)
+    if (!args) continue
+    // 默认本按「本内同词只留一行」去重：删掉 A 篇的标记时，若同一词在 B 篇仍有有效标记，
+    // 默认本那一行不能归档，否则用户会以为这个词消失了。文章本则只代表本篇，直接归档。
+    const sql = `UPDATE words SET archivedAt=?, updatedAt=?
+      WHERE (${LOCATE_WORD_SQL})
+        AND (
+          bookId NOT IN ('wb_default','wb_phrases','wb_sentences')
+          OR NOT EXISTS (
+            SELECT 1 FROM marks m
+            WHERE m.deletedAt IS NULL
+              AND m.type=?
+              AND LOWER(COALESCE(NULLIF(m.lemma,''), m.text)) = LOWER(words.word)
+          )
+        )`
+    const params = [now, now, ...args, mark.type || 'word']
+    await runQuery(sql, params)
+    await runOnTurso(sql, params)
+  }
+
+  for (const mark of restored) {
+    const args = locateArgs(mark, textId)
+    if (!args) continue
+    await runQuery(`UPDATE words SET archivedAt=NULL, updatedAt=? WHERE ${LOCATE_WORD_SQL}`, [now, ...args])
+    await runOnTurso(`UPDATE words SET archivedAt=NULL, updatedAt=? WHERE ${LOCATE_WORD_SQL}`, [now, ...args])
   }
 }
 
@@ -207,6 +256,9 @@ async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMar
       const patch: Record<string, any> = {}
       if (existing.markId !== mark.id) patch.markId = mark.id
       if (revived) patch.dismissedAt = ''
+      // 命中的是「曾在回收站里归档过」的词条，而这次是一条有效标记 → 取消归档
+      // （同一词在另一篇重新标记时，按词形兜底会命中已归档的旧行）
+      if (existing.archivedAt) patch.archivedAt = null
       if (detail && existing.detail !== detail) patch.detail = detail
       if (context && existing.context !== context) patch.context = context
       if (image && existing.image !== image) patch.image = image

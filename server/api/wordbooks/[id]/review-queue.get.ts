@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   const reviewLimit = Math.min(Math.max(Number(query.reviewLimit) || 40, 1), 200)
   const nowIso = new Date().toISOString()
 
-  const conditions = ["phase<>'mastered'", "(dismissedAt IS NULL OR dismissedAt='')"]
+  const conditions = ["phase<>'mastered'", "(dismissedAt IS NULL OR dismissedAt='')", "(archivedAt IS NULL OR archivedAt='')"]
   const args: any[] = []
   const isMixed = type === 'mixed' || bookId === 'mixed' || bookId === 'all'
   const bySource = Boolean(source && source !== '__orphan__')

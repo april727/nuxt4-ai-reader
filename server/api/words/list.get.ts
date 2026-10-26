@@ -11,7 +11,10 @@ export default defineEventHandler(async (event) => {
   const search = (query.search as string) || ''            // 搜索词
 
   // 构建 WHERE 条件
-  const conditions: string[] = []
+  const conditions: string[] = [
+    "(w.dismissedAt IS NULL OR w.dismissedAt = '')",
+    "(w.archivedAt IS NULL OR w.archivedAt = '')",
+  ]
   const params: any[] = []
 
   if (filter !== 'all') {

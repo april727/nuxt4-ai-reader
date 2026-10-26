@@ -22,7 +22,8 @@ export interface VocabQuery {
 }
 
 function buildWhere(o: VocabQuery, includePos = true): { sql: string; args: any[] } {
-  const where: string[] = ["(dismissedAt IS NULL OR dismissedAt='')"]
+  // 排除「已从本移除」与「因标记进回收站而归档」的词条
+  const where: string[] = ["(dismissedAt IS NULL OR dismissedAt='')", "(archivedAt IS NULL OR archivedAt='')"]
   const args: any[] = []
 
   if (o.bookIds?.length) {

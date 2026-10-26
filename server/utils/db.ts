@@ -206,6 +206,7 @@ function createTablesSqljs() {
   try { sqljsDb.run('ALTER TABLE words ADD COLUMN endOffset INTEGER DEFAULT 0') } catch {}
   try { sqljsDb.run("ALTER TABLE words ADD COLUMN dismissedAt TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run("ALTER TABLE words ADD COLUMN orphanedAt TEXT DEFAULT ''") } catch {}
+  try { sqljsDb.run('ALTER TABLE words ADD COLUMN archivedAt TEXT DEFAULT NULL') } catch {}
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS wordbooks (id TEXT PRIMARY KEY, name TEXT NOT NULL, isDefault INTEGER DEFAULT 0, sortOrder INTEGER DEFAULT 0, createdAt TEXT)`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS words (id TEXT PRIMARY KEY, bookId TEXT NOT NULL, word TEXT NOT NULL, phonetic TEXT DEFAULT '', meaning TEXT DEFAULT '', example TEXT DEFAULT '', note TEXT DEFAULT '', phase TEXT DEFAULT 'learn', learnCorrect INTEGER DEFAULT 0, learnTotal INTEGER DEFAULT 0, learnWrong INTEGER DEFAULT 0, ease REAL DEFAULT 2.5, interval INTEGER DEFAULT 0, repetitions INTEGER DEFAULT 0, nextReview TEXT DEFAULT '', source TEXT DEFAULT '', pos TEXT DEFAULT '', enhancement TEXT DEFAULT '', markId TEXT DEFAULT '', detail TEXT DEFAULT '', context TEXT DEFAULT '', image TEXT DEFAULT '', lastReviewedAt TEXT DEFAULT '', reviewCount INTEGER DEFAULT 0, lapses INTEGER DEFAULT 0, type TEXT DEFAULT '',paragraphId TEXT DEFAULT '',startOffset INTEGER DEFAULT 0,endOffset INTEGER DEFAULT 0,dismissedAt TEXT DEFAULT '',orphanedAt TEXT DEFAULT '',createdAt TEXT, updatedAt TEXT)`)
   const stmt = sqljsDb.prepare('SELECT id FROM wordbooks WHERE isDefault=1')

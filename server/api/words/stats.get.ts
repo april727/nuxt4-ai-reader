@@ -6,7 +6,8 @@ export default defineEventHandler(async () => {
 
   // 预加载 words 表的 pos 索引
   const posIndex = new Map<string, string>()
-  const posRows = await queryAll('SELECT LOWER(word) as w, pos FROM words WHERE pos IS NOT NULL AND pos != \'\'')
+  const posRows = await queryAll(`SELECT LOWER(word) as w, pos FROM words
+    WHERE pos IS NOT NULL AND pos != '' AND (archivedAt IS NULL OR archivedAt='')`)
   for (const r of posRows) {
     if (!posIndex.has(r.w as string)) posIndex.set(r.w as string, r.pos as string)
   }
@@ -25,7 +26,8 @@ export default defineEventHandler(async () => {
     let marks: any[] = []
     try { marks = JSON.parse(row.marks) } catch { continue }
     for (const m of marks) {
-      if (!m.id) continue
+      // 回收站中的标记不计入统计
+      if (!m.id || m.deletedAt) continue
       const pos = posIndex.get((m.text || '').trim().toLowerCase()) || ''
       markItems.push({ word: m.text || '', type: m.type || 'word', textId: row.id as string, pos })
     }
@@ -85,28 +87,32 @@ export default defineEventHandler(async () => {
   const accuracyRow = await queryOne(`
     SELECT COUNT(*) as attempted,
       ROUND(AVG(CAST(learnCorrect AS REAL) / NULLIF(learnTotal, 0)) * 100, 1) as avgRate
-    FROM words WHERE learnTotal > 0
+    FROM words WHERE learnTotal > 0 AND (archivedAt IS NULL OR archivedAt='')
   `)
   const accuracy = accuracyRow ? { attempted: accuracyRow.attempted as number, avgRate: accuracyRow.avgRate as number } : { attempted: 0, avgRate: 0 }
 
-  const phaseRows = await queryAll('SELECT phase, COUNT(*) as count FROM words GROUP BY phase ORDER BY count DESC')
+  const phaseRows = await queryAll(`SELECT phase, COUNT(*) as count FROM words
+    WHERE (archivedAt IS NULL OR archivedAt='') GROUP BY phase ORDER BY count DESC`)
 
   const difficultRows = await queryAll(`
     SELECT id, word, phonetic, meaning, pos, phase,
       learnCorrect, learnTotal, learnWrong,
       ROUND(CAST(learnCorrect AS REAL) / NULLIF(learnTotal, 0) * 100, 1) as correctRate
-    FROM words WHERE learnTotal >= 3
+    FROM words WHERE learnTotal >= 3 AND (archivedAt IS NULL OR archivedAt='')
     ORDER BY CAST(learnCorrect AS REAL) / NULLIF(learnTotal, 0) ASC LIMIT 20
   `)
 
   const unlabeledRow = await queryOne(`
     SELECT COUNT(*) as cnt FROM words
     WHERE (pos IS NULL OR pos = '') AND bookId NOT IN ('wb_phrases', 'wb_sentences')
+      AND (archivedAt IS NULL OR archivedAt='')
   `)
   const unlabeledCount = unlabeledRow ? (unlabeledRow.cnt as number) : 0
 
   const dupCountRows = await queryAll(`
-    SELECT COUNT(*) as cnt FROM words GROUP BY bookId, LOWER(word) HAVING cnt > 1
+    SELECT COUNT(*) as cnt FROM words
+    WHERE (archivedAt IS NULL OR archivedAt='')
+    GROUP BY bookId, LOWER(word) HAVING cnt > 1
   `)
   let phantomDups = 0
   for (const row of dupCountRows) {

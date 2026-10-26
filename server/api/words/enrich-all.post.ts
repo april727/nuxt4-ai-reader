@@ -64,6 +64,7 @@ export default defineEventHandler(async () => {
     SELECT id, word FROM words
     WHERE (pos IS NULL OR pos = '')
     AND bookId NOT IN ('wb_phrases', 'wb_sentences')
+    AND (archivedAt IS NULL OR archivedAt='')
   `)
   const targets: Array<{ id: string; word: string }> = []
   for (const row of targetsRows) {

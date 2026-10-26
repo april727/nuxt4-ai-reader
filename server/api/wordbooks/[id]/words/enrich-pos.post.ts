@@ -46,7 +46,7 @@ export default defineEventHandler(async (event) => {
   }
 
   // 查找所有需要补充词性的单词（pos 为空且为单个英文单词）
-  const rows = await queryAll('SELECT id, word FROM words WHERE bookId=? AND (pos IS NULL OR pos = \'\')', [bookId])
+  const rows = await queryAll("SELECT id, word FROM words WHERE bookId=? AND (pos IS NULL OR pos = '') AND (archivedAt IS NULL OR archivedAt='')", [bookId])
   const targets: Array<{ id: string; word: string }> = []
   for (const w of rows) {
     const wordText = (w.word as string) || ''
