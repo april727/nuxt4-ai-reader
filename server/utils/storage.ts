@@ -184,27 +184,65 @@ export function moveThumbToFinal(
 }
 
 /**
+ * 按 contentId 跨文件夹定位内容目录。
+ *
+ * 为什么必须跨 folder 找：文章被拖到别的文件夹时只改了 `texts.folder`，
+ * 文件物理目录（以及 R2 key）仍留在旧 folder 前缀下——key 里带 folderId，
+ * 一改名所有 url 引用（segments / marks / cover）就全失效，不能跟着搬。
+ * 于是"按当前 folder 拼路径"必然 miss，永久删除时旧目录就永久残留。
+ */
+export function findContentDirs(contentId: string): string[] {
+  const out: string[] = []
+  if (!contentId || /[\\/]|\.\./.test(contentId)) return out
+  let folders: string[] = []
+  try {
+    folders = readdirSync(FILES_ROOT)
+  } catch {
+    return out
+  }
+  for (const f of folders) {
+    const p = join(FILES_ROOT, f, contentId)
+    try {
+      if (statSync(p).isDirectory()) out.push(p)
+    } catch {}
+  }
+  return out
+}
+
+/**
  * 将整个内容目录移动到垃圾箱
  * 如果不存在，返回 null（无文件可移动）
+ *
+ * 会搬迁该 contentId 在**所有** folder 下的目录（见 findContentDirs），
+ * 不只是当前 folder，避免移动过的文章留下孤儿目录。
  */
 export function moveToTrash(
   folderId: string,
   contentId: string,
   title: string,
 ): string | null {
-  const srcDir = getContentDir(folderId, contentId)
-  if (!existsSync(srcDir)) return null
+  const dirs = findContentDirs(contentId)
+  if (!dirs.length) {
+    const fallback = getContentDir(folderId, contentId)
+    if (!existsSync(fallback)) return null
+    dirs.push(fallback)
+  }
 
   const { dir: trashDir, name } = getTrashPath(new Date(), contentId, title)
   ensureDir(dirname(trashDir))
-  const dest = join(trashDir, contentId)
 
-  try {
-    renameSync(srcDir, dest)
-  } catch {
-    // 跨分区回退：递归复制
-    copyRecursive(srcDir, dest)
-    rmRecursive(srcDir)
+  let i = 0
+  for (const src of dirs) {
+    // 主目录沿用原命名 contentId，其余（旧 folder 残留）加 folder 后缀区分
+    const dest = i === 0 ? join(trashDir, contentId) : join(trashDir, `${contentId}__${basename(dirname(src))}`)
+    i++
+    try {
+      renameSync(src, dest)
+    } catch {
+      // 跨分区回退：递归复制
+      copyRecursive(src, dest)
+      rmRecursive(src)
+    }
   }
 
   return name

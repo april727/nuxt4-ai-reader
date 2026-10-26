@@ -2,6 +2,7 @@ import { queryOne, runQuery, deleteRowsFromTurso } from './db'
 import { moveToTrash } from './storage'
 import { useR2, r2Delete } from './r2'
 import { cleanupImages, extractImageUrls } from './imageCleanup'
+import { pendingR2Put } from './imageStore'
 
 /** 恢复被软删除的文件/书：清除 deletedAt，同时恢复其标记 */
 export async function restoreText(id: string): Promise<{ ok: boolean }> {
@@ -23,6 +24,9 @@ async function deleteR2Keys(keys: string[]) {
     if (!k || seen.has(k)) continue
     seen.add(k)
     try {
+      // 先等这张图的后台补传落地，否则删完可能又被 put 写回去（见 imageStore.pendingR2Put）
+      const inflight = pendingR2Put(k)
+      if (inflight) await inflight
       await r2Delete(k)
     } catch (e: any) {
       console.warn(`[r2-clean] 删除 R2 对象失败: ${k} (${e.message})`)
@@ -44,7 +48,11 @@ function collectTextKeys(row: any): string[] {
     try {
       const segs = JSON.parse(row.segments)
       for (const s of segs) {
+        // 文字文章：段落插图挂在 images 上
         if (Array.isArray(s.images)) keys.push(...s.images)
+        // 图片试卷：segments 直接是页数组，每页自带 R2 key，
+        // 不收集的话删试卷只清本地目录、云端对象会一直留着
+        if (s && typeof s.key === 'string') keys.push(s.key)
       }
     } catch {}
   }

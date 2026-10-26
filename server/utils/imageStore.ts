@@ -55,6 +55,20 @@ export interface StoredImage {
 const R2_BLOCK_MS = 2000
 
 /**
+ * 仍在后台补传的 key → promise。
+ *
+ * 存在的唯一理由：超时转后台后，上传可能比"删除"更晚完成。
+ * 若此时用户删掉文章，r2Delete 先跑、后台 put 后到，对象会被重新写回 R2，
+ * 形成删不掉的残留。删除方需要先 await 对应 key 落地，再执行删除。
+ */
+const pendingPuts = new Map<string, Promise<unknown>>()
+
+/** 取某个 key 尚在进行的后台补传（没有则 undefined） */
+export function pendingR2Put(key: string): Promise<unknown> | undefined {
+  return pendingPuts.get(key)
+}
+
+/**
  * 同一张图（sha256 相同）在同一文章内不重复落盘，返回已有地址。
  *
  * 性能设计（实测依据）：
@@ -103,7 +117,10 @@ export async function storeImage(
         return { key, url, storage: 'r2', bytes: data.length }
       }
       // 超时：后台继续，失败只记日志
-      put.catch((e: any) => console.warn(`[image] R2 后台补传失败: ${e?.message || e}`))
+      const tracked = put
+        .catch((e: any) => console.warn(`[image] R2 后台补传失败: ${e?.message || e}`))
+        .finally(() => { pendingPuts.delete(key) })
+      pendingPuts.set(key, tracked)
       console.warn(`[image] R2 上传超过 ${R2_BLOCK_MS}ms，先返回本地地址并后台补传: ${key}`)
       if (localOk) return { key, url, storage: 'local', bytes: data.length }
     } catch (e: any) {
