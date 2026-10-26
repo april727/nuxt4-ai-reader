@@ -270,6 +270,26 @@
               <div class="spinner"></div>
               <p>正在提取文章内容…</p>
             </div>
+            <div class="block-mode" role="group" aria-label="分块粒度">
+              <span class="block-mode-label">分块</span>
+              <button
+                class="block-mode-btn"
+                :class="{ active: blockMode === 'large' }"
+                :disabled="urlLoading"
+                @click="setBlockMode('large')"
+              >大块（按章节合并）</button>
+              <button
+                class="block-mode-btn"
+                :class="{ active: blockMode === 'small' }"
+                :disabled="urlLoading"
+                @click="setBlockMode('small')"
+              >小块（每段一块）</button>
+            </div>
+            <p class="block-mode-hint">
+              {{ blockMode === 'large'
+                ? '同一章节的多个自然段会合并成一块，适合每块做一次详细解释。图片并入所属块。'
+                : '每个自然段单独成块，适合逐句精读。图片单独成段。' }}
+            </p>
           </div>
           <div class="modal-footer">
             <button class="btn-ghost" @click="showUrl = false">取消</button>
@@ -418,6 +438,17 @@ const showVideoImport = ref(false)
 const sidebarRef = ref<any>(null)
 const urlInput = ref('')
 const urlLoading = ref(false)
+/**
+ * 网页导入分块粒度：
+ *  large = 按章节/目标长度合并成大块（默认，每块只做一次详细解释）
+ *  small = 每个自然段一块
+ * 选择记录在 localStorage，下次沿用。
+ */
+const blockMode = ref<'large' | 'small'>('large')
+function setBlockMode(m: 'large' | 'small') {
+  blockMode.value = m
+  try { localStorage.setItem('fetch-url-block-mode', m) } catch {}
+}
 const uploading = ref(false)
 const dragOver = ref(false)
 
@@ -779,14 +810,20 @@ async function fetchUrl() {
   const u = urlInput.value.trim(); if (!u || urlLoading.value) return
   urlLoading.value = true
   try {
-    const result = await $fetch<{ id: string }>('/api/fetch-url', { method: 'POST', body: { url: u } })
+    const result = await $fetch<{ id: string }>('/api/fetch-url', { method: 'POST', body: { url: u, block: blockMode.value } })
     showUrl.value = false; urlInput.value = ''
     if (result.id) { await loadBooks(); navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`) }
   } catch (e: any) { alert('提取失败: ' + (e?.message || '请检查网址或稍后重试')) }
   finally { urlLoading.value = false }
 }
 
-onMounted(() => { counts(); startAutoRefresh() })
+onMounted(() => {
+  counts(); startAutoRefresh()
+  try {
+    const saved = localStorage.getItem('fetch-url-block-mode')
+    if (saved === 'small' || saved === 'large') blockMode.value = saved
+  } catch {}
+})
 onUnmounted(() => { stopAutoRefresh() })
 
 // 书架静默刷新：检测后台分段完成后自动更新标题颜色
@@ -1299,6 +1336,50 @@ function stopAutoRefresh() {
 .modal-input:focus {
   border-color: #3d3591;
   background: #ffffff;
+}
+
+/* 分块粒度选择 */
+.block-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 4px;
+  background: #f2f1ec;
+  border-radius: 10px;
+}
+.block-mode-label {
+  padding: 0 6px;
+  font-size: 12px;
+  color: #8a8880;
+  white-space: nowrap;
+}
+.block-mode-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b6a63;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+  white-space: nowrap;
+}
+.block-mode-btn:hover:not(:disabled):not(.active) { color: #1a1a18; }
+.block-mode-btn.active {
+  background: #ffffff;
+  color: #3d3591;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.block-mode-btn:disabled { cursor: default; opacity: 0.6; }
+.block-mode-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #8a8880;
 }
 .modal-loading {
   display: flex;

@@ -177,14 +177,16 @@ function toAbsolute(src: string, base: string): string {
 }
 
 /**
- * 从正文 HTML 抽取「叶子块」，每块一段。
+ * 从正文 HTML 抽取有序条目（标题 / 正文 / 图片）。
  * 取叶子块（内部不含其他块级元素）是为了避免 <li><p>x</p></li> 这类嵌套重复输出。
  */
-function extractParagraphs(contentHtml: string, baseUrl: string, doc: Document): string[] {
+interface BlockItem { kind: 'heading' | 'text' | 'image'; text: string }
+
+function extractItems(contentHtml: string, baseUrl: string, doc: Document): BlockItem[] {
   const holder = doc.createElement('div')
   holder.innerHTML = contentHtml || ''
 
-  const out: string[] = []
+  const items: BlockItem[] = []
   const seenImg = new Set<string>()
 
   const pushImages = (el: Element) => {
@@ -193,7 +195,7 @@ function extractParagraphs(contentHtml: string, baseUrl: string, doc: Document):
       const abs = toAbsolute(raw, baseUrl)
       if (abs && !seenImg.has(abs)) {
         seenImg.add(abs)
-        out.push(`![](${abs})`)
+        items.push({ kind: 'image', text: `![](${abs})` })
       }
     }
   }
@@ -201,20 +203,93 @@ function extractParagraphs(contentHtml: string, baseUrl: string, doc: Document):
   for (const el of Array.from(holder.querySelectorAll(BLOCK_TAGS))) {
     // 内部还有块级元素 → 交给子块处理，避免整段重复
     if (el.querySelector(BLOCK_TAGS)) continue
-    pushImages(el)
+    const tag = el.tagName.toLowerCase()
+    const isHeading = /^h[1-6]$/.test(tag)
     const text = (el.textContent || '').replace(/\s+/g, ' ').trim()
-    if (text.length >= 2) out.push(text)
+    if (text.length >= 2) items.push({ kind: isHeading ? 'heading' : 'text', text })
+    pushImages(el)
   }
 
   // 顶层散图（不在任何块内）
   pushImages(holder)
 
   // 兜底：没有可用块结构时按纯文本输出
-  if (out.length === 0) {
+  if (items.length === 0) {
     const plain = (holder.textContent || '').replace(/\s+/g, ' ').trim()
-    if (plain) out.push(plain)
+    if (plain) items.push({ kind: 'text', text: plain })
   }
-  return out
+  return items
+}
+
+/** 中日韩字符占比：中文文章按字数切块，目标值要明显小于英文 */
+function cjkRatio(items: BlockItem[]): number {
+  let cjk = 0
+  let total = 0
+  for (const it of items) {
+    if (it.kind === 'image') continue
+    for (const ch of it.text) {
+      if (/\s/.test(ch)) continue
+      total++
+      if (/[\u4e00-\u9fff\u3040-\u30ff]/.test(ch)) cjk++
+    }
+  }
+  return total ? cjk / total : 0
+}
+
+/**
+ * 大块模式：按章节（标题）与目标长度合并，适合"每块只做一次详细解释"的阅读方式。
+ *  - 遇到标题即收束上一块，标题归属于其后的正文
+ *  - 累计长度达到目标值后，在自然段边界收束（不切断段落）
+ *  - 图片并入当前块，不单独成段
+ * 块内用单个换行连接（下游按空行切段，块内不会再被拆开）。
+ */
+function groupLargeBlocks(items: BlockItem[]): string[] {
+  const target = cjkRatio(items) > 0.3 ? 450 : 900
+  const blocks: string[] = []
+  let cur: string[] = []
+  let curLen = 0
+
+  const flush = () => {
+    if (!cur.length) return
+    const body = cur.join('\n').trim()
+    // 只有图片的块没有阅读价值，直接并入上一块
+    if (body.replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim()) blocks.push(body)
+    else if (blocks.length) blocks[blocks.length - 1] += `\n${body}`
+    cur = []
+    curLen = 0
+  }
+
+  for (const it of items) {
+    if (it.kind === 'heading') flush()
+
+    if (it.kind === 'image') {
+      cur.push(it.text)
+      continue
+    }
+    // 已达目标长度 → 在自然段边界收束
+    if (curLen >= target) flush()
+    cur.push(it.text)
+    curLen += it.text.length
+  }
+  flush()
+
+  // 过短的块（如小标题、"See also"）会白白占用一次解释，并入上一块
+  const MIN_BLOCK = 120
+  const merged: string[] = []
+  for (const b of blocks) {
+    const plain = b.replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim()
+    if (merged.length && plain.length < MIN_BLOCK) {
+      merged[merged.length - 1] += `\n${b}`
+      continue
+    }
+    merged.push(b)
+  }
+  return merged
+}
+
+/** 小块模式：每个自然段一块，图片单独成段 */
+function groupSmallBlocks(items: BlockItem[]): string[] {
+  return items.map(i => i.text)
 }
 
 /** 摘要用：去掉 Markdown 图片、压平空白 */
@@ -225,8 +300,10 @@ function toExcerpt(text: string): string {
 /* ---------------- 接口 ---------------- */
 
 export default defineEventHandler(async (event) => {
-  const body = await readBody<{ url: string }>(event)
+  const body = await readBody<{ url: string; block?: 'large' | 'small' }>(event)
   if (!body?.url) throw createError({ statusCode: 400, message: '缺少 URL' })
+  // 分块粒度：large = 按章节合并（默认，适合逐块精读）；small = 每个自然段一块
+  const mode: 'large' | 'small' = body.block === 'small' ? 'small' : 'large'
 
   let url = String(body.url).trim()
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url
@@ -249,8 +326,9 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 422, message: '未能从该页面提取到正文内容' })
     }
 
-    // 4. 按段落组织（保留插图），而不是整篇 textContent
-    const paragraphs = extractParagraphs(String(article.content), finalUrl, dom.window.document)
+    // 4. 按选定粒度组织段落（保留插图）
+    const items = extractItems(String(article.content), finalUrl, dom.window.document)
+    const paragraphs = mode === 'small' ? groupSmallBlocks(items) : groupLargeBlocks(items)
     const text = paragraphs.join('\n\n').slice(0, MAX_TEXT)
 
     if (!text.replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim()) {
@@ -270,7 +348,7 @@ export default defineEventHandler(async (event) => {
       [id, title, text, url, 'default', excerpt, new Date().toISOString()],
     )
 
-    return { id, title, paragraphs: paragraphs.length, chars: text.length }
+    return { id, title, block: mode, paragraphs: paragraphs.length, chars: text.length }
   } catch (err: any) {
     console.error('URL 提取失败:', err?.message || err)
     if (err?.statusCode) throw err
