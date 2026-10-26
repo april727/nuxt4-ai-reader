@@ -134,7 +134,7 @@ async function cleanupDeletedMarks(textId: string, oldMarksJson: string, newMark
 }
 
 // 同步标记到单词本：新增词条，并在解析内容变化时补齐既有词条
-async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMarksJson: string) {
+async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMarksJson: string, title = '') {
   let oldMarks: any[] = []
   let newMarks: any[] = []
   try { oldMarks = oldMarksJson ? JSON.parse(oldMarksJson) : [] } catch {}
@@ -159,19 +159,22 @@ async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMar
   // 同一批次里同一单词本只校验一次，减少远程往返
   const knownBooks = new Set<string>()
 
-  for (const mark of changed) {
-    const bookId = MARK_TO_BOOK[mark.type]
-    if (!bookId || !mark.text?.trim()) continue
+  // 每篇文章一个专属单词本（与三个默认本并存）
+  const articleBook = await ensureArticleBook(textId, title, knownBooks)
 
-    // 确认目标单词本存在
-    if (!knownBooks.has(bookId)) {
-      const wb = await queryOne('SELECT id FROM wordbooks WHERE id=?', [bookId])
-      if (!wb) continue
-      knownBooks.add(bookId)
-    }
+  /** 确保默认本存在 */
+  async function ensureBook(bookId: string): Promise<boolean> {
+    if (knownBooks.has(bookId)) return true
+    const wb = await queryOne('SELECT id FROM wordbooks WHERE id=?', [bookId])
+    if (!wb) return false
+    knownBooks.add(bookId)
+    return true
+  }
 
+  /** 把一个标记 upsert 到指定单词本（同一本内同词只保留一行） */
+  async function upsertMarkWord(bookId: string, mark: any): Promise<void> {
     const lemma = extractLemma(mark)
-    const wordText = lemma || mark.text.trim()
+    const wordText = lemma || String(mark.text).trim()
     const detail = mark.detail || ''
     const phonetic = extractPhonetic(detail)
     const meaning = extractMeaning(detail)
@@ -183,12 +186,13 @@ async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMar
     const startOffset = Number(mark.startOffset) || 0
     const endOffset = Number(mark.endOffset) || 0
     // 有原词时以原词为主词条，原文作为笔记
-    const note = lemma && lemma !== mark.text.trim()
-      ? `原文: ${mark.text.trim()}${mark.note ? '\n' + mark.note : ''}`
+    const note = lemma && lemma !== String(mark.text).trim()
+      ? `原文: ${String(mark.text).trim()}${mark.note ? '\n' + mark.note : ''}`
       : mark.note || ''
 
-    // 优先按 markId 定位，兼容历史数据按词形匹配
-    let existing = await queryOne('SELECT * FROM words WHERE markId=?', [mark.id])
+    // 先按 (bookId, markId) 定位 —— markId 在多本书里会重复，不能单独当键；
+    // 再按「本 + 词形」兜底，保证同一本内不出现重复词条
+    let existing = await queryOne('SELECT * FROM words WHERE bookId=? AND markId=?', [bookId, mark.id])
     let revived = false
     if (!existing) {
       existing = await queryOne('SELECT * FROM words WHERE bookId=? AND LOWER(word)=LOWER(?)', [bookId, wordText])
@@ -198,7 +202,7 @@ async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMar
 
     if (existing) {
       // 同一个标记对应的词条被用户主动移除（墓碑）→ 不再更新，避免"复活"
-      if (existing.dismissedAt && !revived) continue
+      if (existing.dismissedAt && !revived) return
 
       const patch: Record<string, any> = {}
       if (existing.markId !== mark.id) patch.markId = mark.id
@@ -223,22 +227,62 @@ async function syncMarksToWordbooks(textId: string, oldMarksJson: string, newMar
           [...keys.map(k => patch[k]), now, existing.id],
         )
       }
-      continue
+      return
     }
 
     const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-
     await runQuery(
       `INSERT INTO words (id,bookId,word,phonetic,meaning,pos,note,source,markId,detail,context,image,type,paragraphId,startOffset,endOffset,createdAt,updatedAt)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [wordId, bookId, wordText, phonetic, meaning, pos, note, textId, mark.id, detail, context, image, markType, paragraphId, startOffset, endOffset, now, now]
     )
   }
+
+  for (const mark of changed) {
+    const globalBook = MARK_TO_BOOK[mark.type]
+    if (!mark.text?.trim()) continue
+    const targets: string[] = []
+    // 默认本（按类型汇总）：note 类型按设计不进
+    if (globalBook && await ensureBook(globalBook)) targets.push(globalBook)
+    // 文章专属本：note 也收，便于回看本篇笔记
+    if (articleBook) targets.push(articleBook)
+    for (const bookId of targets) await upsertMarkWord(bookId, mark)
+  }
+}
+
+/** 文章专属单词本的 id 规则 */
+export function articleBookIdOf(textId: string): string {
+  return `wb_t_${textId}`
+}
+
+/** 懒创建文章专属单词本；创建失败返回 null（不阻断主流程） */
+export async function ensureArticleBook(
+  textId: string,
+  title: string,
+  knownBooks?: Set<string>,
+): Promise<string | null> {
+  if (!textId) return null
+  const id = articleBookIdOf(textId)
+  if (knownBooks?.has(id)) return id
+  try {
+    const found = await queryOne('SELECT id FROM wordbooks WHERE id=?', [id])
+    if (!found) {
+      const name = (title || '未命名文章').trim().slice(0, 40)
+      await runQuery(
+        'INSERT INTO wordbooks (id,name,isDefault,sortOrder,createdAt) VALUES (?,?,0,?,?)',
+        [id, name, 1000, new Date().toISOString()],
+      )
+    }
+    knownBooks?.add(id)
+    return id
+  } catch {
+    return null
+  }
 }
 
 /** 标记变更后统一同步（marks 独立表 + 单词本 + 单词清理） */
 export async function syncMarks(textId: string, title: string, folder: string, oldMarksJson: string, newMarksJson: string) {
   await syncMarksTable(textId, title, folder, oldMarksJson, newMarksJson)
-  await syncMarksToWordbooks(textId, oldMarksJson, newMarksJson)
+  await syncMarksToWordbooks(textId, oldMarksJson, newMarksJson, title)
   await cleanupDeletedMarks(textId, oldMarksJson, newMarksJson)
 }
