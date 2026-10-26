@@ -234,7 +234,11 @@ export function moveToTrash(
   }
 
   const { dir: trashDir, name } = getTrashPath(new Date(), contentId, title)
-  ensureDir(dirname(trashDir))
+  // 注意：要建的是 trashDir 本身（归档目录），不是它的父目录 TRASH_ROOT。
+  // 以前写成 dirname(trashDir)，rename 的目标父目录不存在 → 必然 ENOENT →
+  // 每次都走"复制 + 删除"回退：大视频要复制整整一份，回退里的 rmSync 若被拦，
+  // 原目录还会留在 files/ 里形成双份占用。
+  ensureDir(trashDir)
 
   let i = 0
   for (const src of dirs) {
@@ -243,10 +247,13 @@ export function moveToTrash(
     i++
     try {
       renameSync(src, dest)
-    } catch {
-      // 跨分区回退：递归复制
+    } catch (e: any) {
+      // 跨分区回退：递归复制后删源
       copyRecursive(src, dest)
       rmRecursive(src)
+      if (existsSync(src)) {
+        console.warn(`[trash] 归档后源目录未删除（可能被安全删除保护拦截）: ${src} (${e?.code || e?.message})`)
+      }
     }
   }
 
@@ -289,7 +296,13 @@ function copyRecursive(src: string, dest: string) {
 }
 
 function rmRecursive(dir: string) {
-  try { rmSync(dir, { recursive: true, force: true }) } catch {}
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch (e: any) {
+    // 以前这里静默吞掉：被安全删除保护拦截时表现为"删了但文件还在"，
+    // 结果 files/ 与 trash/ 各留一份，磁盘翻倍占。
+    console.warn(`[trash] rmRecursive 失败: ${dir} (${e?.code || e?.message})`)
+  }
 }
 
 export { DATA_ROOT, FILES_ROOT, TRASH_ROOT, LEGACY_UPLOADS }
