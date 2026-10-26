@@ -412,16 +412,28 @@
           >🚩</span>
         </div>
 
-        <!-- 在段落下方插入 -->
+        <!-- 在段落下方插入（可选择「并入段末」或「新增段落」） -->
         <div
           v-if="insertingPosition?.paragraphId === para.id && insertingPosition?.position === 'after'"
           class="insert-block" @click.stop
         >
+          <div class="insert-mode">
+            <button
+              class="insert-mode-btn" :class="{ active: insertAppend }"
+              title="文字接到本段末尾，段落数不变，上下两段仍可继续合并"
+              @click="insertAppend = true"
+            >并入本段末尾</button>
+            <button
+              class="insert-mode-btn" :class="{ active: !insertAppend }"
+              title="新增一段，会把本段与下一段拆开（两段不再直接相邻）"
+              @click="insertAppend = false"
+            >作为独立段落</button>
+          </div>
           <textarea
             :ref="(el: any) => { insertTextareaEl = el }"
             class="para-edit-area"
             v-model="insertText"
-            :placeholder="`在「段落 ${index + 1}」下方插入自定义内容…`"
+            :placeholder="insertAppend ? `在「段落 ${index + 1}」文字末尾补充内容…` : `在「段落 ${index + 1}」下方插入新段落…`"
             @keydown.escape="cancelInsert"
             @keydown.ctrl.enter="confirmInsert"
             @input="autoResizeInsertTextarea"
@@ -429,7 +441,7 @@
           ></textarea>
           <div class="insert-actions">
             <button class="btn-cancel" @click="cancelInsert">取消</button>
-            <button class="btn-confirm" @click="confirmInsert">确认插入</button>
+            <button class="btn-confirm" @click="confirmInsert">{{ insertAppend ? '追加到段末' : '确认插入' }}</button>
           </div>
         </div>
         </template>
@@ -2276,6 +2288,8 @@ const insertingPosition = ref<{ position: 'before' | 'after'; paragraphId: strin
 const insertText = ref('')
 let insertTextareaEl: HTMLTextAreaElement | null = null
 const insertRows = ref(2)
+// 下方插入时：true = 并入本段文字末尾（段落数不变），false = 新增独立段落
+const insertAppend = ref(true)
 
 function autoResizeInsertTextarea() {
   const ta = insertTextareaEl
@@ -2292,6 +2306,7 @@ function startInsert(position: 'before' | 'after', paragraphId: string) {
   insertingPosition.value = { position, paragraphId }
   insertText.value = ''
   insertRows.value = 2
+  insertAppend.value = position === 'after'
   nextTick(() => {
     insertTextareaEl?.focus()
   })
@@ -2312,6 +2327,24 @@ function confirmInsert() {
 
   const refPara = paragraphs.value.find(p => p.id === pos.paragraphId)
   if (!refPara) { cancelInsert(); return }
+
+  // ── 并入段末：不新增段落，段落数不变，本段与下一段仍相邻（可继续合并） ──
+  if (pos.position === 'after' && insertAppend.value) {
+    const pid = pos.paragraphId
+    const joined = refPara.text ? `${String(refPara.text).replace(/\s+$/, '')}\n${text}` : text
+    article.updateParagraphText(pid, joined)
+    article.setCachedExplanation(pid, 'explain', '')
+    article.setCachedExplanation(pid, 'translate', '')
+    paragraphEditVersion.value++
+    cancelInsert()
+    queueSegmentsOp(() => $fetch<any>('/api/text/append-segment', {
+      method: 'POST',
+      body: { textId: id, paragraphId: pid, text },
+    }))
+      .then(res => adoptServerSegments(res?.segments))
+      .catch(() => { refreshParagraphs() })
+    return
+  }
 
   // 计算插入位置索引
   const refIdx = paragraphs.value.indexOf(refPara)
@@ -4444,6 +4477,23 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
 }
 .insert-block .para-edit-area::placeholder {
   color: #86b89a;
+}
+
+/* 插入方式切换：并入段末 / 作为独立段落 */
+.insert-mode {
+  display: flex; gap: 6px; margin-bottom: 8px;
+}
+.insert-mode-btn {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 0.72rem; font-weight: 500; line-height: 1.4;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid rgba(16,185,129,0.35);
+  background: transparent; color: #3d7a5f; cursor: pointer;
+  transition: all 0.15s;
+}
+.insert-mode-btn:hover:not(.active) { background: rgba(16,185,129,0.08); }
+.insert-mode-btn.active {
+  background: #10b981; border-color: #10b981; color: #fff;
 }
 
 .insert-actions {
