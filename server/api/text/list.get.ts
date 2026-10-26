@@ -48,13 +48,24 @@ export default defineEventHandler(async (event) => {
    *   aiSeg   = 是否含 AI 分段标记（原来的 includes('"id":"p-') 改由 SQL 判断）
    * 段落数随合并/重新分段变化，必须实时算，不能缓存进 stats。
    */
-  const COLS = `id,title,source,folder,excerpt,createdAt,completedAt,filePath,videoMeta,
+  const COLS = `id,title,source,folder,excerpt,createdAt,completedAt,filePath,videoMeta,nextReviewAt,reviewCount,reviewIntervalDays,
     LENGTH(text) AS chars,
     (LENGTH(text) - LENGTH(REPLACE(text, ' ', '')) + 1) AS words,
     CASE WHEN segments IS NULL OR segments = '' THEN 0
          ELSE (LENGTH(segments) - LENGTH(REPLACE(segments, '"id":', ''))) / 5 END AS paraCount,
     CASE WHEN segments LIKE '%"id":"p-%' THEN 1 ELSE 0 END AS aiSeg`
-  if (folder === 'all') {
+  if (folder === 'review_today') {
+    // 虚拟文件夹「今日复习」：不改动文章归属，按 nextReviewAt 到期筛选
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    rows = await queryAll(
+      `SELECT ${COLS} FROM texts
+       WHERE deletedAt IS NULL AND completedAt IS NOT NULL
+         AND nextReviewAt IS NOT NULL AND nextReviewAt <= ?
+       ORDER BY nextReviewAt ASC`,
+      [today],
+    )
+  } else if (folder === 'all') {
     rows = await queryAll(`SELECT ${COLS} FROM texts WHERE deletedAt IS NULL ORDER BY createdAt DESC`)
   } else {
     rows = await queryAll(`SELECT ${COLS} FROM texts WHERE folder=? AND deletedAt IS NULL ORDER BY createdAt DESC`, [folder])
@@ -78,6 +89,7 @@ export default defineEventHandler(async (event) => {
       words: Number(r.words) || 0,
       paraCount: Number(r.paraCount) || 0,
       readCount: s.readCount || 0, lastReadAt: s.lastReadAt || '', markCount: s.markCount || 0,
+      nextReviewAt: r.nextReviewAt || null, reviewCount: Number(r.reviewCount) || 0,
       markTypes: markTypeMap.get(r.id) || { word: 0, phrase: 0, sentence: 0 },
       duration, thumbnail, aiSegmented,
     }

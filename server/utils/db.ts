@@ -57,6 +57,10 @@ async function createTablesTurso() {
     ['folders','parent',"TEXT DEFAULT ''"],['folders','isPrivate','INTEGER DEFAULT 0'],['folders','passwordHash',"TEXT DEFAULT ''"],
     ['texts','paragraphChats',"TEXT DEFAULT ''"],['texts','videoMeta',"TEXT DEFAULT ''"],['texts','videoSubtitles',"TEXT DEFAULT ''"],
     ['texts','subtitlePractice',"TEXT DEFAULT ''"],['texts','completedAt','TEXT DEFAULT NULL'],['texts','notes',"TEXT DEFAULT ''"],
+    // 复习排程：完成阅读后按自评给出下次复习日期
+    ['texts','reviewIntervalDays','INTEGER DEFAULT 7'],['texts','nextReviewAt','TEXT DEFAULT NULL'],
+    ['texts','reviewCount','INTEGER DEFAULT 0'],['texts','lastReviewedAt','TEXT DEFAULT NULL'],
+    ['texts','selfRating',"TEXT DEFAULT ''"],
     ['texts','paragraphNotes',"TEXT DEFAULT '[]'"],['texts','paragraphNotesMap',"TEXT DEFAULT '{}'"],['texts','chapters',"TEXT DEFAULT '[]'"],['texts','cover',"TEXT DEFAULT ''"],['words','pos',"TEXT DEFAULT ''"],['words','enhancement',"TEXT DEFAULT ''"],
     ['words','markId',"TEXT DEFAULT ''"],['words','detail',"TEXT DEFAULT ''"],['words','context',"TEXT DEFAULT ''"],['words','image',"TEXT DEFAULT ''"],
     ['words','lastReviewedAt',"TEXT DEFAULT ''"],['words','reviewCount',"INTEGER DEFAULT 0"],['words','lapses',"INTEGER DEFAULT 0"],
