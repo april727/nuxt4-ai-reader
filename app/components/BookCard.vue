@@ -49,21 +49,15 @@
             <span class="stat">{{ formatDuration(duration) }}</span>
           </template>
           <template v-else>
-            <span v-if="words" class="stat">
-              <svg class="stat-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10.5 5 1.8l3 8.7"/><path d="M3.2 7.4h3.6"/></svg>
-              {{ fmtCount(words) }}
-            </span>
-            <span v-if="paraCount" class="stat">
-              <svg class="stat-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 1.8v8.7"/><path d="M4.6 1.8v8.7"/><path d="M4.6 1.8H7a1.9 1.9 0 0 1 0 3.8H4.6"/></svg>
-              {{ paraCount }}
-            </span>
+            <span v-if="words" class="stat">{{ fmtCount(words) }} 词</span>
+            <span v-if="words && paraCount" class="doc-sep">·</span>
+            <span v-if="paraCount" class="stat">{{ paraCount }} 段</span>
             <span v-if="!words && !paraCount" class="stat">尚未分段</span>
           </template>
         </span>
-        <span v-if="markTypes.word || markTypes.phrase || markTypes.sentence" class="stats-right">
-          <span v-if="markTypes.word" class="mk mk-word" :title="`${markTypes.word} 个单词标记`">{{ markTypes.word }}</span>
-          <span v-if="markTypes.phrase" class="mk mk-phrase" :title="`${markTypes.phrase} 个短语标记`">{{ markTypes.phrase }}</span>
-          <span v-if="markTypes.sentence" class="mk mk-sentence" :title="`${markTypes.sentence} 个句子标记`">{{ markTypes.sentence }}</span>
+        <span v-if="totalMarks" class="stats-right">
+          <svg class="mark-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2.2 1.5h5.6v9L5 8.2l-2.8 2.3z"/></svg>
+          {{ totalMarks }}
         </span>
       </div>
       <div class="doc-meta">
@@ -106,6 +100,11 @@ const props = defineProps<{
 
 const emptyMarkTypes = { word: 0, phrase: 0, sentence: 0 }
 const markTypes = computed(() => props.markTypes || emptyMarkTypes)
+/** 卡片只显示标记总数（分类明细在阅读页导航刻度里体现） */
+const totalMarks = computed(() => {
+  const m = markTypes.value
+  return (m.word || 0) + (m.phrase || 0) + (m.sentence || 0)
+})
 
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent]; menu: [e: MouseEvent] }>()
 
@@ -329,31 +328,20 @@ function formatDuration(seconds: number): string {
   overflow: hidden;
   margin-bottom: 5px;
 }
-.stats-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.stats-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .stat { display: inline-flex; align-items: center; gap: 3px; }
-.stat-ico { width: 9px; height: 11px; flex-shrink: 0; opacity: 0.75; }
+.doc-sep { color: #c9c6bc; }
 
-/* 标记：按类型用颜色圆点区分，右对齐 */
-.stats-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.mk {
+/* 标记总数：图标 + 数字，靠右 */
+.stats-right {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10.5px;
-  color: #8a8880;
+  flex-shrink: 0;
+  color: #b0730f;
   font-variant-numeric: tabular-nums;
 }
-.mk::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-.mk-word { color: #b0730f; }
-.mk-phrase { color: #17886a; }
-.mk-sentence { color: #c04a70; }
+.mark-ico { width: 9px; height: 11px; flex-shrink: 0; }
 
 .doc-meta {
   display: flex;
