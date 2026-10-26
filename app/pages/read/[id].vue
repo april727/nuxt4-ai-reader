@@ -433,6 +433,9 @@
           </div>
         </div>
         </template>
+
+        <!-- 完成阅读 + 复习排程（自包含组件，不改动段落渲染逻辑） -->
+        <CompleteBar :text-id="String(id)" />
       </article>
 
       <!-- 可拖拽分割线（移动端隐藏） -->
