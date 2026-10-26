@@ -24,17 +24,35 @@ export default defineEventHandler(async (event) => {
 
   const typeFilter = `m.type IN ('word','phrase','sentence')`
 
+  /**
+   * 计数口径（重要）：
+   * 原始 marks 里存在大量「同毫秒重复写入」——同一篇、同一词、createdAt 精确到毫秒完全相同，
+   * 实测 10,327 条里有 2,591 条属此类（占 25%，如 scrawny 在同一篇出现 6 条同毫秒记录），
+   * 这是保存链路的重复写入，不是用户重复标记。若直接 COUNT(*) 会严重虚高，
+   * 因此次数一律按 (文章 + 词 + 时间戳) 去重后再统计；原始条数另以 rawCount 返回供核对。
+   */
   const agg = await queryAll(`
-    SELECT LOWER(TRIM(COALESCE(NULLIF(m.lemma,''), m.text))) AS term,
+    WITH dedup AS (
+      SELECT textId, type, createdAt, term FROM (
+        SELECT textId, type, createdAt,
+               LOWER(TRIM(COALESCE(NULLIF(lemma,''), text))) AS term
+        FROM marks m
+        WHERE m.deletedAt IS NULL AND ${typeFilter}
+        GROUP BY textId, term, createdAt
+      )
+    )
+    SELECT d.term,
            COUNT(*) AS n,
-           COUNT(DISTINCT m.textId) AS docs,
-           MAX(m.createdAt) AS lastAt,
-           MAX(m.type) AS type
-    FROM marks m
-    WHERE m.deletedAt IS NULL AND ${typeFilter}
-    GROUP BY term
+           COUNT(DISTINCT d.textId) AS docs,
+           MAX(d.createdAt) AS lastAt,
+           MAX(d.type) AS type,
+           (SELECT COUNT(*) FROM marks m2
+             WHERE m2.deletedAt IS NULL AND m2.type IN ('word','phrase','sentence')
+               AND LOWER(TRIM(COALESCE(NULLIF(m2.lemma,''), m2.text))) = d.term) AS rawCount
+    FROM dedup d
+    GROUP BY d.term
     HAVING COUNT(*) >= ?
-    ORDER BY n DESC, lastAt DESC
+    ORDER BY n DESC, docs DESC, lastAt DESC
     LIMIT ?
   `, [min, limit])
 
@@ -79,6 +97,7 @@ export default defineEventHandler(async (event) => {
       term: r.term,
       type: r.type || 'word',
       markCount: Number(r.n),
+      rawCount: Number(r.rawCount) || Number(r.n),
       docCount: Number(r.docs),
       lastAt: r.lastAt,
       wordId: w.id || '',
