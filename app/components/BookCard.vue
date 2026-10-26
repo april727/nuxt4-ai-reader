@@ -44,17 +44,27 @@
     <div class="doc-body">
       <h3 class="doc-title" :class="{ 'ai-segmented': aiSegmented }">{{ title }}</h3>
       <div class="doc-stats">
-        <template v-if="isVideo && duration">
-          <span>{{ formatDuration(duration) }}</span>
-        </template>
-        <template v-else>
-          <span v-if="words">{{ fmtCount(words) }} 词</span>
-          <template v-if="words && paraCount"><span class="doc-sep">·</span></template>
-          <span v-if="paraCount">{{ paraCount }} 段</span>
-          <template v-if="(words || paraCount) && markCount"><span class="doc-sep">·</span></template>
-          <span v-if="markCount">{{ markCount }} 标记</span>
-          <span v-if="!words && !paraCount && !markCount">尚未分段</span>
-        </template>
+        <span class="stats-left">
+          <template v-if="isVideo && duration">
+            <span class="stat">{{ formatDuration(duration) }}</span>
+          </template>
+          <template v-else>
+            <span v-if="words" class="stat">
+              <svg class="stat-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10.5 5 1.8l3 8.7"/><path d="M3.2 7.4h3.6"/></svg>
+              {{ fmtCount(words) }}
+            </span>
+            <span v-if="paraCount" class="stat">
+              <svg class="stat-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 1.8v8.7"/><path d="M4.6 1.8v8.7"/><path d="M4.6 1.8H7a1.9 1.9 0 0 1 0 3.8H4.6"/></svg>
+              {{ paraCount }}
+            </span>
+            <span v-if="!words && !paraCount" class="stat">尚未分段</span>
+          </template>
+        </span>
+        <span v-if="markTypes.word || markTypes.phrase || markTypes.sentence" class="stats-right">
+          <span v-if="markTypes.word" class="mk mk-word" :title="`${markTypes.word} 个单词标记`">{{ markTypes.word }}</span>
+          <span v-if="markTypes.phrase" class="mk mk-phrase" :title="`${markTypes.phrase} 个短语标记`">{{ markTypes.phrase }}</span>
+          <span v-if="markTypes.sentence" class="mk mk-sentence" :title="`${markTypes.sentence} 个句子标记`">{{ markTypes.sentence }}</span>
+        </span>
       </div>
       <div class="doc-meta">
         <span v-if="completedAt" class="doc-chip is-done">
@@ -89,8 +99,13 @@ const props = defineProps<{
   words?: number
   /** 段落数（实时取自 segments，随合并/重新分段变化） */
   paraCount?: number
+  /** 分类标记数：单词 / 短语 / 句子 */
+  markTypes?: { word: number; phrase: number; sentence: number }
   createdAt?: string
 }>()
+
+const emptyMarkTypes = { word: 0, phrase: 0, sentence: 0 }
+const markTypes = computed(() => props.markTypes || emptyMarkTypes)
 
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent]; menu: [e: MouseEvent] }>()
 
@@ -302,19 +317,43 @@ function formatDuration(seconds: number): string {
   text-overflow: ellipsis;
 }
 
-/* 规模指标行：词数 / 段落 / 标记 */
+/* 规模指标行：左侧词数/段落（图标），右侧分类标记（颜色区分） */
 .doc-stats {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: #8a8880;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   margin-bottom: 5px;
 }
-.doc-stats .doc-sep { color: #c9c6bc; }
+.stats-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.stat { display: inline-flex; align-items: center; gap: 3px; }
+.stat-ico { width: 9px; height: 11px; flex-shrink: 0; opacity: 0.75; }
+
+/* 标记：按类型用颜色圆点区分，右对齐 */
+.stats-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.mk {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  color: #8a8880;
+  font-variant-numeric: tabular-nums;
+}
+.mk::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.mk-word { color: #b0730f; }
+.mk-phrase { color: #17886a; }
+.mk-sentence { color: #c04a70; }
 
 .doc-meta {
   display: flex;

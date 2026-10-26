@@ -19,7 +19,25 @@ export default defineEventHandler(async (event) => {
     } catch {}
     return map
   }
-  const statsMap = await getStats()
+
+  /** 按「文章 × 标记类型」聚合，供卡片显示词/短语/句子的分类数量（热态约 360ms） */
+  async function getMarkTypes(): Promise<Map<string, { word: number; phrase: number; sentence: number }>> {
+    const map = new Map<string, { word: number; phrase: number; sentence: number }>()
+    try {
+      const rows = await queryAll(
+        'SELECT textId, type, COUNT(*) c FROM marks WHERE deletedAt IS NULL GROUP BY textId, type',
+      )
+      for (const r of rows) {
+        const cur = map.get(r.textId) || { word: 0, phrase: 0, sentence: 0 }
+        const t = String(r.type || 'word')
+        if (t === 'word' || t === 'phrase' || t === 'sentence') cur[t] = Number(r.c) || 0
+        map.set(r.textId, cur)
+      }
+    } catch {}
+    return map
+  }
+  // 统计与标记聚合并行，避免串行叠加等待
+  const [statsMap, markTypeMap] = await Promise.all([getStats(), getMarkTypes()])
 
   let rows: any[]
   /**
@@ -60,10 +78,14 @@ export default defineEventHandler(async (event) => {
       words: Number(r.words) || 0,
       paraCount: Number(r.paraCount) || 0,
       readCount: s.readCount || 0, lastReadAt: s.lastReadAt || '', markCount: s.markCount || 0,
+      markTypes: markTypeMap.get(r.id) || { word: 0, phrase: 0, sentence: 0 },
       duration, thumbnail, aiSegmented,
     }
   })
 
-  setCache(cacheKey, result)
+  // 该查询要扫 410 篇正文与 1 万条标记，单次约 2~3.5s；默认 10s 缓存会导致频繁全量重算，
+  // 故延长到 60s。增删改移动都会 clearCache()，新文章仍即时出现；
+  // 只有「新增标记/阅读次数」这类轻量变化最多滞后 1 分钟。
+  setCache(cacheKey, result, 60_000)
   return result
 })
