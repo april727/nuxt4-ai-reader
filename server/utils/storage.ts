@@ -16,6 +16,11 @@ const FILES_ROOT = join(DATA_ROOT, 'files')
 const TRASH_ROOT = join(DATA_ROOT, 'trash')
 const LEGACY_UPLOADS = join(DATA_ROOT, 'uploads')
 
+/** 文件根目录（files/）—— 读取层需要它把 R2 对象回填到本地 */
+export function filesRoot(): string {
+  return FILES_ROOT
+}
+
 /** 确保目录存在 */
 export function ensureDir(dir: string) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -249,6 +254,26 @@ export function moveToTrash(
 }
 
 // ---- 内部工具 ----
+
+/**
+ * 删掉某个内容在垃圾箱里的归档目录（永久删除时调用）。
+ *
+ * 之前永久删除只删数据库行、不删垃圾箱里的归档目录，
+ * 「永久删除」实际上是把文件从 files/ 搬到 trash/ 就再也没人管了 —— 磁盘只增不减。
+ */
+export function dropTrashOf(contentId: string): number {
+  let names: string[] = []
+  try { names = readdirSync(TRASH_ROOT) } catch { return 0 }
+  let n = 0
+  for (const name of names) {
+    if (!name.includes(contentId)) continue
+    try {
+      rmSync(join(TRASH_ROOT, name), { recursive: true, force: true })
+      n++
+    } catch {}
+  }
+  return n
+}
 
 function copyRecursive(src: string, dest: string) {
   ensureDir(dest)

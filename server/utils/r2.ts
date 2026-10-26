@@ -60,8 +60,35 @@ export async function r2GetStream(key: string) {
   return response.Body
 }
 
-/** 获取文件元数据（大小、类型等） */
-export async function r2Head(key: string) {
+/**
+ * 把整个对象读成 Buffer（用于「本地缺失时回填本地」）。
+ *
+ * 只给图片这类小对象用：超过 limit 直接放弃回填，避免把几百 MB 的视频读进内存。
+ */
+export async function r2GetBuffer(key: string, limit = 32 * 1024 * 1024): Promise<Buffer | null> {
+  const client = getClient()
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: bucket(), Key: key }))
+    const len = Number(res.ContentLength || 0)
+    if (len > limit) return null
+    const body: any = res.Body
+    if (!body) return null
+    if (typeof body.transformToByteArray === 'function') {
+      const arr = await body.transformToByteArray()
+      return Buffer.from(arr)
+    }
+    // 兜底：按流收集
+    const chunks: Buffer[] = []
+    for await (const c of body) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c))
+    const buf = Buffer.concat(chunks)
+    return buf.length > limit ? null : buf
+  } catch (e: any) {
+    if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null
+    throw e
+  }
+}
+
+/** 获取文件元数据（大小、类型等） */export async function r2Head(key: string) {
   const client = getClient()
   try {
     return await client.send(new HeadObjectCommand({

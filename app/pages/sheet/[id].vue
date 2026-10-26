@@ -94,6 +94,19 @@ const pageIdx = computed(() => Math.max(0, pages.value.findIndex(p => p.id === a
 const currentPage = computed(() => pages.value[pageIdx.value] || null)
 
 // ── 读取 ──
+/**
+ * 预取其余页面的图（本地磁盘 + immutable 缓存，代价很低）。
+ * 不做预取的话，翻页时才开始下载，多页试卷每翻一页都要等一次空白。
+ */
+function prefetchPages() {
+  for (const p of pages.value) {
+    if (!p?.url) continue
+    const img = new Image()
+    img.decoding = 'async'
+    img.src = p.url
+  }
+}
+
 onMounted(async () => {
   try {
     const row = await $fetch<any>(`/api/text/${id}`)
@@ -105,6 +118,7 @@ onMounted(async () => {
     pages.value = Array.isArray(row.segments) ? row.segments : []
     annotations.value = Array.isArray(row.annotations) ? row.annotations : []
     activePageId.value = pages.value[0]?.id || ''
+    prefetchPages()
   } catch {
     // 保持在空态，用户可以返回
   } finally {

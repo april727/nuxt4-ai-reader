@@ -18,6 +18,8 @@
         class="sheet-img"
         alt=""
         draggable="false"
+        decoding="async"
+        fetchpriority="high"
         @load="onImgLoad"
         @dragstart.prevent
       />

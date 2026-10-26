@@ -162,6 +162,7 @@ export async function syncFromTurso(existingDb?: any): Promise<PullResult> {
 
     // 写入
     ensureTable(localDb, name, columns)
+    await ensureColumns(localDb, turso, name, columns)
     insertRows(localDb, name, columns, toInsert)
     updateRows(localDb, name, columns, pkCol, toUpdate)
 
@@ -222,6 +223,57 @@ function ensureTable(localDb: any, table: string, columns: string[]) {
     const colDefs = columns.map(c => `${c} TEXT`).join(',')
     localDb.run(`CREATE TABLE IF NOT EXISTS ${table} (${colDefs})`)
   } catch {}
+}
+
+/**
+ * 补齐本地表缺失的列。
+ *
+ * 为什么必须有：拉取时列清单是从 Turso `SELECT *` 动态取的，
+ * 云端加了列（reviewIntervalDays、archivedAt…）而本地 sql.js 的建表语句没跟上，
+ * INSERT 就会报 `table texts has no column named xxx` ——
+ * 表现为整个「云端快照」备份静默失败，快照一直停在旧版本，
+ * 而日志里只有一行不起眼的 SQL 错误。
+ *
+ * 因此不依赖手写建表语句，直接按云端的 pragma 补列（沿用类型与默认值）。
+ */
+async function ensureColumns(localDb: any, turso: any, table: string, remoteColumns: string[]) {
+  const local = new Set<string>()
+  try {
+    const st = localDb.prepare(`PRAGMA table_info(${table})`)
+    while (st.step()) local.add(String(st.getAsObject().name))
+    st.free()
+  } catch {
+    return
+  }
+  if (!local.size) return
+
+  const missing = remoteColumns.filter(c => !local.has(c))
+  if (!missing.length) return
+
+  const meta = new Map<string, { type: string; dflt: string }>()
+  try {
+    const r = await turso.execute(`SELECT name, type, dflt_value FROM pragma_table_info('${table}')`)
+    for (const row of r.rows as any[]) {
+      const name = String(row.name ?? row[0] ?? '')
+      const type = String(row.type ?? row[1] ?? 'TEXT')
+      const dflt = row.dflt_value ?? row[2] ?? null
+      if (name) meta.set(name, { type, dflt: dflt == null ? '' : String(dflt) })
+    }
+  } catch {
+    /* 拿不到类型就按 TEXT 补，能读能写即可 */
+  }
+
+  for (const col of missing) {
+    const m = meta.get(col)
+    const type = (m?.type || 'TEXT').toUpperCase()
+    const def = m?.dflt ? ` DEFAULT ${m.dflt}` : ''
+    try {
+      localDb.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}${def}`)
+      console.log(`[sync] ${table} 补列 ${col} ${type}${def}`)
+    } catch (e: any) {
+      console.warn(`[sync] ${table} 补列失败 ${col}: ${e?.message || e}`)
+    }
+  }
 }
 
 function insertRows(localDb: any, table: string, columns: string[], rows: any[][]) {

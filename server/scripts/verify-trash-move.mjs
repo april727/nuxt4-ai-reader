@@ -154,7 +154,7 @@ check('A 永久删除后本地目录已移走', !dirExists(aDir))
 const aRest = await fileEventuallyGone(aKey)
 check('A 永久删除后图片两边都取不到', !aRest.alive,
   `HTTP ${aRest.status}${aRest.status === 302 ? '（R2 对象未删）' : aRest.status === 200 ? '（本地文件未搬）' : ''}`)
-check('A 垃圾箱里有归档目录', readdirSync(TRASH).some(n => n.includes(a.id)))
+check('A 永久删除后垃圾箱无残留（不留副本）', !readdirSync(TRASH).some(n => n.includes(a.id)))
 
 // ══ 用例 B：移动到别的文件夹后再删除（本次修复的核心）══
 console.log('\n── B. 移动后删除 ──')
@@ -176,7 +176,7 @@ check('B 目标 folder 下也没有残留', !dirExists(newDir))
 const bRest = await fileEventuallyGone(bKey)
 check('B 永久删除后图片两边都取不到（修复点）', !bRest.alive,
   `HTTP ${bRest.status}${bRest.status === 302 ? '（R2 对象未删）' : bRest.status === 200 ? '（本地文件未搬）' : ''}`)
-check('B 垃圾箱里有归档目录', readdirSync(TRASH).some(n => n.includes(b.id)))
+check('B 永久删除后垃圾箱无残留（不留副本）', !readdirSync(TRASH).some(n => n.includes(b.id)))
 
 // 清理
 dropTrashOf(a.id)

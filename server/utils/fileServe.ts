@@ -14,12 +14,12 @@
  *
  * 本地不存在时（云部署换机、历史文件只在 R2）自动回落 R2，行为与原来一致。
  */
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, statSync, writeFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { createError, getHeader, setHeader, setResponseStatus, sendRedirect } from 'h3'
 import type { H3Event } from 'h3'
-import { resolveFilePath } from './storage'
-import { useR2, r2Head, r2GetStream, r2SignedUrl } from './r2'
+import { resolveFilePath, filesRoot, ensureDir } from './storage'
+import { useR2, r2Head, r2GetStream, r2GetBuffer, r2SignedUrl } from './r2'
 
 const MIME: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -49,20 +49,64 @@ function mimeOf(name: string) {
   return MIME[path.extname(name).toLowerCase()] || 'application/octet-stream'
 }
 
+/** 回填上限：超过这个体积的对象不回填本地，直接流代理（视频等大文件） */
+const HYDRATE_MAX = 32 * 1024 * 1024
+
+/**
+ * 本地缺失时的回填：从 R2 取一次，写到本地 files/ 下，之后都走本地。
+ *
+ * 为什么必须回填而不是像原来那样 302 给浏览器：
+ * 302 会把「一次图片请求」变成「浏览器 → 境外 R2 的跨境连接」，
+ * 首屏 3~5 张图就是 3~5 个跨境 TLS 握手，慢且不稳定（R2 抖动时整页卡住）。
+ * 回填后：第一次由服务端取（一次连接、可复用），第二次起纯本地磁盘。
+ *
+ * 写入用 .part 临时名 + rename，避免进程中断留下半截文件，
+ * 半截文件会被 statSync().size > 0 判定为"本地命中"，那才是真正难查的问题。
+ */
+async function hydrateFromR2(name: string): Promise<string | null> {
+  if (!name.includes('/')) return null // 旧格式（无目录）不做回填，交给原回退逻辑
+  const buf = await r2GetBuffer(name, HYDRATE_MAX)
+  if (!buf || !buf.length) return null
+  const target = path.join(filesRoot(), name)
+  ensureDir(path.dirname(target))
+  const tmp = `${target}.part`
+  writeFileSync(tmp, buf)
+  renameSync(tmp, target)
+  return target
+}
+
 export async function serveStoredFile(event: H3Event, name: string) {
   const ext = path.extname(name).toLowerCase()
   const mime = mimeOf(name)
   const isImage = IMAGE_EXTS.has(ext)
 
   // ── 1) 本地优先 ──
-  const localPath = resolveFilePath(name)
+  let localPath = resolveFilePath(name)
   let size = 0
   try {
     size = existsSync(localPath) ? statSync(localPath).size : 0
   } catch {
     size = 0
   }
+
+  // 本地没有 → 从 R2 回填一次，回填成功就完全走下面的本地分支
+  let hydrated = false
+  if (size === 0 && useR2()) {
+    try {
+      const backfilled = await hydrateFromR2(name)
+      if (backfilled) {
+        localPath = backfilled
+        size = statSync(backfilled).size
+        hydrated = true
+      }
+    } catch (e: any) {
+      console.warn(`[file] 回填本地失败，改用 R2 直读: ${name} (${e?.message || e})`)
+    }
+  }
+
   if (size > 0) {
+    // 排查用：local = 本来就在本地；r2-cache = 这次刚从 R2 取回来并缓存到本地
+    setHeader(event, 'X-File-Source', hydrated ? 'r2-cache' : 'local')
     setHeader(event, 'Accept-Ranges', 'bytes')
     setHeader(event, 'Content-Type', mime)
     // 图片按内容寻址，永远不变 → 让浏览器强缓存，二次打开直接读磁盘缓存（0 请求）
@@ -97,15 +141,17 @@ export async function serveStoredFile(event: H3Event, name: string) {
     return createReadStream(localPath)
   }
 
-  // ── 2) R2 兜底 ──
+  // ── 2) R2 兜底（回填失败才会走到：对象过大、或回填时网络抖动）
+  //    原则：图片一律由服务端直读，不再 302 把浏览器甩到境外 R2 —— 那是首屏最慢的一环。
   if (useR2()) {
     try {
       const head = await r2Head(name)
       if (head) {
-        if (MEDIA_EXTS.has(ext)) {
+        if (MEDIA_EXTS.has(ext) || isImage) {
           setHeader(event, 'Content-Type', mime)
           setHeader(event, 'Content-Length', head.ContentLength!)
           setHeader(event, 'Accept-Ranges', 'bytes')
+          setHeader(event, 'X-File-Source', 'r2-proxy')
           return r2GetStream(name)
         }
         const signedUrl = await r2SignedUrl(name, 3600)

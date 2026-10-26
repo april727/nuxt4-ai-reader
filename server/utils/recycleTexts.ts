@@ -1,5 +1,5 @@
 import { queryOne, runQuery, deleteRowsFromTurso } from './db'
-import { moveToTrash } from './storage'
+import { moveToTrash, dropTrashOf } from './storage'
 import { useR2, r2Delete } from './r2'
 import { cleanupImages, extractImageUrls } from './imageCleanup'
 import { pendingR2Put } from './imageStore'
@@ -72,6 +72,8 @@ export async function permanentDeleteText(id: string): Promise<{ ok: boolean }> 
       if (row.cover) detachedImages.push(row.cover)
     } catch {}
     moveToTrash(row.folder || 'default', id, row.title || id)
+    // 永久删除不能把归档留在 trash/ 里：否则文件永远占着磁盘，只是换了个目录
+    dropTrashOf(id)
     await deleteR2Keys(collectTextKeys(row))
   }
 
