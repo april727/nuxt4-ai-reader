@@ -25,7 +25,6 @@ for (const line of envText.split(/\r?\n/)) {
 }
 
 const TOKEN = createHash('sha256').update(process.env.SITE_PASSWORD || '').digest('hex')
-const turso = createClient({ url: process.env.TURSO_URL, authToken: process.env.TURSO_AUTH_TOKEN })
 
 async function api(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -39,13 +38,10 @@ async function api(path, opts = {}) {
   return body
 }
 
+// 数据库连接跟随 .env 的引擎（服务端本地为主时脚本也必须改本地库）
 async function dbAll(sql, args = []) {
-  const r = await turso.execute({ sql, args })
-  return r.rows.map((row) => {
-    const o = {}
-    r.columns.forEach((c, i) => { o[c] = row[i] })
-    return o
-  })
+  const { q } = await import('./_testdb.mjs')
+  return q(sql, args)
 }
 
 const results = []

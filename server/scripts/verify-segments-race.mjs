@@ -28,8 +28,9 @@ const pw = env.SITE_PASSWORD || ''
 const token = (await import('node:crypto')).createHash('sha256').update(pw).digest('hex')
 const cookie = `auth_token=${token}`
 
-const turso = createClient({ url: env.TURSO_URL, authToken: env.TURSO_AUTH_TOKEN })
-const q = async (sql, args = []) => (await turso.execute({ sql, args })).rows
+// 数据库连接跟随 .env 的引擎：服务端改成「本地为主」后，
+// 脚本若还写 Turso，接口就看不见测试数据（表现为莫名其妙的 404）。
+const { q } = await import('./_testdb.mjs')
 
 async function api(path, opts = {}) {
   const res = await fetch(BASE + path, {

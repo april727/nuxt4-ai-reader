@@ -1,8 +1,89 @@
 import initSqlJs from 'sql.js'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, statSync, readdirSync } from 'node:fs'
 import path from 'node:path'
+import { getLocalDb, asSqljsCompat } from './db-local'
 
+/**
+ * 数据库后端选择
+ *
+ *   USE_TURSO=true   → 全部读写直连云端（应急模式：断网/异地/换机时用）
+ *   USE_TURSO=false  → 本地为主（默认）
+ *
+ * 本地为主时再分两级：
+ *   1. node:sqlite（真 SQLite 文件 + WAL）—— 正常情况走这条，读写微秒级
+ *   2. sql.js（WASM 内存库）—— Node < 22 的兜底，行为与历史版本一致
+ *
+ * 云端在这里只承担「异地备份」角色：写完异步镜像上去，不要求实时；
+ * 本地永远不会为了等云端而阻塞请求。
+ */
 const USE_TURSO = process.env['USE_TURSO'] === 'true'
+
+// ── 本地库的首次初始化钩子 ──────────────────────────────────
+/**
+ * 本地成为唯一真相源之后，必须有本地兜底快照：
+ * 云端镜像最多滞后 10 分钟，而本地文件一旦损坏（断电、误删、磁盘故障）
+ * 就只能退回云端重拉。每天留一份 91MB 的快照，恢复成本从「几分钟跨境拉取」
+ * 降到「拷一个文件」。
+ *
+ * VACUUM INTO 实测 95MB 约 630ms，且生成的是整理过的独立文件，
+ * 可以直接改名顶上主库，也可以被 sql.js / DB 工具直接打开。
+ */
+const SNAPSHOT_KEEP = Number(process.env['LOCAL_SNAPSHOT_KEEP'] || 3)
+
+let housekeepingStarted = false
+let localHandle: Promise<any> | null = null
+
+/** 取本地主库句柄，并在首次取用时启动后台维护任务 */
+function localDb(): Promise<any> {
+  if (!localHandle) localHandle = getLocalDb()
+  if (!housekeepingStarted) {
+    housekeepingStarted = true
+    localHandle.then((db) => { if (db) scheduleLocalHousekeeping() }).catch(() => { /* ignore */ })
+  }
+  return localHandle
+}
+
+function scheduleLocalHousekeeping() {
+  if (USE_TURSO) return
+
+  const snapshot = async () => {
+    const db = await getLocalDb()
+    if (!db) return
+    const dir = path.resolve('server/data/backups')
+    try {
+      mkdirSync(dir, { recursive: true })
+      const d = new Date()
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+      const file = path.join(dir, `reader-${stamp}.db`)
+      if (existsSync(file)) return  // 今天已经备过
+
+      const t0 = Date.now()
+      db.exportTo(file)
+      console.log(`[snapshot] 本地快照 reader-${stamp}.db ${(statSync(file).size / 1024 / 1024).toFixed(0)}MB ${Date.now() - t0}ms`)
+
+      // 只保留最近 N 份，避免长期堆积把磁盘吃满
+      const all = readdirSync(dir).filter(f => /^reader-\d{8}\.db$/.test(f)).sort()
+      while (all.length > SNAPSHOT_KEEP) {
+        const old = all.shift()!
+        try { unlinkSync(path.join(dir, old)); console.log(`[snapshot] 清理旧快照 ${old}`) } catch { /* ignore */ }
+      }
+    } catch (e: any) {
+      console.warn(`[snapshot] 本地快照失败: ${e.message}`)
+    }
+  }
+
+  // 启动后 45 秒再跑：避开首屏请求高峰（VACUUM 期间主库读会被占住约 0.6 秒）
+  setTimeout(() => { void snapshot() }, 45_000).unref?.()
+  // 之后每 6 小时检查一次「今天备过没」，跨天自然补上
+  setInterval(() => { void snapshot() }, 6 * 60 * 60_000).unref?.()
+
+  // 启动后补一次云端镜像：距上次镜像超过 1 小时说明中间可能关过站，
+  // 那次没来得及推送的改动在这里补上。
+  setTimeout(() => {
+    const last = mirrorState.lastAt ? Date.parse(mirrorState.lastAt) : 0
+    if (Date.now() - last > 60 * 60_000) void runMirror()
+  }, 25_000).unref?.()
+}
 
 // ==========================================================
 //  Turso 分支（云端）
@@ -320,36 +401,136 @@ function scheduleSyncToTurso() {
   }, 30_000)
 }
 
+// ── 本地主库 → Turso 的异步镜像 ─────────────────────────────
+/**
+ * 定位是「异地备份」，不是「双写」：
+ *   - 本地写完立刻返回，不等云端（等一等就是几百毫秒到几秒的跨境往返）
+ *   - 多次写合并成一次推送，防抖 90 秒
+ *   - 串行执行，绝不并发 batch 打云端
+ *   - 另有一轮 10 分钟兜底，避免「一直有零星写入 → 防抖永不触发」导致云端长期落后
+ *
+ * 代价：云端最多滞后约 10 分钟。本地是唯一真相源，这个滞后无所谓。
+ */
+const MIRROR_DEBOUNCE_MS = 90_000
+const MIRROR_FALLBACK_MS = 10 * 60_000
+/** 每隔这么久强制做一次全量比对，兜住「时间列没被更新」导致的漏推 */
+const MIRROR_FULL_INTERVAL_MS = 24 * 60 * 60_000
+
+const MIRROR_STATE_PATH = path.resolve('server/data/.mirror-state.json')
+interface MirrorState { lastAt?: string; lastFullAt?: string }
+let mirrorState: MirrorState = (() => {
+  try { return JSON.parse(readFileSync(MIRROR_STATE_PATH, 'utf-8')) } catch { return {} }
+})()
+function saveMirrorState() {
+  try { writeFileSync(MIRROR_STATE_PATH, JSON.stringify(mirrorState)) } catch { /* 状态文件丢了顶多退化成全量，不影响正确性 */ }
+}
+
+let mirrorTimer: ReturnType<typeof setTimeout> | null = null
+let mirrorHourly: ReturnType<typeof setInterval> | null = null
+let mirrorRunning = false
+let mirrorPending = false
+
+export function scheduleMirrorToTurso() {
+  if (USE_TURSO) return
+  if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
+  mirrorPending = true
+  if (mirrorTimer) clearTimeout(mirrorTimer)
+  mirrorTimer = setTimeout(() => { void runMirror() }, MIRROR_DEBOUNCE_MS)
+
+  if (!mirrorHourly) {
+    mirrorHourly = setInterval(() => {
+      if (mirrorPending) void runMirror()
+    }, MIRROR_FALLBACK_MS)
+    // 定时器不该拖住进程退出
+    mirrorHourly.unref?.()
+  }
+}
+
+/** 立即执行一次镜像（同步按钮 / 关站前调用）。forceFull=true 时做全量比对 */
+export async function runMirrorNow(forceFull = false): Promise<{ ok: boolean; inserted: number; updated: number; error?: string }> {
+  if (USE_TURSO) return { ok: true, inserted: 0, updated: 0 }
+  if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) {
+    return { ok: false, inserted: 0, updated: 0, error: 'Turso 未配置' }
+  }
+  if (mirrorTimer) { clearTimeout(mirrorTimer); mirrorTimer = null }
+  return runMirror(forceFull)
+}
+
+async function runMirror(forceFull = false): Promise<{ ok: boolean; inserted: number; updated: number; error?: string }> {
+  if (mirrorRunning) return { ok: false, inserted: 0, updated: 0, error: '镜像进行中' }
+  mirrorRunning = true
+  mirrorPending = false
+  const startedAt = new Date().toISOString()
+  const t0 = Date.now()
+
+  // 首次没有状态、或距上次全量超过 24 小时 → 本次走全量
+  const lastFull = mirrorState.lastFullAt ? Date.parse(mirrorState.lastFullAt) : 0
+  const needFull = forceFull || !mirrorState.lastAt || (Date.now() - lastFull > MIRROR_FULL_INTERVAL_MS)
+  const since = needFull ? null : mirrorState.lastAt
+
+  try {
+    const { syncToTurso } = await import('./sync-turso')
+    // 先传播删除（syncToTurso 只增不删），再推新增/变更
+    if (pendingCloudOps.length) await flushCloudOps()
+    const local = await localDb()
+    const result = local
+      ? await syncToTurso(asSqljsCompat(local), { since })
+      : await syncToTurso(undefined, { since })
+
+    // 用「开始时间」而非结束时间：镜像期间新写入的行会在下一轮被重新推送（重复推送无害），
+    // 用结束时间则会把这些行永久漏掉。
+    mirrorState.lastAt = startedAt
+    if (needFull) mirrorState.lastFullAt = startedAt
+    saveMirrorState()
+
+    if (result.totalInserted > 0 || result.totalUpdated > 0) {
+      const parts = Object.entries(result.tables)
+        .filter(([, v]) => v.inserted > 0 || v.updated > 0)
+        .map(([t, v]) => `${t}(+${v.inserted} ~${v.updated})`)
+        .join(', ')
+      console.log(`[mirror] 云端镜像完成 ${Date.now() - t0}ms (${needFull ? '全量' : '增量'}) | +${result.totalInserted} ~${result.totalUpdated} | ${parts}`)
+    } else {
+      console.log(`[mirror] 云端镜像完成 ${Date.now() - t0}ms (${needFull ? '全量' : '增量'}) | 无变化`)
+    }
+    return { ok: true, inserted: result.totalInserted, updated: result.totalUpdated }
+  } catch (e: any) {
+    mirrorPending = true  // 失败留待下次重试
+    console.error(`[mirror] 云端镜像失败: ${e.message}`)
+    return { ok: false, inserted: 0, updated: 0, error: e.message }
+  } finally {
+    mirrorRunning = false
+  }
+}
+
 let pullTimer: ReturnType<typeof setInterval> | null = null
 
-/** 每 60 秒从 Turso 拉取新数据到本地 */
+/**
+ * 定时从 Turso 拉取。
+ *
+ * 本地为主之后**默认关闭**：每 60 秒做一次全表比对本身就是纯浪费
+ * （本地才是真相源，云端只会比本地旧），而且 95MB 数据的比对会抢磁盘 IO。
+ * 需要「换机/在别处改过」时手动点同步（POST /api/sync/from-turso）。
+ */
 function schedulePullFromTurso() {
-  if (USE_TURSO) return  // Turso 模式下不需要
+  if (USE_TURSO) return
+  if (process.env['AUTO_PULL_FROM_TURSO'] !== 'true') return
   if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
-  if (pullTimer) return  // 已经在运行
+  if (pullTimer) return
 
   pullTimer = setInterval(async () => {
     try {
-      // 拿到主应用的数据库实例（不重新加载磁盘文件）
       const mainDb = await getSqljsDb()
-      // 先把待保存的改动刷到磁盘，避免同步覆盖
       if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
       if (existsSync(DB_PATH)) {
         const data = mainDb.export()
         writeFileSync(DB_PATH, Buffer.from(data))
       }
-      // 直接操作主数据库实例，拉取结果立即可见
       const { syncFromTurso } = await import('./sync-from-turso')
       const result = await syncFromTurso(mainDb)
-      // 同步完成后写盘
       if (result.totalInserted > 0 || result.totalUpdated > 0) {
         const data = mainDb.export()
         writeFileSync(DB_PATH, Buffer.from(data))
-        const parts = Object.entries(result.tables)
-          .filter(([, v]) => v.inserted > 0 || v.updated > 0)
-          .map(([t, v]) => `${t}(+${v.inserted} ~${v.updated})`)
-          .join(', ')
-        console.log(`[auto-pull] 总计 +${result.totalInserted} ~${result.totalUpdated} | ${parts}`)
+        console.log(`[auto-pull] +${result.totalInserted} ~${result.totalUpdated}`)
       }
     } catch (e: any) {
       console.error(`[auto-pull] 拉取失败: ${e.message}`)
@@ -415,17 +596,29 @@ function saveDbSqljs() {
 //  统一导出（接口不变）
 // ==========================================================
 export async function getDb() {
-  return USE_TURSO ? getTursoDb() : getSqljsDb()
+  if (USE_TURSO) return getTursoDb()
+  const local = await localDb()
+  if (local) return local
+  return getSqljsDb()
 }
 
 export async function saveDb() {
-  if (!USE_TURSO) saveDbSqljs()
+  // node:sqlite 是 WAL，写入即持久化，无需整库 dump
+  if (USE_TURSO) return
+  if (await localDb()) return
+  saveDbSqljs()
 }
 
 export async function runQuery(sql: string, params?: any[]) {
   if (USE_TURSO) {
     const db = await getTursoDb()
     return db.execute({ sql, args: params || [] })
+  }
+  const local = await localDb()
+  if (local) {
+    const r = local.run(sql, params)
+    scheduleMirrorToTurso()
+    return r
   }
   const result = (await getSqljsDb()).run(sql, params)
   saveDbSqljs()  // 每次写操作后立即持久化到磁盘
@@ -442,6 +635,12 @@ export async function runQueryCount(sql: string, params?: any[]): Promise<number
     const db = await getTursoDb()
     const r = await db.execute({ sql, args: params || [] })
     return Number(r?.rowsAffected || 0)
+  }
+  const local = await localDb()
+  if (local) {
+    const r = local.run(sql, params)
+    scheduleMirrorToTurso()
+    return r.changes
   }
   const db = await getSqljsDb()
   db.run(sql, params)
@@ -461,6 +660,8 @@ export async function queryAll(sql: string, params?: any[]): Promise<any[]> {
       return obj
     })
   }
+  const local = await localDb()
+  if (local) return local.all(sql, params)
   const database = await getSqljsDb()
   const stmt = database.prepare(sql)
   if (params) stmt.bind(params)
@@ -471,49 +672,83 @@ export async function queryAll(sql: string, params?: any[]): Promise<any[]> {
 }
 
 export async function queryOne(sql: string, params?: any[]): Promise<any | null> {
+  if (!USE_TURSO) {
+    const local = await localDb()
+    if (local) return local.get(sql, params)
+  }
   const rows = await queryAll(sql, params)
   return rows[0] || null
 }
 
 /**
- * 从 Turso 直接删除行（本地 sql.js 模式删除时调用）。
- * 防止云端残留旧数据，被定时拉取（sync-from-turso）重新拉回本地。
- * Turso 模式下删除已直接作用于云端，无需调用。
+ * 待推送到云端的删除指令。
+ *
+ * syncToTurso 的原则是「只增不删」，删除必须单独传播，
+ * 否则下次从云端拉取会把已删行原样拉回来。
+ * 这里不立刻发请求（一次跨境往返几百毫秒，还会卡住接口），
+ * 而是攒进队列，交给异步镜像统一 flush。
+ */
+const pendingCloudOps: Array<{ sql: string; args: any[] }> = []
+
+/**
+ * 从 Turso 删除行（本地模式删除时调用）。
+ * 入队异步执行，不阻塞当前请求。
  */
 export async function deleteRowsFromTurso(table: string, pkCol: string, values: string[]) {
   if (USE_TURSO) return
   if (!values.length) return
   if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
-  try {
-    const { createClient } = await import('@libsql/client')
-    const turso = createClient({ url: process.env['TURSO_URL'], authToken: process.env['TURSO_AUTH_TOKEN'] })
-    for (const v of values) {
-      await turso.execute({ sql: `DELETE FROM ${table} WHERE ${pkCol}=?`, args: [v] })
-    }
-  } catch (e: any) {
-    console.warn(`[delete-sync] 从 Turso 删除 ${table}/${values.join(',')} 失败: ${e.message}`)
+  for (const v of values) {
+    pendingCloudOps.push({ sql: `DELETE FROM ${table} WHERE ${pkCol}=?`, args: [v] })
   }
+  scheduleMirrorToTurso()
 }
 
 /**
- * 在 Turso 上执行任意 SQL（本地 sql.js 模式需要把删除/写操作同步到云端时用）。
- * Turso 模式下本地操作已直接作用于云端，无需调用。
+ * 在 Turso 上执行任意 SQL（本地模式需要把写操作同步到云端时用）。
+ * 同样入队，不阻塞。
  */
 export async function runOnTurso(sql: string, params: any[] = []) {
   if (USE_TURSO) return
   if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
-  try {
-    const { createClient } = await import('@libsql/client')
-    const turso = createClient({ url: process.env['TURSO_URL'], authToken: process.env['TURSO_AUTH_TOKEN'] })
-    await turso.execute({ sql, args: params })
-  } catch (e: any) {
-    console.warn(`[sync] Turso 执行失败: ${e.message}`)
-  }
+  pendingCloudOps.push({ sql, args: params })
+  scheduleMirrorToTurso()
 }
 
-/** 获取主应用的 sql.js 数据库实例（供同步模块直连用） */
+/** 把队列里的删除/写指令推送到云端；失败则留在队列里下次重试 */
+export async function flushCloudOps(): Promise<{ ok: number; failed: number }> {
+  if (!pendingCloudOps.length) return { ok: 0, failed: 0 }
+  const url = process.env['TURSO_URL']
+  const token = process.env['TURSO_AUTH_TOKEN']
+  if (!url || !token) return { ok: 0, failed: pendingCloudOps.length }
+
+  const batch = pendingCloudOps.splice(0, pendingCloudOps.length)
+  let ok = 0
+  let failed = 0
+  try {
+    const { createClient } = await import('@libsql/client')
+    const turso = createClient({ url, authToken: token })
+    const r = await turso.batch(batch.map(op => ({ sql: op.sql, args: op.args })), 'write')
+    ok = r.length
+  } catch (e: any) {
+    // 整批失败就整批回队，避免删一半
+    pendingCloudOps.unshift(...batch)
+    failed = batch.length
+    console.warn(`[mirror] 删除指令推送失败（${failed} 条，稍后重试）: ${e.message}`)
+  }
+  return { ok, failed }
+}
+
+/** 获取本地数据库句柄（供同步模块直连用） */
 export async function getSqljsHandle(): Promise<any> {
+  const local = await localDb()
+  if (local) return asSqljsCompat(local)
   return getSqljsDb()
+}
+
+/** 本地主库是否为 node:sqlite（true 时不能再用「整库 dump 覆盖文件」的方式持久化） */
+export async function isNativeLocal(): Promise<boolean> {
+  return (await localDb()) !== null
 }
 
 /** 强制主应用下次查询时从磁盘重新加载数据库 */

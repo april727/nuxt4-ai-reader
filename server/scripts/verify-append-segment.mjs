@@ -28,8 +28,8 @@ for (const line of envText.split(/\r?\n/)) {
 const BASE = process.env.TEST_BASE || 'http://localhost:3000'
 const cookie = `auth_token=${createHash('sha256').update(env.SITE_PASSWORD || '').digest('hex')}`
 
-const turso = createClient({ url: env.TURSO_URL, authToken: env.TURSO_AUTH_TOKEN })
-const q = async (sql, args = []) => (await turso.execute({ sql, args })).rows
+// 数据库连接跟随 .env 的引擎（服务端本地为主时脚本也必须改本地库）
+const { q } = await import('./_testdb.mjs')
 
 async function api(path, opts = {}) {
   const res = await fetch(BASE + path, {

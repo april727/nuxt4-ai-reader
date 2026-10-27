@@ -41,6 +41,8 @@ check-explain.js
 # 运行时数据与缓存（数据库快照、发音缓存、本地 prompt 配置）
 server/data/*.db
 server/data/*.db-*
+server/data/*.db.bak-*
+server/data/.mirror-state.json
 server/data/pronounce-cache.json
 server/data/prompts.local.json
 server/data/*.local.json

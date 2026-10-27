@@ -384,21 +384,41 @@ const filterOptions = [
 // useAsyncData 服务端结果不会序列化到首屏，导致首次进入书架/侧栏为空、点一下文件夹才刷新。
 // getCachedData：返回首页时立即复用上次的客户端缓存（秒显），挂载后再后台静默刷新保鲜。
 const nuxtApp = useNuxtApp()
-function clientCached(key: string) {
+/**
+ * 缓存只用于「首帧占位」，refresh 时必须放行真实请求。
+ * 不判断 cause 的话，主动刷新（新增/删除文章后的 loadBooks）也会命中缓存，
+ * 书架就再也不更新了 —— 这是接 localStorage 快照时最容易踩的坑。
+ */
+function clientCached(key: string, _app?: any, ctx?: { cause?: string }) {
+  if (ctx?.cause === 'refresh' || ctx?.cause === 'hmr') return undefined
   return (nuxtApp.payload.data as Record<string, any>)?.[key] ?? (nuxtApp.static.data as Record<string, any>)?.[key]
 }
 
-const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', () =>
-  $fetch<Folder[]>('/api/folder/list'), {
-    default: () => [] as Folder[], server: false, lazy: true,
-    getCachedData: (key) => clientCached(key),
-  }
-)
+// 刷新页面时 payload 是空的，先把上次的列表从 localStorage 灌回去，
+// 这样首帧就能渲染书架，不必等接口。本地为主之后接口本身已很快，
+// 但「有快照 → 零等待」和「没有 → 至少一个往返」的体感差别仍然明显。
+primeSnapshots(nuxtApp, ['folders', `books-${activeFolder.value}`])
+
+const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', async () => {
+  const list = await $fetch<Folder[]>('/api/folder/list')
+  saveSnapshot('folders', list)
+  // 侧栏文件夹可能在别处新增，顺手把各文件夹的书架快照也预热好，切文件夹时零等待
+  primeSnapshots(nuxtApp, list.map(f => `books-${f.id}`))
+  return list
+}, {
+  default: () => [] as Folder[], server: false, lazy: true,
+  getCachedData: (key, app, ctx) => clientCached(key, app, ctx),
+})
 
 const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncData(
   () => `books-${activeFolder.value}`,
-  () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
-  { watch: [activeFolder], default: () => [] as BookItem[], server: false, lazy: true, getCachedData: (key) => clientCached(key) }
+  async () => {
+    const folder = activeFolder.value
+    const list = await $fetch<BookItem[]>(`/api/text/list?folder=${folder}`)
+    saveSnapshot(`books-${folder}`, list)
+    return list
+  },
+  { watch: [activeFolder], default: () => [] as BookItem[], server: false, lazy: true, getCachedData: (key, app, ctx) => clientCached(key, app, ctx) }
 )
 
 const folderCounts = ref<Record<string, number>>({})
