@@ -78,10 +78,11 @@ function scheduleLocalHousekeeping() {
   setInterval(() => { void snapshot() }, 6 * 60 * 60_000).unref?.()
 
   // 启动后补一次云端镜像：距上次镜像超过 1 小时说明中间可能关过站，
-  // 那次没来得及推送的改动在这里补上。
+  // 那次没来得及推送的改动在这里补上；另外只要有上次遗留的删除指令，
+  // 不管隔了多久都立刻补推 —— 删除漏推会让云端永久留下一份本地已删的数据。
   setTimeout(() => {
     const last = mirrorState.lastAt ? Date.parse(mirrorState.lastAt) : 0
-    if (Date.now() - last > 60 * 60_000) void runMirror()
+    if (pendingCloudOps.length || Date.now() - last > 60 * 60_000) void runMirror()
   }, 25_000).unref?.()
 }
 
@@ -691,6 +692,44 @@ export async function queryOne(sql: string, params?: any[]): Promise<any | null>
 const pendingCloudOps: Array<{ sql: string; args: any[] }> = []
 
 /**
+ * 删除指令必须落盘。
+ *
+ * 镜像有 90 秒防抖，队列原本只在内存里 —— 只要在这 90 秒内重启服务
+ * （改代码、关站、崩溃都算），删除指令就永久蒸发。
+ * 表现是：本地已经删掉的文章，云端还在；哪天用云端恢复，删掉的东西又全回来。
+ * 实测就是这么漏掉 4 条测试数据（含一条 id 为 NULL 的坏行）。
+ */
+const PENDING_OPS_FILE = path.join(DB_DIR, '.pending-cloud-ops.json')
+
+function savePendingOps() {
+  try {
+    if (!pendingCloudOps.length) {
+      if (existsSync(PENDING_OPS_FILE)) unlinkSync(PENDING_OPS_FILE)
+      return
+    }
+    writeFileSync(PENDING_OPS_FILE, JSON.stringify(pendingCloudOps))
+  } catch (e: any) {
+    console.warn(`[mirror] 删除指令落盘失败: ${e.message}`)
+  }
+}
+
+function loadPendingOps() {
+  try {
+    if (!existsSync(PENDING_OPS_FILE)) return
+    const arr = JSON.parse(readFileSync(PENDING_OPS_FILE, 'utf-8'))
+    if (Array.isArray(arr) && arr.length) {
+      pendingCloudOps.push(...arr)
+      console.log(`[mirror] 恢复 ${arr.length} 条上次没推完的云端指令`)
+    }
+  } catch (e: any) {
+    console.warn(`[mirror] 读取待推送队列失败: ${e.message}`)
+  }
+}
+
+// 启动即接管上次遗留的删除指令（本地模式才有云端镜像）
+if (!USE_TURSO) loadPendingOps()
+
+/**
  * 从 Turso 删除行（本地模式删除时调用）。
  * 入队异步执行，不阻塞当前请求。
  */
@@ -701,6 +740,7 @@ export async function deleteRowsFromTurso(table: string, pkCol: string, values: 
   for (const v of values) {
     pendingCloudOps.push({ sql: `DELETE FROM ${table} WHERE ${pkCol}=?`, args: [v] })
   }
+  savePendingOps()
   scheduleMirrorToTurso()
 }
 
@@ -712,6 +752,7 @@ export async function runOnTurso(sql: string, params: any[] = []) {
   if (USE_TURSO) return
   if (!process.env['TURSO_URL'] || !process.env['TURSO_AUTH_TOKEN']) return
   pendingCloudOps.push({ sql, args: params })
+  savePendingOps()
   scheduleMirrorToTurso()
 }
 
@@ -736,6 +777,8 @@ export async function flushCloudOps(): Promise<{ ok: number; failed: number }> {
     failed = batch.length
     console.warn(`[mirror] 删除指令推送失败（${failed} 条，稍后重试）: ${e.message}`)
   }
+  // 成功则文件被清掉；失败则把回队后的完整内容重新落盘
+  savePendingOps()
   return { ok, failed }
 }
 
