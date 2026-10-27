@@ -390,7 +390,14 @@ const nuxtApp = useNuxtApp()
  * 书架就再也不更新了 —— 这是接 localStorage 快照时最容易踩的坑。
  */
 function clientCached(key: string, _app?: any, ctx?: { cause?: string }) {
-  if (ctx?.cause === 'refresh' || ctx?.cause === 'hmr') return undefined
+  // 白名单而不是黑名单：只有「首屏第一帧」允许吃缓存，其余一律真请求。
+  //
+  // 之前只排除了 refresh/hmr，漏了 watch —— 而切换文件夹正是 watch 触发的。
+  // 配合下面 primeSnapshots 把所有文件夹的书架快照都塞进 payload，结果就是
+  // 「切到某文件夹 = 显示上次的快照」，刚移动走的卡片会重新出现，看起来像移动失败。
+  // 本地接口 7~50ms，省这点时间不值得冒显示旧数据的风险。
+  const cause = ctx?.cause
+  if (cause && cause !== 'initial') return undefined
   return (nuxtApp.payload.data as Record<string, any>)?.[key] ?? (nuxtApp.static.data as Record<string, any>)?.[key]
 }
 
@@ -606,6 +613,7 @@ async function handleRenameFolder(id: string, name: string) {
 async function handleDropOnFolder(folderId: string) {
   if (!dragBookId || folderId === activeFolder.value) return
   const movedId = dragBookId
+  const fromFolder = activeFolder.value
   const movedBook = books.value.find(b => b.id === movedId)
   // 乐观更新：立即从列表中移除
   if (movedBook) {
@@ -615,10 +623,17 @@ async function handleDropOnFolder(folderId: string) {
   dragBookId = ''
   try {
     await $fetch('/api/text/move', { method: 'POST', body: { id: movedId, folder: folderId } })
+    // 移动跨了两个文件夹：两边的列表都得作废。
+    // 只刷新当前列表是不够的 —— 目标文件夹旧快照里可能还没有这张卡，
+    // 源文件夹旧快照里则还留着它，切来切去就会看到「原位还在」。
+    forgetSnapshot(`books-${fromFolder}`)
+    forgetSnapshot(`books-${folderId}`)
+    clearNuxtData(`books-${folderId}`)
     // 后台刷新确保数据一致
     await loadBooks()
   } catch (e: any) {
     // 失败时回滚：重新加载完整列表
+    forgetSnapshot(`books-${fromFolder}`)
     await loadBooks()
   }
 }

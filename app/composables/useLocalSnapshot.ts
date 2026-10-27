@@ -61,6 +61,18 @@ export function clearSnapshots() {
 }
 
 /**
+ * 作废单个快照。
+ *
+ * 用于「一次操作同时影响两个列表」的场景（移动文章会改掉源文件夹和目标文件夹
+ * 两边的列表）。只靠接口返回后写回新快照不够稳妥：只要中间任何一步失败，
+ * 旧快照就会留下来，下次首屏又把旧列表端出来 —— 表现为「移走了但原位还在」。
+ */
+export function forgetSnapshot(key: string) {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.removeItem(PREFIX + key) } catch { /* ignore */ }
+}
+
+/**
  * 在首次 useAsyncData 之前调用：把 localStorage 里的快照灌进 Nuxt payload，
  * 这样 getCachedData 立刻命中，组件首帧就有数据。
  *
