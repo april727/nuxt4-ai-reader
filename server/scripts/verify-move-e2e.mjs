@@ -18,23 +18,20 @@
  * 用法：node server/scripts/verify-move-e2e.mjs [目标文件夹名]
  * 依赖：本地 dev 服务（默认 http://localhost:3000）+ Chrome/Edge + .env 的 SITE_PASSWORD
  */
-import { readFileSync, existsSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import path from 'node:path'
+import { launchChrome, resolveBase, sleep, waitFor } from './lib/cdp.mjs'
 
 const env = readFileSync('.env', 'utf8').split(/\r?\n/).reduce((a, l) => {
-  const m = l.match(/^([A-Z0-9_]+)=(.*)$/)
+  const m = l.match(/^([A-Z0-9_]+)=(.*)$/m)
   if (m) a[m[1]] = m[2].replace(/^["']|["']$/g, '')
   return a
 }, {})
 
-const BASE = process.env.BASE_URL || 'http://localhost:3000'
+const BASE = await resolveBase(process.env.BASE_URL)
 const TOKEN = createHash('sha256').update(env.SITE_PASSWORD || '').digest('hex')
 const TARGET_FOLDER_NAME = process.argv[2] || 'iran'
 const SRC_FOLDER = 'default'
-const PROFILE = path.resolve('server/data/.tmp-e2e-chrome')
-const PORT = Number(process.env.CDP_PORT || 9333)
 
 const results = []
 function check(name, ok, extra = '') {
@@ -60,110 +57,16 @@ async function pollList(folder, predicate, timeout = 2000) {
   while (Date.now() - t0 <= timeout) {
     list = await listOf(folder)
     if (predicate(list)) return { ok: true, ms: Date.now() - t0, list }
-    await new Promise((r) => setTimeout(r, 100))
+    await sleep(100)
   }
   return { ok: false, ms: Date.now() - t0, list }
 }
 
-/* ---------------- CDP 最小客户端（Node 22 自带 WebSocket） ---------------- */
+let page = null
 
-const CHROME = [
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-].find(existsSync)
-if (!CHROME) {
-  console.error('找不到 Chrome/Edge，无法跑浏览器回归')
-  process.exit(1)
-}
-
-let chromeProc = null
-let ws = null
-let sessionId = null
-let seq = 0
-const pending = new Map()
-
-function send(method, params = {}, session = sessionId) {
-  const id = ++seq
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject })
-    ws.send(JSON.stringify({ id, method, params, ...(session ? { sessionId: session } : {}) }))
-  })
-}
-
-async function evalInPage(expression) {
-  const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) {
-    const d = r.exceptionDetails.exception?.description || r.exceptionDetails.text
-    throw new Error('页面执行出错：' + String(d).split('\n')[0])
-  }
-  return r.result.value
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-async function waitFor(fn, { timeout = 5000, interval = 100, label = '' } = {}) {
-  const deadline = Date.now() + timeout
-  let last
-  while (Date.now() < deadline) {
-    last = await fn()
-    if (last) return last
-    await sleep(interval)
-  }
-  throw new Error(`等待超时${label ? '：' + label : ''}`)
-}
-
-async function launch() {
-  if (existsSync(PROFILE)) { try { rmSync(PROFILE, { recursive: true, force: true }) } catch {} }
-  chromeProc = spawn(CHROME, [
-    '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', '--hide-scrollbars', '--mute-audio', '--window-size=1440,900',
-    `--user-data-dir=${PROFILE}`, `--remote-debugging-port=${PORT}`, 'about:blank',
-  ], { stdio: 'ignore' })
-
-  const version = await waitFor(async () => {
-    try { return await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json() } catch { return null }
-  }, { timeout: 15000, label: 'Chrome 启动' })
-
-  ws = new WebSocket(version.webSocketDebuggerUrl)
-  await new Promise((res, rej) => {
-    ws.addEventListener('open', res, { once: true })
-    ws.addEventListener('error', () => rej(new Error('CDP WebSocket 连接失败')), { once: true })
-  })
-  ws.addEventListener('message', (ev) => {
-    const msg = JSON.parse(ev.data)
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id)
-      pending.delete(msg.id)
-      msg.error ? reject(new Error(JSON.stringify(msg.error))) : resolve(msg.result)
-    }
-  })
-
-  const { targetId } = await send('Target.createTarget', { url: 'about:blank' }, undefined)
-  const attached = await send('Target.attachToTarget', { targetId, flatten: true }, undefined)
-  sessionId = attached.sessionId
-  await send('Page.enable')
-  await send('Runtime.enable')
-  await send('Network.enable')
-  await send('Network.setCookie', { name: 'auth_token', value: TOKEN, url: `${BASE}/` })
-}
-
-async function close() {
-  try { await send('Browser.close', {}, undefined) } catch {}
-  try { ws?.close() } catch {}
-  if (chromeProc && !chromeProc.killed) chromeProc.kill()
-  await sleep(300)
-  try { rmSync(PROFILE, { recursive: true, force: true }) } catch {}
-}
-
-/** 页面内的小工具：只在页面上下文里跑，改动文件后要重新注入 */
-const HELPERS = `
-window.__t = {
-  books: (f) => fetch('/api/text/list?folder=' + encodeURIComponent(f)).then(r => r.json()),
+const HELPERS = `window.__t = {
   titles: () => Array.from(document.querySelectorAll('.doc-card .doc-title')).map(e => e.textContent.trim()),
-  ready: () => document.readyState === 'complete',
-  snapKeys: () => Object.keys(localStorage).filter(k => k.indexOf('yr-snap:') === 0),
+  cards: () => document.querySelectorAll('.doc-card').length,
   drag: (title, folderName) => {
     const card = Array.from(document.querySelectorAll('.doc-card'))
       .find(c => (c.querySelector('.doc-title')?.textContent || '').trim() === title)
@@ -186,18 +89,10 @@ window.__t = {
     return true
   },
   plantStale: (key, data) => { localStorage.setItem('yr-snap:' + key, JSON.stringify({ at: Date.now(), data })); return true },
-  // 首屏真实渲染的卡片数（含快照占位），用于确认快照仍在工作
-  cards: () => document.querySelectorAll('.doc-card').length,
-}
-`
+}`
 
-async function goto(url) {
-  await send('Page.navigate', { url })
-  await waitFor(() => evalInPage('document.readyState === "complete"').catch(() => false),
-    { timeout: 15000, label: '页面加载' })
-  await evalInPage(HELPERS)
-}
-
+const evalInPage = (expr) => page.evalInPage(expr)
+const goto = (url, extra) => page.goto(url, extra)
 const titles = () => evalInPage('window.__t.titles()')
 const waitTitle = (title, present, ms = 4000) => waitFor(
   async () => (await titles()).includes(title) === present,
@@ -211,8 +106,8 @@ let restored = false
 
 try {
   console.log(`\n目标文件夹：${TARGET_FOLDER_NAME}   启动浏览器…`)
-  await launch()
-  await goto(`${BASE}/`)
+  page = await launchChrome({ profile: 'server/data/.tmp-e2e-chrome', base: BASE, token: TOKEN })
+  await goto(`${BASE}/`, HELPERS)
 
   const folders = await api('/api/folder/list')
   const target = folders.find((f) => (f.name || '').trim().toLowerCase() === TARGET_FOLDER_NAME.toLowerCase())
@@ -224,7 +119,7 @@ try {
 
   // 必须等真的出卡片：默认文件夹是空的才允许走空态，否则「等待 → 立刻断言」会撞在
   // 首屏还没到数据的空态上，测出一个假失败
-  await waitFor(() => evalInPage('window.__t.cards() > 0'), { timeout: 15000, label: '书架出卡片' })
+  await waitFor(() => evalInPage('window.__t.cards() > 0'), { timeout: 30000, label: '书架出卡片' })
   const srcBefore = await listOf(SRC_FOLDER)
   const dstBefore = await listOf(target.id)
 
@@ -260,7 +155,7 @@ try {
   // ---- 3. 切回默认文件夹（核心：旧快照不得回流） ----
   const clickedBack = await evalInPage(`window.__t.clickFolder(${JSON.stringify(srcName)})`)
   if (!clickedBack) {
-    await goto(`${BASE}/?folder=${SRC_FOLDER}`)
+    await goto(`${BASE}/?folder=${SRC_FOLDER}`, HELPERS)
   }
   // 换文件夹后接口 7ms，这里给足冗余等一次真请求落地
   await sleep(1200)
@@ -271,9 +166,9 @@ try {
   // ---- 4. 旧快照污染测试：人为写入「移动前」名单再刷新 ----
   // 关键：要在「文档开始执行前」就挂上探针（addScriptToEvaluateOnNewDocument），
   // 否则等 readyState=complete 再注入，快照那一帧早就过去了，测不到。
-  await goto(`${BASE}/?folder=${SRC_FOLDER}`)
+  await goto(`${BASE}/?folder=${SRC_FOLDER}`, HELPERS)
   await evalInPage(`window.__t.plantStale('books-${SRC_FOLDER}', ${JSON.stringify(srcBefore)})`)
-  await send('Page.addScriptToEvaluateOnNewDocument', {
+  await page.send('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
       const MOVED = ${JSON.stringify(pick.title)}
       const boot = { firstCardAt: null, firstCount: 0, firstHasMoved: false, maxCount: 0,
@@ -295,7 +190,7 @@ try {
       requestAnimationFrame(tick)
     })()`,
   })
-  await send('Page.reload', { ignoreCache: false })
+  await page.send('Page.reload', { ignoreCache: false })
   await waitFor(() => evalInPage('document.readyState === "complete"').catch(() => false),
     { timeout: 15000, label: '刷新完成' })
   await sleep(2500) // 等真请求落地并被探针记录
@@ -337,7 +232,7 @@ try {
       console.error(`\n！！还原失败，请手动把 ${moved.id} 移回 ${moved.from}`, e?.message)
     }
   }
-  await close()
+  await page?.close()
 
   const failed = results.filter((r) => !r.ok)
   console.log(`\n合计 ${results.length} 项，通过 ${results.length - failed.length}，失败 ${failed.length}`)
