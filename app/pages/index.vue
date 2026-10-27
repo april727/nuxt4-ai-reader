@@ -389,13 +389,20 @@ const nuxtApp = useNuxtApp()
  * 不判断 cause 的话，主动刷新（新增/删除文章后的 loadBooks）也会命中缓存，
  * 书架就再也不更新了 —— 这是接 localStorage 快照时最容易踩的坑。
  */
+/**
+ * 快照闸门：只对「首屏第一帧」放行，组件挂载完成后彻底关闭。
+ *
+ * 为什么单靠 cause 判断不够 —— 看 nuxt/dist/app/composables/asyncData.js 的
+ * key 监听分支：切文件夹会让 key 从 books-A 变成 books-B，Nuxt 用
+ * `cause: 'initial'` 去取 getCachedData，**一旦拿到值就把缓存当结果直接
+ * return，连请求都不发**。所以「cause === initial 就放行」等于：切到任何
+ * 预热过的文件夹都只看快照、永不刷新 —— 刚移走的卡片就永远赖在原位。
+ * 挂载后一刀关掉，之后每次切换都是真请求（本地 7ms，无感）。
+ */
+let snapshotGateOpen = true
 function clientCached(key: string, _app?: any, ctx?: { cause?: string }) {
-  // 白名单而不是黑名单：只有「首屏第一帧」允许吃缓存，其余一律真请求。
-  //
-  // 之前只排除了 refresh/hmr，漏了 watch —— 而切换文件夹正是 watch 触发的。
-  // 配合下面 primeSnapshots 把所有文件夹的书架快照都塞进 payload，结果就是
-  // 「切到某文件夹 = 显示上次的快照」，刚移动走的卡片会重新出现，看起来像移动失败。
-  // 本地接口 7~50ms，省这点时间不值得冒显示旧数据的风险。
+  if (!snapshotGateOpen) return undefined
+  // 白名单而不是黑名单：首屏之外一律真请求。
   const cause = ctx?.cause
   if (cause && cause !== 'initial') return undefined
   return (nuxtApp.payload.data as Record<string, any>)?.[key] ?? (nuxtApp.static.data as Record<string, any>)?.[key]
@@ -409,8 +416,9 @@ primeSnapshots(nuxtApp, ['folders', `books-${activeFolder.value}`])
 const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', async () => {
   const list = await $fetch<Folder[]>('/api/folder/list')
   saveSnapshot('folders', list)
-  // 侧栏文件夹可能在别处新增，顺手把各文件夹的书架快照也预热好，切文件夹时零等待
-  primeSnapshots(nuxtApp, list.map(f => `books-${f.id}`))
+  // 注意：这里曾经把每个文件夹的书架快照都 prime 进 payload，想让切文件夹「零等待」。
+  // 现已删除 —— 预热别的文件夹 = 把「移动前的旧名单」塞进 payload，配合上面
+  // getCachedData 的短路行为，切过去就是看到旧名单。本地接口 7ms，不需要这层预热。
   return list
 }, {
   default: () => [] as Folder[], server: false, lazy: true,
@@ -440,6 +448,8 @@ function syncSidebarByWidth() {
 onMounted(() => {
   syncSidebarByWidth()
   window.addEventListener('resize', syncSidebarByWidth)
+  // 首屏已经用快照占位，这里关闸：此后包括切换文件夹在内的所有请求都必须走真接口
+  snapshotGateOpen = false
   // 已有缓存数据时：立即显示缓存（getCachedData 已生效），后台静默刷新最新
   if ((folders.value?.length ?? 0) > 0) loadFolders()
   if ((books.value?.length ?? 0) > 0) loadBooks()
