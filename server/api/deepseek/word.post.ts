@@ -1,50 +1,30 @@
 import type { WordLookupRequest, WordDetail } from '#shared/types'
+import { deepseekChat } from '../../utils/deepseek'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<WordLookupRequest>(event)
 
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) {
-    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-  }
-
   const contextLine = body.context ? `\n该单词出现在以下语境中：${body.context}` : ''
 
-  const prompt = `你是一位英语词典专家。请查询以下单词的详细信息。
+  const prompt = `查询以下单词：${body.word}${contextLine}
 
-单词：${body.word}${contextLine}
-
-请用 JSON 格式输出：
+输出 JSON，不要任何其他文字：
 {
   "word": "单词本身",
   "phonetic": "英式音标，如 /ˈfæntəsi/",
   "definition": "中文释义（包含词性和主要含义，50字以内）",
-  "example": "一个例句（英文），展示该词的使用方式",
+  "example": "一个英文例句",
   "pos": "词性缩写如 n./v./adj./adv."
-}
+}`
 
-请严格按照 JSON 格式输出，不要包含其他内容。`
+  const content = await deepseekChat(
+    [
+      { role: 'system', content: '你是英语词典。只输出严格 JSON，不要问候语、开场白、解释或 Markdown。' },
+      { role: 'user', content: prompt },
+    ],
+    { temperature: 0.1, maxTokens: 800, responseFormat: { type: 'json_object' } },
+  )
 
-  const response = await $fetch<{
-    choices: Array<{ message: { content: string } }>
-  }>(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 500,
-    },
-  })
-
-  const content = response.choices[0]?.message?.content || ''
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     throw createError({ statusCode: 500, message: 'Failed to parse AI response' })

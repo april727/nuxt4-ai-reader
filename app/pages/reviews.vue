@@ -1,35 +1,40 @@
 <template>
   <div class="reviews-page">
     <!-- 顶部导航 -->
-    <header class="rv-header">
-      <button class="rv-back" @click="navigateTo('/')">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
-        书架
-      </button>
+    <PageHeader title="复习本" active="reviews" back-to="/" back-label="书架" />
 
-      <h1 class="rv-title">复习本</h1>
-      <p class="rv-subtitle" v-if="filtered.length">
-        {{ activeTab === 'all' ? `共 ${filtered.length} 项` : `${typeMap[activeTab]} · ${filtered.length} 项` }}
-      </p>
-
+    <div class="rv-meta">
       <div class="rv-filters">
-        <div class="rv-filter-group">
-          <FilterChip v-model="activeTab" :options="filterTabs" />
+        <div class="rv-filters-row">
+          <div class="rv-filter-group">
+            <FilterChip v-model="activeTab" :options="filterTabs" />
+          </div>
+
+          <div class="rv-right-group">
+            <select v-model="bookFilter" class="rv-book-select">
+              <option value="all">全部书籍 ({{ booksWithMarks.length }})</option>
+              <option v-for="b in booksWithMarks" :key="b.id" :value="b.id" :title="b.title">{{ truncate(b.title, 12) }}</option>
+            </select>
+
+            <button v-if="items.length" class="rv-export-btn" @click="showExport = true" title="导出标记">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              导出
+            </button>
+          </div>
         </div>
 
-        <select v-model="bookFilter" class="rv-book-select">
-          <option value="all">全部书籍 ({{ booksWithMarks.length }})</option>
-          <option v-for="b in booksWithMarks" :key="b.id" :value="b.id">{{ b.title }}</option>
-        </select>
-
-        <button v-if="items.length" class="rv-export-btn" @click="showExport = true" title="导出标记">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          导出
-        </button>
+        <!-- 词性子筛选（仅"生词"时显示） -->
+        <div v-if="activeTab === 'word'" class="rv-pos-bar">
+          <button
+            v-for="pt in posTabs" :key="pt.key"
+            class="rv-pos-chip"
+            :class="{ active: posFilter === pt.key, empty: pt.key && !hasPosItems(pt.key) }"
+            :disabled="pt.key && !hasPosItems(pt.key)"
+            @click="pt.key && setPosFilter(pt.key)"
+          >{{ pt.label }}<span v-if="pt.key && posCount(pt.key)" class="rv-pos-count">{{ posCount(pt.key) }}</span></button>
+        </div>
       </div>
 
       <!-- 默认单词本快捷入口 -->
@@ -46,8 +51,11 @@
           <span class="rv-wb-icon">💬</span> 句子本 · {{ counts.sentence }} 句
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
         </NuxtLink>
+        <span class="rv-subtitle" v-if="filtered.length">
+          {{ activeTab === 'all' ? `共 ${filtered.length} 项` : `${typeMap[activeTab]} · ${filtered.length} 项` }}
+        </span>
       </div>
-    </header>
+    </div>
 
     <!-- 卡片区 -->
     <div class="rv-body">
@@ -105,9 +113,13 @@
               <div class="rv-card-meta">
                 <span v-if="item.mark.type === 'word' && item.phonetic" class="rv-phonetic">{{ item.phonetic }}</span>
                 <span class="rv-badge" :style="{ background: item.mark.color }">{{ typeMap[item.mark.type] }}</span>
+                <span v-if="item.pos" class="rv-pos-badge">{{ item.pos }}</span>
                 <span v-if="item.brief" class="rv-brief">{{ item.brief }}</span>
               </div>
             </div>
+            <svg class="rv-card-chevron" :class="{ open: expandedId === item.mark.id }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
           </div>
 
           <!-- 展开详情 -->
@@ -158,11 +170,13 @@ import type { Mark } from '#shared/types'
 
 useHead({ title: '复习本' })
 
-interface MarkItem { mark: Mark; title: string; textId: string; phonetic: string; brief: string; textFolder: string }
+interface MarkItem { mark: Mark; title: string; textId: string; phonetic: string; brief: string; textFolder: string; pos: string }
 interface Book { id: string; title: string }
 
-const activeTab = ref('all')
+const route = useRoute()
+const activeTab = ref((route.query.type as string) || 'all')
 const bookFilter = ref('all')
+const posFilter = ref((route.query.pos as string) || '')
 const items = ref<MarkItem[]>([])
 const books = ref<Book[]>([])
 const expandedId = ref('')
@@ -179,7 +193,7 @@ const filterTabs = [
 const typeMap: Record<string, string> = { word: '生词', phrase: '短语', sentence: '好句' }
 
 const counts = computed(() => {
-  const c: Record<string, number> = { all: items.value.length, word: 0, phrase: 0, sentence: 0 }
+  const c: Record<string, number> = { all: items.value.length, word: 0, phrase: 0, sentence: 0, note: 0 }
   for (const it of items.value) c[it.mark.type]++
   return c
 })
@@ -188,8 +202,50 @@ const filtered = computed(() => {
   let list = items.value
   if (activeTab.value !== 'all') list = list.filter(i => i.mark.type === activeTab.value)
   if (bookFilter.value !== 'all') list = list.filter(i => i.textId === bookFilter.value)
+  if (posFilter.value) list = list.filter(i => i.pos === posFilter.value)
   return list
 })
+
+const posCounts = computed(() => {
+  const c: Record<string, number> = {}
+  for (const it of items.value) {
+    if (it.mark.type === 'word' && it.pos) {
+      c[it.pos] = (c[it.pos] || 0) + 1
+    }
+  }
+  return c
+})
+
+const posTabs = [
+  { key: '', label: '全部词性' },
+  { key: 'n.', label: 'n.名词' },
+  { key: 'v.', label: 'v.动词' },
+  { key: 'adj.', label: 'adj.形容词' },
+  { key: 'adv.', label: 'adv.副词' },
+  { key: 'prep.', label: 'prep.介词' },
+  { key: 'pron.', label: 'pron.代词' },
+  { key: 'conj.', label: 'conj.连词' },
+  { key: 'phr.', label: 'phr.短语' },
+  { key: 'sent.', label: 'sent.句子' },
+]
+
+function posCount(key: string): number {
+  return posCounts.value[key] || 0
+}
+
+function setPosFilter(key: string) {
+  posFilter.value = posFilter.value === key ? '' : key
+}
+
+/** 是否有该词性的生词条目 */
+function hasPosItems(posKey: string): boolean {
+  return (posCounts.value[posKey] || 0) > 0
+}
+
+function truncate(s: string, max: number): string {
+  if (!s) return ''
+  return s.length > max ? s.slice(0, max) + '…' : s
+}
 
 function plainExcerpt(detail: string): string {
   if (!detail) return ''
@@ -204,10 +260,19 @@ function playWord(item: MarkItem) {
   if (playingId.value === item.mark.id) return
   playingId.value = item.mark.id
   const word = (item.mark.lemma || item.mark.text).replace(/[^a-zA-Z]/g, '').toLowerCase()
-  const audio = new Audio(
-    `https://audio.beingfine.cn/speeches/UK/UK-speech/${word}.mp3`
-  )
-  audio.play().catch(() => {
+  pronResolve(word).then((r) => {
+    if (r) {
+      // 音库防盗链：禁用 Referer，否则发布域会被 CDN 403
+
+      const a = new Audio(); a.referrerPolicy = 'no-referrer'; a.src = r.src
+
+      a.play().catch(() => {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'
+        speechSynthesis.speak(u)
+      })
+      return
+    }
     const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'
     speechSynthesis.speak(u)
@@ -306,15 +371,7 @@ onMounted(async () => {
 }
 
 /* ── 顶部导航 ── */
-.rv-header {
-  flex-shrink: 0;
-  padding: 28px 36px 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 24px;
-  /* bottom border handled by filters row */
-}
+.rv-meta { padding: 0 36px; }
 
 .rv-back {
   display: inline-flex;
@@ -354,11 +411,17 @@ onMounted(async () => {
 .rv-filters {
   width: 100%;
   display: flex;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
+  gap: 8px;
   margin-top: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.rv-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .rv-filter-group {
@@ -367,10 +430,19 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.03);
   border-radius: 10px;
   padding: 3px;
+  flex-shrink: 0;
+}
+
+.rv-right-group {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .rv-book-select {
-  margin-left: auto;
+  max-width: 150px;
   padding: 6px 12px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px;
@@ -385,6 +457,9 @@ onMounted(async () => {
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .rv-book-select:focus {
   border-color: #3d3591;
@@ -399,9 +474,10 @@ onMounted(async () => {
 
 .rv-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
-  max-width: 1000px;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 /* ── 卡片 ── */
@@ -449,6 +525,14 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
 }
+
+.rv-card-chevron {
+  flex-shrink: 0;
+  color: #c0bdb4;
+  margin-top: 3px;
+  transition: transform 0.2s ease;
+}
+.rv-card-chevron.open { transform: rotate(180deg); }
 
 .rv-card-head {
   display: flex;
@@ -553,6 +637,44 @@ onMounted(async () => {
   white-space: nowrap;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+/* ── 词性筛选条（单独一行，最多2行）── */
+.rv-pos-bar {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  max-height: 48px;
+  overflow: hidden;
+}
+.rv-pos-chip {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; font-weight: 500;
+  color: #8a877c; background: #f0efe9;
+  border: none; padding: 3px 9px; border-radius: 5px;
+  cursor: pointer; transition: all 0.12s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.rv-pos-chip:hover:not(:disabled) { background: #e5e3db; }
+.rv-pos-chip.active { background: #6366f1; color: #fff; }
+.rv-pos-chip.active .rv-pos-count { color: rgba(255,255,255,0.7); }
+.rv-pos-chip.empty { opacity: 0.35; cursor: default; }
+.rv-pos-chip:disabled { cursor: default; }
+
+.rv-pos-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 600;
+  color: #a09e97;
+  margin-left: 3px;
+  vertical-align: baseline;
+}
+
+/* ── 词性标签（卡片上） ── */
+.rv-pos-badge {
+  font-size: 10px; font-weight: 500;
+  color: #6366f1; background: #eef2ff;
+  padding: 1px 7px; border-radius: 4px;
+  white-space: nowrap;
+  font-family: 'DM Mono', monospace;
 }
 
 .rv-brief {
@@ -675,6 +797,8 @@ onMounted(async () => {
   font-family: 'DM Sans', sans-serif;
   cursor: pointer;
   transition: all 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-left: auto;
 }
 .rv-export-btn:hover {
@@ -687,6 +811,7 @@ onMounted(async () => {
 .rv-wordbook-links {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-top: 10px;
 }
@@ -750,6 +875,12 @@ onMounted(async () => {
 .export-option-hint {
   font-size: 12px;
   color: #a09e97;
+}
+
+@media (max-width: 767px) {
+  .review-grid { grid-template-columns: 1fr; gap: 8px; }
+  .review-card { padding: 12px; }
+  .review-detail { max-width: 100vw; margin: 0; }
 }
 
 </style>

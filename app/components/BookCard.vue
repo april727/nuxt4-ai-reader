@@ -9,7 +9,7 @@
   >
     <div class="doc-thumb">
       <img
-        v-if="isVideo && thumbnail"
+        v-if="(isVideo || isSheet) && thumbnail"
         :src="thumbnail"
         class="thumb-cover"
         alt=""
@@ -34,26 +34,44 @@
       >
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
         <polyline points="14 2 14 8 20 8"/>
+        <template v-if="isSheet"><circle cx="8.5" cy="13.5" r="1.5"/><polyline points="21 19 16 14 5 21"/></template>
         <template v-if="isPdf"><line x1="9" y1="13" x2="16" y2="13"/><line x1="9" y1="17" x2="14" y2="17"/></template>
         <template v-if="isText">
           <line x1="9" y1="12" x2="16" y2="12"/><line x1="9" y1="16" x2="16" y2="16"/>
         </template>
       </svg>
-      <span v-if="!isVideo || !thumbnail" class="thumb-label">{{ sourceLabel }}</span>
+      <span v-if="(!isVideo && !isSheet) || !thumbnail" class="thumb-label">{{ sourceLabel }}</span>
     </div>
     <div class="doc-body">
-      <h3 class="doc-title">{{ title }}</h3>
+      <h3 class="doc-title" :class="{ 'ai-segmented': aiSegmented }">{{ title }}</h3>
+      <div class="doc-stats">
+        <span class="stats-left">
+          <template v-if="isVideo && duration">
+            <span class="stat">{{ formatDuration(duration) }}</span>
+          </template>
+          <template v-else-if="isSheet">
+            <span class="stat">{{ sheetPages ? `${sheetPages} 页` : '图片试卷' }}</span>
+          </template>
+          <template v-else>
+            <span v-if="words" class="stat">{{ fmtCount(words) }} 词</span>
+            <span v-if="words && paraCount" class="doc-sep">·</span>
+            <span v-if="paraCount" class="stat">{{ paraCount }} 段</span>
+            <span v-if="!words && !paraCount" class="stat">尚未分段</span>
+          </template>
+        </span>
+        <span v-if="totalMarks" class="stats-right">
+          <svg class="mark-ico" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2.2 1.5h5.6v9L5 8.2l-2.8 2.3z"/></svg>
+          {{ totalMarks }}
+        </span>
+      </div>
       <div class="doc-meta">
-        <span class="doc-meta-left">
-          <span v-if="isVideo && duration" class="doc-duration">{{ formatDuration(duration) }}</span>
-          <span v-else class="doc-reads">{{ readCount ? `阅读 ${readCount} 次` : '尚未阅读' }}</span>
-          <span v-if="markCount" class="doc-sep">·</span>
-          <span v-if="markCount" class="doc-marks">{{ markCount }} 标记</span>
+        <span v-if="completedAt" class="doc-chip is-done">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+          已完成 · {{ fmtDate(completedAt) }}
         </span>
-        <span v-if="completedAt" class="completed-label">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          完成
-        </span>
+        <span v-else-if="readCount" class="doc-chip">阅读 {{ readCount }} 次</span>
+        <span v-else class="doc-chip is-idle">未读</span>
+        <span class="doc-date">导入 {{ fmtDate(createdAt) }}</span>
       </div>
     </div>
     <!-- 三点菜单按钮 -->
@@ -74,24 +92,63 @@
 const props = defineProps<{
   id: string; title: string; length: number; source: string; draggable?: boolean
   readCount?: number; lastReadAt?: string; markCount?: number; duration?: number
-  thumbnail?: string; completedAt?: string
+  thumbnail?: string; completedAt?: string; aiSegmented?: boolean
+  /** 词数（服务端 SQL 估算，英文为主） */
+  words?: number
+  /** 段落数（实时取自 segments，随合并/重新分段变化） */
+  paraCount?: number
+  /** 分类标记数：单词 / 短语 / 句子 */
+  markTypes?: { word: number; phrase: number; sentence: number }
+  createdAt?: string
+  /** 'text' | 'sheet'，图片试卷走画布页而不是文字阅读页 */
+  contentKind?: string
+  /** 图片试卷的页数 */
+  sheetPages?: number
 }>()
 
+const emptyMarkTypes = { word: 0, phrase: 0, sentence: 0 }
+const markTypes = computed(() => props.markTypes || emptyMarkTypes)
+/** 卡片只显示标记总数（分类明细在阅读页导航刻度里体现） */
+const totalMarks = computed(() => {
+  const m = markTypes.value
+  return (m.word || 0) + (m.phrase || 0) + (m.sentence || 0)
+})
+
 defineEmits<{ open: [id: string]; dragstart: [e: DragEvent]; contextmenu: [e: MouseEvent]; menu: [e: MouseEvent] }>()
+
+/** 数字展示：万级折算，避免卡片被长数字撑开 */
+function fmtCount(n?: number): string {
+  const v = Number(n) || 0
+  if (v >= 10000) return `${(v / 10000).toFixed(1)} 万`
+  return v.toLocaleString('zh-CN')
+}
+
+/** 日期只留月-日，年份在卡片上没有信息量 */
+function fmtDate(s?: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return ''
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${mm}-${dd}`
+}
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
 const isVideo = computed(() => videoSources.includes(props.source))
-const isPdf = computed(() => props.source?.toLowerCase().includes('.pdf') || props.source === 'upload')
-const isWeb = computed(() => props.source?.startsWith('http'))
-const isText = computed(() => !isVideo.value && !isPdf.value && !isWeb.value)
+const isSheet = computed(() => props.contentKind === 'sheet')
+const isPdf = computed(() => !isSheet.value && (props.source?.toLowerCase().includes('.pdf') || props.source === 'upload'))
+const isWeb = computed(() => !isSheet.value && !!props.source?.startsWith('http'))
+const isText = computed(() => !isVideo.value && !isSheet.value && !isPdf.value && !isWeb.value)
 const coverTypeClass = computed(() => {
+  if (isSheet.value) return 'thumb-sheet'
   if (isVideo.value) return 'thumb-video'
   if (isPdf.value) return 'thumb-pdf'
   if (isWeb.value) return 'thumb-web'
   return 'thumb-text'
 })
 const sourceLabel = computed(() => {
+  if (isSheet.value) return '试卷'
   if (isVideo.value) {
     if (props.source === 'youtube') return 'YouTube'
     if (props.source === 'bilibili') return 'B站'
@@ -160,6 +217,9 @@ function formatDuration(seconds: number): string {
 .doc-card.completed .doc-title {
   color: #8a877c;
 }
+.doc-title.ai-segmented {
+  color: #3d3591;
+}
 
 /* ── 三点菜单按钮 ── */
 .doc-menu-btn {
@@ -215,6 +275,10 @@ function formatDuration(seconds: number): string {
 .thumb-web .doc-thumb { background: #ebf7f1; color: #187a52; }
 .thumb-text .doc-thumb { background: #edeafd; color: #4a40b0; }
 .thumb-video .doc-thumb { background: #dbeafe; color: #1e40af; }
+.thumb-sheet .doc-thumb { background: #faf6ee; color: #8a6a3c; }
+/* 试卷是整页扫描，裁边会切掉题干，改成完整显示 */
+.thumb-sheet .thumb-cover { object-fit: contain; background: #fff; }
+.thumb-sheet .thumb-fallback { width: 34px; height: 34px; }
 
 .thumb-label {
   font-size: 10.5px;
@@ -267,6 +331,33 @@ function formatDuration(seconds: number): string {
   text-overflow: ellipsis;
 }
 
+/* 规模指标行：左侧词数/段落（图标），右侧分类标记（颜色区分） */
+.doc-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #8a8880;
+  white-space: nowrap;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+.stats-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.stat { display: inline-flex; align-items: center; gap: 3px; }
+.doc-sep { color: #c9c6bc; }
+
+/* 标记总数：图标 + 数字，靠右 */
+.stats-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: #b0730f;
+  font-variant-numeric: tabular-nums;
+}
+.mark-ico { width: 9px; height: 11px; flex-shrink: 0; }
+
 .doc-meta {
   display: flex;
   justify-content: space-between;
@@ -274,6 +365,28 @@ function formatDuration(seconds: number): string {
   gap: 6px;
   font-size: 11px;
   color: #a09e97;
+}
+
+/* 状态徽章 */
+.doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #f2f1ec;
+  color: #6b6a63;
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.doc-chip.is-done { background: #e8f5ec; color: #2f7a4d; }
+.doc-chip.is-idle { background: transparent; color: #a09e97; padding-left: 0; }
+.doc-date {
+  font-size: 10.5px;
+  color: #b5b2a9;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .doc-meta-left {
   display: flex;

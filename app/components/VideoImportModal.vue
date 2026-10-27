@@ -162,6 +162,8 @@
 </template>
 
 <script setup lang="ts">
+import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
+
 interface SubtitleCue {
   id: string; index: number; start: number; end: number; text: string
 }
@@ -191,12 +193,17 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const config = useRuntimeConfig()
 const activeTab = ref('url')
-const tabs = [
+const allTabs = [
   { key: 'url', label: '链接导入' },
   { key: 'file', label: '上传字幕' },
   { key: 'video', label: '上传视频' },
 ]
+const tabs = computed(() => config.public.disableLocalUpload
+  ? allTabs.filter(t => t.key === 'url')
+  : allTabs
+)
 
 // ============================================================
 //  Tab 1: URL 导入（单视频 + 播放列表）
@@ -497,44 +504,6 @@ async function uploadVideoOnly(file: File) {
   } finally {
     videoUploading.value = false
   }
-}
-
-/** 用 <video> + <canvas> 截取视频第 10% 处的一帧作为封面 */
-async function captureVideoThumbnail(file: File): Promise<string> {
-  const vid = document.createElement('video')
-  vid.preload = 'metadata'; vid.muted = true; vid.playsInline = true
-  const blobUrl = URL.createObjectURL(file)
-  vid.src = blobUrl
-
-  return new Promise((resolve) => {
-    let cleaned = false
-    const clean = () => { if (!cleaned) { cleaned = true; URL.revokeObjectURL(blobUrl); vid.remove() } }
-
-    const capture = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 320; canvas.height = Math.round(320 / (vid.videoWidth / vid.videoHeight) || 180)
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { clean(); return resolve('') }
-      ctx.drawImage(vid, 0, 0, canvas.width, canvas.height)
-      canvas.toBlob(async (blob) => {
-        clean()
-        if (!blob) return resolve('')
-        try {
-          const fd = new FormData(); fd.append('file', blob, 'thumb.jpg')
-          const res = await $fetch<{ url: string; path: string; size: number }>('/api/file/upload-thumbnail', { method: 'POST', body: fd })
-          resolve(res.path)
-        } catch { resolve('') }
-      }, 'image/jpeg', 0.8)
-    }
-
-    vid.onloadedmetadata = () => {
-      vid.currentTime = Math.min(15, vid.duration * 0.1)
-    }
-    vid.onseeked = () => { capture() }
-    vid.onerror = () => { clean(); resolve('') }
-    // 超时兜底
-    setTimeout(() => { if (!cleaned) { clean(); resolve('') } }, 15000)
-  })
 }
 
 function handleSubForVideoSelect(e: Event) {

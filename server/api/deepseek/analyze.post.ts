@@ -1,20 +1,9 @@
 import type { AnalyzeRequest } from '#shared/types'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-
-// 启动时加载 prompt 模板
-const analyzeTemplate = readFileSync(resolve('prompt/analyze-article.md'), 'utf-8')
+import { getPromptTemplate } from '../../utils/promptManager'
+import { deepseekChat } from '../../utils/deepseek'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<AnalyzeRequest>(event)
-
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) {
-    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-  }
 
   // 截断输入，只取前 15000 字符送给 AI（超长书原文会超出 token 限制）
   const maxInputChars = 15000
@@ -25,28 +14,17 @@ export default defineEventHandler(async (event) => {
   // 预分割原文为句子数组，AI 返回断点索引即可
   const sentences = splitSentences(body.text)
 
+  // 从 Prompt 管理器获取模板（失败时自动降级到本地常量）
+  const analyzeTemplate = await getPromptTemplate('analyze-article')
   const prompt = analyzeTemplate
     .replace('{sentenceCount}', String(sentences.length))
     .replace('{sentenceList}', sentences.map((s, i) => `[${i}] ${s.length > 80 ? s.slice(0, 80) + '...' : s}`).join('\n'))
     .replace('{inputText}', inputText)
 
-  const response = await $fetch<{
-    choices: Array<{ message: { content: string } }>
-  }>(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.5,
-      max_tokens: 4096,
-    },
-  })
-
-  const content = response.choices[0]?.message?.content || ''
+  const content = await deepseekChat(
+    [{ role: 'user', content: prompt }],
+    { temperature: 0.5, maxTokens: 4096 },
+  )
   const jsonMatch = content.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     throw createError({ statusCode: 500, message: 'Failed to parse AI response' })

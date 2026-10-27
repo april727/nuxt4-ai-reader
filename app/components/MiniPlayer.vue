@@ -88,6 +88,7 @@ const props = defineProps<{
   visible: boolean
   startTime: number            // 段落 start（秒）
   endTime?: number             // 段落 end（秒）
+  forceReplay?: number         // 递增时强制从 startTime 重新播放
 }>()
 
 const emit = defineEmits<{
@@ -288,6 +289,24 @@ watch(() => props.startTime, (t) => {
       if (props.endTime && t >= props.endTime) return
       audioEl.value.play().catch(() => {})
     }
+  }
+})
+
+// 强制重新播放：每次 forceReplay 变化且播放器已可见时，从 startTime 重新播放
+watch(() => props.forceReplay, () => {
+  if (!props.visible || props.startTime === undefined) return
+  if (isYoutube.value && ytPlayer && ytReady) {
+    ytPlayer.seekTo(props.startTime, true)
+    if (props.endTime && props.startTime >= props.endTime) return
+    ytPlayer.playVideo()
+  } else if (videoEl.value) {
+    videoEl.value.currentTime = props.startTime
+    if (props.endTime && props.startTime >= props.endTime) return
+    videoEl.value.play().catch(() => {})
+  } else if (audioEl.value) {
+    audioEl.value.currentTime = props.startTime
+    if (props.endTime && props.startTime >= props.endTime) return
+    audioEl.value.play().catch(() => {})
   }
 })
 

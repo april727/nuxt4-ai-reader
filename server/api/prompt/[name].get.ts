@@ -1,20 +1,17 @@
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { fetchPromptFromManager } from '../../utils/promptManager'
 
-// 启动时一次性加载全部 prompt 文件到内存
-const cache = new Map<string, string>()
-
-function loadPrompt(name: string): string {
-  if (cache.has(name)) return cache.get(name)!
-  const filePath = resolve(`prompt/${name}.md`)
-  if (!existsSync(filePath)) throw createError({ statusCode: 404, message: `prompt/${name}.md 不存在` })
-  const content = readFileSync(filePath, 'utf-8')
-  cache.set(name, content)
-  return content
-}
-
-export default defineEventHandler((event) => {
+/**
+ * GET /api/prompt/[name]
+ * 获取本地 Prompt 模板。
+ * 来源：server/data/prompts.local.json（本地覆盖）→ prompts.ts 常量兜底。
+ * 运行时不再自动访问云端；云端内容需在 /settings/prompts 页面手动「获取云端」。
+ */
+export default defineEventHandler(async (event) => {
   const name = getRouterParam(event, 'name')
   if (!name) throw createError({ statusCode: 400 })
-  return { content: loadPrompt(name) }
+
+  const content = await fetchPromptFromManager(name)
+  if (!content) throw createError({ statusCode: 404, message: `prompt/${name} 不存在` })
+
+  return { content }
 })

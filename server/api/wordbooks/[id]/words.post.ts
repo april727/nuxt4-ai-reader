@@ -1,4 +1,4 @@
-import { getDb, saveDb } from '../../../utils/db'
+import { queryOne, runQuery } from '../../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const bookId = getRouterParam(event, 'id')
@@ -7,19 +7,15 @@ export default defineEventHandler(async (event) => {
   }>(event)
   if (!bookId || !word?.trim()) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
   // 防重复
-  const dup = db.prepare('SELECT id FROM words WHERE bookId=? AND word=?')
-  dup.bind([bookId, word.trim()])
-  if (dup.step()) { dup.free(); throw createError({ statusCode: 409, message: '单词已存在' }) }
-  dup.free()
+  const dup = await queryOne('SELECT id FROM words WHERE bookId=? AND word=?', [bookId, word.trim()])
+  if (dup) throw createError({ statusCode: 409, message: '单词已存在' })
 
   const id = `w_${Date.now()}`
   const now = new Date().toISOString()
-  db.run(
+  await runQuery(
     `INSERT INTO words (id,bookId,word,phonetic,meaning,example,note,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?)`,
     [id, bookId, word.trim(), phonetic || '', meaning || '', example || '', note || '', now, now]
   )
-  await saveDb()
   return { id, word: word.trim(), phonetic, meaning, example, note }
 })

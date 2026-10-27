@@ -1,26 +1,50 @@
 <template>
   <div class="wbk-page">
-    <header class="wbk-header">
-      <NuxtLink to="/wordbooks" class="wbk-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        单词本
-      </NuxtLink>
-      <h1 class="wbk-title">{{ bookTitle }}</h1>
-      <div class="wbk-header-right">
+    <PageHeader :title="bookTitle" active="wordbooks" back-to="/wordbooks" back-label="单词本">
+      <template #actions>
         <button class="wbk-hdr-btn" @click="goCards">学习</button>
-        <button class="wbk-hdr-btn wbk-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
-          <template v-if="batchRunning"><span class="wbk-spin"></span></template>
-          <template v-else>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
-          </template>
-        </button>
-        <button class="wbk-hdr-btn wbk-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
-          <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-        </button>
+
+        <!-- 宽屏直接显示，窄屏收到下拉菜单中 -->
+        <div class="wbk-actions-overflow">
+          <button class="wbk-hdr-btn wbk-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
+            <template v-if="batchRunning"><span class="wbk-spin"></span></template>
+            <template v-else>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+            </template>
+          </button>
+          <button class="wbk-hdr-btn wbk-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
+            <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+          <button class="wbk-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+        </div>
+
         <button class="wbk-hdr-btn wbk-btn-add" @click="showAdd = true">+</button>
-      </div>
-    </header>
+
+        <!-- 窄屏：下拉菜单按钮 -->
+        <div class="wbk-menu-wrap" ref="wbkMenuRef">
+          <button class="wbk-menu-btn" @click.stop="wbkMenuOpen = !wbkMenuOpen" :aria-label="wbkMenuOpen ? '关闭操作菜单' : '打开操作菜单'" title="更多操作">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </button>
+          <Transition name="wbk-menu-fade">
+            <div v-if="wbkMenuOpen" class="wbk-menu-drop">
+              <button class="wbk-menu-item" :class="{ active: showDetails }" @click="toggleAllDetails(); wbkMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>{{ showDetails ? '隐藏释义' : '显示释义' }}</span>
+              </button>
+              <button class="wbk-menu-item" @click="enrichAll(); wbkMenuOpen = false" :disabled="batchRunning">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+                <span>{{ batchRunning ? '补全中...' : 'AI 补全' }}</span>
+              </button>
+              <button class="wbk-menu-item" @click="exportTxt(); wbkMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>导出</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
+      </template>
+    </PageHeader>
 
     <!-- Tab 栏 -->
     <div class="wbk-body">
@@ -29,6 +53,12 @@
         class="wbk-tab" :class="{ active: activeType === t.key }"
         @click="activeType = t.key"
       >{{ t.label }}</button>
+    </div>
+
+    <!-- 搜索 -->
+    <div class="wbk-filters">
+      <input v-model="searchInput" class="wbk-search" type="search" :placeholder="`搜索${typeLabel}或释义…`" spellcheck="false" />
+      <span class="wbk-total">共 {{ total }} 条</span>
     </div>
 
     <!-- 词性筛选（仅单词 tab） -->
@@ -79,6 +109,12 @@
             <button class="wbk-del" @click.stop="deleteWord(w.id)">×</button>
           </div>
         </div>
+      </div>
+      <!-- 分页 -->
+      <div class="wbk-pager" v-if="total > pageSize">
+        <button :disabled="page <= 1 || loading" @click="page--">上一页</button>
+        <span>{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
+        <button :disabled="!hasMore || loading" @click="page++">下一页</button>
       </div>
     </div>
     </div>
@@ -137,18 +173,23 @@ const posTabs = [
   { key: 'v.', label: 'v.动词' },
   { key: 'adj.', label: 'adj.形容词' },
   { key: 'adv.', label: 'adv.副词' },
+  { key: 'prep.', label: 'prep.介词' },
+  { key: 'pron.', label: 'pron.代词' },
+  { key: 'conj.', label: 'conj.连词' },
+  { key: 'phr.', label: 'phr.短语' },
+  { key: 'sent.', label: 'sent.句子' },
 ]
 const activePos = ref('')
 
+const marksPosCounts = ref<Record<string, number>>({})
+
 const posCounts = computed(() => {
-  const total = words.value.length
-  const counts: Record<string, number> = {}
-  for (const w of words.value) {
-    const p = w.pos || ''
-    counts[p] = (counts[p] || 0) + 1
-  }
+  const counts = marksPosCounts.value
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
   const labelMap: Record<string, string> = {
     '': '全部', 'n.': '名词', 'v.': '动词', 'adj.': '形容词', 'adv.': '副词',
+    'prep.': '介词', 'pron.': '代词', 'conj.': '连词',
+    'phr.': '短语', 'sent.': '句子',
   }
   const items: Array<{ key: string; label: string; count: number }> = []
   for (const t of posTabs) {
@@ -158,13 +199,29 @@ const posCounts = computed(() => {
   return items
 })
 
-const posFilteredWords = computed(() =>
-  activePos.value ? words.value.filter(w => w.pos === activePos.value) : words.value
-)
+const searchInput = ref('')
+const searchQuery = ref('')
+const page = ref(1)
+const pageSize = 50
+const total = ref(0)
+const hasMore = ref(false)
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
-const displayWords = computed(() =>
-  activeType.value === 'word' ? posFilteredWords.value : words.value
-)
+const displayWords = computed(() => words.value)
+
+function reloadFromFirstPage() {
+  if (page.value !== 1) page.value = 1
+  else loadWords()
+}
+
+watch(searchInput, (v) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchQuery.value = v.trim()
+    reloadFromFirstPage()
+  }, 300)
+})
+watch([activePos, page], reloadFromFirstPage)
 
 // ── 滑块指示器 ──
 const posBarRef = ref<HTMLElement | null>(null)
@@ -189,23 +246,55 @@ watch(activePos, updateIndicator)
 async function loadWords() {
   loading.value = true
   try {
-    const [wList, info] = await Promise.all([
-      $fetch<WordItem[]>(`/api/wordbooks/book/${textId}/words?type=${activeType.value}`),
+    const params = new URLSearchParams({
+      type: activeType.value,
+      page: String(page.value),
+      pageSize: String(pageSize),
+    })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+
+    const [wData, info] = await Promise.all([
+      $fetch<{
+        words: WordItem[]
+        total: number
+        hasMore: boolean
+        posCounts: Record<string, number>
+      }>(`/api/wordbooks/book/${textId}/words?${params}`),
       textId === '__orphan__' ? Promise.resolve({ title: '其他' }) : $fetch<any>(`/api/text/${textId}`).catch(() => null),
     ])
-    words.value = wList
+    words.value = wData.words
+    total.value = wData.total
+    hasMore.value = wData.hasMore
+    marksPosCounts.value = wData.posCounts
     bookTitle.value = info?.title || '加载中…'
   } catch { bookTitle.value = '加载失败' }
   loading.value = false
 }
 
-watch(activeType, () => { activePos.value = ''; loadWords() })
+watch(activeType, () => { activePos.value = ''; page.value = 1; loadWords() })
 
 // ── 显示控制 ──
 const showDetails = ref(true)
 const selectedIds = ref<string[]>([])
 
 function toggleAllDetails() { showDetails.value = !showDetails.value }
+
+// ── 窄屏溢出操作下拉菜单 ──
+const wbkMenuOpen = ref(false)
+const wbkMenuRef = ref<HTMLDivElement>()
+function onWbkMenuDocClick(e: MouseEvent) {
+  if (wbkMenuRef.value && !wbkMenuRef.value.contains(e.target as Node)) {
+    wbkMenuOpen.value = false
+  }
+}
+watch(wbkMenuOpen, (v) => {
+  if (v) { document.addEventListener('click', onWbkMenuDocClick) }
+  else { document.removeEventListener('click', onWbkMenuDocClick) }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onWbkMenuDocClick)
+})
 
 function toggleWord(id: string) {
   const w = words.value.find(x => x.id === id)
@@ -214,10 +303,19 @@ function toggleWord(id: string) {
 }
 
 function pronounceWord(word: string) {
-  const w = word.replace(/[^a-zA-Z]/g, '').toLowerCase()
-  if (!w) return
-  const audio = new Audio(`https://audio.beingfine.cn/speeches/UK/UK-speech/${w}.mp3`)
-  audio.play().catch(() => {
+  pronResolve(word).then((r) => {
+    if (r) {
+      // 音库防盗链：禁用 Referer，否则发布域会被 CDN 403
+
+      const a = new Audio(); a.referrerPolicy = 'no-referrer'; a.src = r.src
+
+      a.play().catch(() => {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'; u.rate = 0.85
+        speechSynthesis.speak(u)
+      })
+      return
+    }
     const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'; u.rate = 0.85
     speechSynthesis.speak(u)
@@ -253,7 +351,29 @@ async function handleAdd() {
   } catch { alert('添加失败') }
 }
 
-function goCards() { /* could link to cards for this type */ }
+function goCards() { navigateTo(`/wordbooks/${currentBookId.value}/cards?source=${textId}&type=${activeType.value}`) }
+
+async function exportTxt() {
+  const all: WordItem[] = []
+  let p = 1
+  while (true) {
+    const params = new URLSearchParams({ type: activeType.value, page: String(p), pageSize: '200' })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+    const res = await $fetch<{ words: WordItem[]; hasMore: boolean }>(`/api/wordbooks/book/${textId}/words?${params}`)
+    all.push(...res.words)
+    if (!res.hasMore) break
+    p++
+  }
+  const text = all.map(w => w.word).join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${bookTitle.value}-words.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 const batchRunning = ref(false)
 async function enrichAll() {
@@ -317,13 +437,64 @@ onMounted(async () => {
 }
 .wbk-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #666; text-decoration: none; font-family: 'DM Sans', sans-serif; white-space: nowrap; flex-shrink: 0; }
 .wbk-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; color: #1a1a18; font-family: 'Lora', serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 12px; }
-.wbk-header-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.wbk-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.wbk-nav-link {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: #6b6963; text-decoration: none;
+  padding: 5px 10px; border-radius: 7px;
+  border: 0.5px solid rgba(0,0,0,0.1);
+  transition: all 0.12s;
+}
+.wbk-nav-link:hover { background: #f0efe9; color: #3d3591; }
 .wbk-hdr-btn { padding: 4px 10px; border: 1px solid #e0ddd5; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; color: #666; white-space: nowrap; display: flex; align-items: center; line-height: 1; }
 .wbk-hdr-btn:hover { border-color: #3d3591; color: #3d3591; }
 .wbk-btn-add { font-size: 18px; font-weight: 500; padding: 3px 10px; }
 .wbk-btn-ai:disabled { opacity: 0.5; }
 .wbk-spin { display: inline-block; width: 12px; height: 12px; border: 1.5px solid #e0ddd5; border-top-color: #3d3591; border-radius: 50%; animation: wbkSpin 0.6s linear infinite; }
 @keyframes wbkSpin { to { transform: rotate(360deg); } }
+
+/* ── 窄屏溢出操作下拉菜单 ── */
+.wbk-actions-overflow { display: flex; align-items: center; gap: 6px; }
+.wbk-menu-wrap { display: none; position: relative; }
+
+.wbk-menu-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  border: 0.5px solid rgba(0,0,0,0.1); border-radius: 8px;
+  background: #fff; color: #6b6963; cursor: pointer;
+  transition: all 0.12s; flex-shrink: 0;
+}
+.wbk-menu-btn:hover { border-color: #3d3591; color: #3d3591; }
+
+.wbk-menu-drop {
+  position: absolute; top: 100%; right: 0; z-index: 200;
+  margin-top: 6px; min-width: 150px;
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+
+.wbk-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 14px; border-radius: 7px;
+  border: none; background: transparent;
+  font-size: 0.84rem; color: #6b6963; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; white-space: nowrap;
+  transition: all 0.1s;
+}
+.wbk-menu-item:hover { background: #f0efe9; color: #3d3591; }
+.wbk-menu-item:disabled { opacity: 0.4; cursor: default; }
+.wbk-menu-item.active { background: #edeafd; color: #3d3591; font-weight: 500; }
+
+.wbk-menu-fade-enter-active,
+.wbk-menu-fade-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.wbk-menu-fade-enter-from,
+.wbk-menu-fade-leave-to { opacity: 0; transform: translateY(-6px); }
+
+@media (max-width: 550px) {
+  .wbk-actions-overflow { display: none; }
+  .wbk-menu-wrap { display: block; }
+}
 
 /* ── Main body (constrained width) ── */
 .wbk-body {
@@ -437,4 +608,24 @@ onMounted(async () => {
   .wbk-header { padding: 0 14px; }
   .wbk-row { padding: 12px 14px; }
 }
+
+/* 搜索与分页 */
+.wbk-filters { display: flex; align-items: center; gap: 10px; padding: 8px 14px 4px; }
+.wbk-search {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 0.5px solid rgba(0,0,0,0.14);
+  border-radius: 8px; font-family: var(--sans, sans-serif); font-size: 12.5px;
+  background: #fff; outline: none; color: #334155;
+}
+.wbk-search:focus { border-color: #3d3591; }
+.wbk-total { font-family: var(--sans, sans-serif); font-size: 11.5px; color: #8a8880; white-space: nowrap; }
+.wbk-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px;
+  border-top: 0.5px solid rgba(0,0,0,0.06); font-family: var(--sans, sans-serif);
+  font-size: 12px; color: #8a8880;
+}
+.wbk-pager button {
+  padding: 5px 12px; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.12);
+  background: #fff; font-size: 12px; cursor: pointer; color: #5f5e5a;
+}
+.wbk-pager button:disabled { opacity: .45; cursor: default; }
 </style>

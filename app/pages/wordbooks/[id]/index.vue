@@ -1,32 +1,60 @@
 <template>
   <div class="wd-page">
-    <header class="wd-header">
-      <NuxtLink to="/wordbooks" class="wd-back">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="15 18 9 12 15 6"/></svg>
-        书架
-      </NuxtLink>
-      <h1 class="wd-title">{{ bookName }}</h1>
-      <div class="wd-header-right">
+    <PageHeader :title="bookName" active="wordbooks" back-to="/wordbooks" back-label="单词本">
+      <template #actions>
         <button class="wd-hdr-btn" @click="goCards">Learn</button>
-        <button class="wd-hdr-btn wd-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
-          <template v-if="batchRunning"><span class="wd-spin-sm"></span></template>
-          <template v-else>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
-          </template>
-        </button>
-        <button class="wd-hdr-btn wd-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
-          <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-        </button>
+
+        <!-- 宽屏直接显示，窄屏收到下拉菜单中 -->
+        <div class="wd-actions-overflow">
+          <button class="wd-hdr-btn wd-btn-ai" @click="enrichAll" :disabled="batchRunning" title="AI 补全">
+            <template v-if="batchRunning"><span class="wd-spin-sm"></span></template>
+            <template v-else>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+            </template>
+          </button>
+          <button class="wd-hdr-btn wd-btn-eye" @click="toggleAllDetails" :title="showDetails ? '隐藏释义' : '显示释义'">
+            <svg v-if="showDetails" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+          <button class="wd-hdr-btn wd-btn-pos" @click="enrichPos" :disabled="posRunning" title="补充词性">
+            <template v-if="posRunning"><span class="wd-spin-sm"></span></template>
+            <template v-else>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </template>
+          </button>
+          <button class="wd-hdr-btn" @click="exportTxt" title="导出 TXT">导出</button>
+        </div>
+
         <button class="wd-hdr-btn wd-btn-add" @click="showAdd = true">+</button>
-        <button class="wd-hdr-btn wd-btn-pos" @click="enrichPos" :disabled="posRunning" title="补充词性">
-          <template v-if="posRunning"><span class="wd-spin-sm"></span></template>
-          <template v-else>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </template>
-        </button>
-      </div>
-    </header>
+
+        <!-- 窄屏：下拉菜单按钮（收起溢出操作） -->
+        <div class="wd-menu-wrap" ref="wdMenuRef">
+          <button class="wd-menu-btn" @click.stop="wdMenuOpen = !wdMenuOpen" :aria-label="wdMenuOpen ? '关闭操作菜单' : '打开操作菜单'" title="更多操作">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          </button>
+          <Transition name="wd-menu-fade">
+            <div v-if="wdMenuOpen" class="wd-menu-drop">
+              <button class="wd-menu-item" :class="{ active: showDetails }" @click="toggleAllDetails(); wdMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>{{ showDetails ? '隐藏释义' : '显示释义' }}</span>
+              </button>
+              <button class="wd-menu-item" @click="enrichAll(); wdMenuOpen = false" :disabled="batchRunning">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>
+                <span>{{ batchRunning ? '补全中...' : 'AI 补全' }}</span>
+              </button>
+              <button class="wd-menu-item" @click="enrichPos(); wdMenuOpen = false" :disabled="posRunning">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span>{{ posRunning ? '词性中...' : '补充词性' }}</span>
+              </button>
+              <button class="wd-menu-item" @click="exportTxt(); wdMenuOpen = false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>导出</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
+      </template>
+    </PageHeader>
 
     <!-- 工具栏 -->
     <div class="wd-toolbar" v-if="selectedIds.length">
@@ -53,12 +81,28 @@
           <span :class="{ 'wps-active': activePos === c.key }">{{ c.label }} {{ c.count }}</span>
         </span>
       </div>
+      <!-- 搜索 / 筛选 / 排序 -->
+      <div class="wd-filters">
+        <input v-model="searchInput" class="wd-search" type="search" placeholder="搜索单词或释义…" spellcheck="false" />
+        <div class="wd-phase-chips">
+          <button
+            v-for="p in phaseTabs" :key="p.key"
+            class="wd-phase-chip" :class="{ active: phaseFilter === p.key }"
+            @click="phaseFilter = p.key"
+          >{{ p.label }}<span v-if="phaseCount(p.key)" class="wd-phase-num">{{ phaseCount(p.key) }}</span></button>
+        </div>
+        <select v-model="sortBy" class="wd-sort" aria-label="排序">
+          <option value="new">最新添加</option>
+          <option value="alpha">字母顺序</option>
+          <option value="due">复习优先</option>
+        </select>
+      </div>
       <!-- 单词列表 -->
       <div class="wd-list">
         <div v-if="loading" class="wd-empty">加载中…</div>
         <div v-else-if="!words.length" class="wd-empty">还没有单词，导入 TXT 或手动添加</div>
         <div
-          v-for="w in posFilteredWords" :key="w.id"
+          v-for="w in words" :key="w.id"
           class="wd-row"
           :class="{ selected: selectedIds.includes(w.id) }"
           @click="selectedIds.length ? toggleSelect(w.id) : toggleWord(w.id)"
@@ -69,7 +113,7 @@
             </div>
           </div>
           <div class="wd-row-body">
-            <div class="wd-word">{{ w.word }}<span v-if="w.pos" class="wd-pos-badge">{{ w.pos }}</span></div>
+            <div class="wd-word">{{ w.word }}<span v-if="w.pos" class="wd-pos-badge">{{ w.pos }}</span><span v-if="w.orphanedAt" class="wd-orphan" title="原文已删除，词条仍可复习">原文已删除</span></div>
             <div class="detail-wrap" :class="{ open: showDetails || expandedWords.has(w.id) }">
               <div class="detail-inner">
                 <span class="wd-phonetic">{{ w.phonetic }}</span>
@@ -78,12 +122,21 @@
             </div>
           </div>
           <div class="wd-row-actions">
+            <button v-if="w.source && w.markId && !w.orphanedAt" class="wd-locate" @click.stop="locateWord(w)" title="定位原文">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.33 7-11a7 7 0 1 0-14 0c0 5.67 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+            </button>
             <button class="wd-move" @click.stop="openMoveDropdown(w, $event)" title="移动到其他单词本">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
             <button class="wd-del" @click.stop="deleteWord(w.id)">×</button>
           </div>
         </div>
+      </div>
+      <!-- 分页 -->
+      <div class="wd-pager" v-if="total > pageSize">
+        <button :disabled="page <= 1 || loading" @click="page--">上一页</button>
+        <span>{{ page }} / {{ Math.ceil(total / pageSize) }} · 共 {{ total }} 条</span>
+        <button :disabled="!hasMore || loading" @click="page++">下一页</button>
       </div>
     </div>
 
@@ -123,7 +176,7 @@
 const route = useRoute()
 const bookId = route.params.id as string
 
-interface Word { id: string; word: string; phonetic: string; meaning: string; example: string; phase: string; learnCorrect: number; note: string; pos: string }
+interface Word { id: string; word: string; phonetic: string; meaning: string; example: string; phase: string; learnCorrect: number; note: string; pos: string; source?: string; markId?: string; paragraphId?: string; startOffset?: number; orphanedAt?: string }
 
 const words = ref<Word[]>([])
 const bookName = ref('')
@@ -135,6 +188,22 @@ function toggleAllDetails() {
   showDetails.value = !showDetails.value
   expandedWords.value.clear()
 }
+
+// ── 窄屏溢出操作下拉菜单 ──
+const wdMenuOpen = ref(false)
+const wdMenuRef = ref<HTMLDivElement>()
+function onWdMenuDocClick(e: MouseEvent) {
+  if (wdMenuRef.value && !wdMenuRef.value.contains(e.target as Node)) {
+    wdMenuOpen.value = false
+  }
+}
+watch(wdMenuOpen, (v) => {
+  if (v) { document.addEventListener('click', onWdMenuDocClick) }
+  else { document.removeEventListener('click', onWdMenuDocClick) }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onWdMenuDocClick)
+})
 function toggleWord(id: string) {
   const w = words.value.find(x => x.id === id)
   if (!w) return
@@ -146,11 +215,26 @@ function toggleWord(id: string) {
   }
 }
 
+/** 从词条跳回原文：带上 markId，阅读页会滚动到对应段落并高亮 */
+function locateWord(w: Word) {
+  if (!w.source || !w.markId) return
+  navigateTo(`/read/${w.source}?mark=${w.markId}`)
+}
+
 function pronounceWord(word: string) {
-  const w = word.replace(/[^a-zA-Z]/g, '').toLowerCase()
-  if (!w) return
-  const audio = new Audio(`https://audio.beingfine.cn/speeches/UK/UK-speech/${w}.mp3`)
-  audio.play().catch(() => {
+  pronResolve(word).then((r) => {
+    if (r) {
+      // 音库防盗链：禁用 Referer，否则发布域会被 CDN 403
+
+      const a = new Audio(); a.referrerPolicy = 'no-referrer'; a.src = r.src
+
+      a.play().catch(() => {
+        const u = new SpeechSynthesisUtterance(word)
+        u.lang = 'en-GB'; u.rate = 0.85
+        speechSynthesis.speak(u)
+      })
+      return
+    }
     const u = new SpeechSynthesisUtterance(word)
     u.lang = 'en-GB'; u.rate = 0.85
     speechSynthesis.speak(u)
@@ -160,14 +244,35 @@ const showAdd = ref(false)
 const addWord = ref('')
 const wordbookList = ref<any[]>([])
 
+const marksPosCounts = ref<Record<string, number>>({})
+
 async function load() {
   loading.value = true
   try {
-    const [wList, bList] = await Promise.all([
-      $fetch<Word[]>(`/api/wordbooks/${bookId}/words`),
+    const params = new URLSearchParams({
+      page: String(page.value),
+      pageSize: String(pageSize),
+      sort: sortBy.value,
+      phase: phaseFilter.value,
+    })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+
+    const [wData, bList] = await Promise.all([
+      $fetch<{
+        words: Word[]
+        total: number
+        hasMore: boolean
+        posCounts: Record<string, number>
+        phaseCounts: Record<string, number>
+      }>(`/api/wordbooks/${bookId}/words?${params}`),
       $fetch<any[]>('/api/wordbooks'),
     ])
-    words.value = wList
+    words.value = wData.words
+    total.value = wData.total
+    hasMore.value = wData.hasMore
+    phaseCounts.value = wData.phaseCounts || {}
+    marksPosCounts.value = wData.posCounts
     bookName.value = bList.find(b => b.id === bookId)?.name || '单词本'
     wordbookList.value = bList
   } catch {}
@@ -181,7 +286,8 @@ function toggleSelect(id: string) {
 
 async function deleteWord(id: string) {
   await $fetch(`/api/wordbooks/${bookId}/words/${id}`, { method: 'DELETE' })
-  words.value = words.value.filter(w => w.id !== id)
+  if (words.value.length === 1 && page.value > 1) { page.value--; return }
+  await load()
 }
 
 async function deleteSelected() {
@@ -189,14 +295,14 @@ async function deleteSelected() {
   for (const id of selectedIds.value) {
     await $fetch(`/api/wordbooks/${bookId}/words/${id}`, { method: 'DELETE' })
   }
-  words.value = words.value.filter(w => !selectedIds.value.includes(w.id))
   selectedIds.value = []
+  await load()
 }
 
 async function moveSelected() {
   await $fetch(`/api/wordbooks/${bookId}/words/move`, { method: 'POST', body: { wordIds: selectedIds.value.slice(), toBookId: 'wb_default' } })
-  words.value = words.value.filter(w => !selectedIds.value.includes(w.id))
   selectedIds.value = []
+  await load()
 }
 
 
@@ -240,7 +346,35 @@ async function handleAdd() {
   } catch { alert('添加失败') }
 }
 
-function goCards() { window.location.href = `/wordbooks/${bookId}/cards` }
+function goCards() { navigateTo(`/wordbooks/${bookId}/cards`) }
+
+/** 导出需要全量，不能只导出当前页 */
+async function fetchAllForExport(): Promise<Word[]> {
+  const all: Word[] = []
+  let p = 1
+  while (true) {
+    const params = new URLSearchParams({ page: String(p), pageSize: '200', sort: sortBy.value, phase: phaseFilter.value })
+    if (searchQuery.value) params.set('q', searchQuery.value)
+    if (activePos.value) params.set('pos', activePos.value)
+    const res = await $fetch<{ words: Word[]; hasMore: boolean }>(`/api/wordbooks/${bookId}/words?${params}`)
+    all.push(...res.words)
+    if (!res.hasMore) break
+    p++
+  }
+  return all
+}
+
+async function exportTxt() {
+  const list = await fetchAllForExport()
+  const text = list.map(w => w.word).join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `wordbook-${bookId}-words.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 // ── 词性筛选 ──
 const posTabs = [
@@ -249,25 +383,57 @@ const posTabs = [
   { key: 'v.', label: 'v.动词' },
   { key: 'adj.', label: 'adj.形容词' },
   { key: 'adv.', label: 'adv.副词' },
+  { key: 'prep.', label: 'prep.介词' },
+  { key: 'pron.', label: 'pron.代词' },
+  { key: 'conj.', label: 'conj.连词' },
+  { key: 'phr.', label: 'phr.短语' },
+  { key: 'sent.', label: 'sent.句子' },
 ]
 const activePos = ref('')
-const posFilteredWords = computed(() =>
-  activePos.value ? words.value.filter(w => w.pos === activePos.value) : words.value
-)
+const searchInput = ref('')
+const searchQuery = ref('')
+const phaseFilter = ref('all')
+const sortBy = ref('new')
+const page = ref(1)
+const pageSize = 50
+const total = ref(0)
+const hasMore = ref(false)
+const phaseCounts = ref<Record<string, number>>({})
+const phaseTabs = [
+  { key: 'all', label: '全部' },
+  { key: 'learn', label: '学习中' },
+  { key: 'review', label: '复习中' },
+  { key: 'mastered', label: '已掌握' },
+]
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+function phaseCount(key: string) {
+  return key === 'all' ? total.value : (phaseCounts.value[key] || 0)
+}
+
+function reloadFromFirstPage() {
+  if (page.value !== 1) page.value = 1
+  else load()
+}
+
+watch(searchInput, (v) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    searchQuery.value = v.trim()
+    reloadFromFirstPage()
+  }, 300)
+})
+watch([phaseFilter, sortBy, activePos], reloadFromFirstPage)
+watch(page, load)
 
 const posCounts = computed(() => {
-  const total = words.value.length
-  const counts: Record<string, number> = {}
-  for (const w of words.value) {
-    const p = w.pos || ''
-    counts[p] = (counts[p] || 0) + 1
-  }
+  const counts = marksPosCounts.value
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
   const labelMap: Record<string, string> = {
     '': '全部',
-    'n.': '名词',
-    'v.': '动词',
-    'adj.': '形容词',
-    'adv.': '副词',
+    'n.': '名词', 'v.': '动词', 'adj.': '形容词', 'adv.': '副词',
+    'prep.': '介词', 'pron.': '代词', 'conj.': '连词',
+    'phr.': '短语', 'sent.': '句子',
   }
   const items: Array<{ key: string; label: string; count: number }> = []
   for (const t of posTabs) {
@@ -353,6 +519,14 @@ onMounted(load)
 .wd-back { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #666; text-decoration: none; font-family: 'DM Sans', sans-serif; white-space: nowrap; flex-shrink: 0; }
 .wd-title { flex: 1; text-align: center; font-size: 15px; font-weight: 600; color: #1a1a18; font-family: 'Lora', serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 12px; }
 .wd-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.wd-nav-link {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.75rem; color: #6b6963; text-decoration: none;
+  padding: 5px 10px; border-radius: 7px;
+  border: 0.5px solid rgba(0,0,0,0.1);
+  transition: all 0.12s;
+}
+.wd-nav-link:hover { background: #f0efe9; color: #3d3591; }
 .wd-hdr-btn { padding: 5px 12px; border: 1px solid #e0ddd5; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; color: #666; white-space: nowrap; }
 .wd-hdr-btn:hover { border-color: #3d3591; color: #3d3591; }
 .wd-btn-add { font-size: 18px; font-weight: 500; padding: 3px 12px; }
@@ -365,6 +539,50 @@ onMounted(load)
 .wd-spin-sm { display: inline-block; width: 12px; height: 12px; border: 1.5px solid #e0ddd5; border-top-color: #3d3591; border-radius: 50%; animation: wdSpin 0.6s linear infinite; vertical-align: middle; }
 @keyframes wdSpin { to { transform: rotate(360deg); } }
 
+/* ── 窄屏溢出操作下拉菜单 ── */
+.wd-actions-overflow { display: flex; align-items: center; gap: 6px; }
+.wd-menu-wrap { display: none; position: relative; }
+
+.wd-menu-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  border: 0.5px solid rgba(0,0,0,0.1); border-radius: 8px;
+  background: #fff; color: #6b6963; cursor: pointer;
+  transition: all 0.12s; flex-shrink: 0;
+}
+.wd-menu-btn:hover { border-color: #3d3591; color: #3d3591; }
+
+.wd-menu-drop {
+  position: absolute; top: 100%; right: 0; z-index: 200;
+  margin-top: 6px; min-width: 150px;
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 0 0 0.5px rgba(0,0,0,0.08);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+
+.wd-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 14px; border-radius: 7px;
+  border: none; background: transparent;
+  font-size: 0.84rem; color: #6b6963; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; white-space: nowrap;
+  transition: all 0.1s;
+}
+.wd-menu-item:hover { background: #f0efe9; color: #3d3591; }
+.wd-menu-item:disabled { opacity: 0.4; cursor: default; }
+.wd-menu-item.active { background: #edeafd; color: #3d3591; font-weight: 500; }
+
+.wd-menu-fade-enter-active,
+.wd-menu-fade-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.wd-menu-fade-enter-from,
+.wd-menu-fade-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* ── 窄屏（≤550px）：溢出按钮收到下拉菜单 ── */
+@media (max-width: 550px) {
+  .wd-actions-overflow { display: none; }
+  .wd-menu-wrap { display: block; }
+}
+
 .wd-toolbar {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 20px; background: #faf9fe; border-bottom: 1px solid rgba(61,53,145,0.1);
@@ -374,8 +592,7 @@ onMounted(load)
 .wd-btn-del { color: #d55 !important; border-color: #fcc !important; }
 
 /* ── 词性筛选条 ── */
-.wd-pos-bar {
-  position: relative;
+.wd-pos-bar {  position: relative;
   display: flex;
   align-items: center;
   gap: 0;
@@ -467,6 +684,12 @@ onMounted(load)
 .wd-del:hover { color: #d55; }
 .wd-move { border: none; background: none; cursor: pointer; padding: 4px 6px; line-height: 1; display: flex; align-items: center; color: #ccc; }
 .wd-move:hover { color: #3d3591; }
+.wd-locate { border: none; background: none; cursor: pointer; padding: 4px 6px; line-height: 1; display: flex; align-items: center; color: #ccc; }
+.wd-locate:hover { color: #0f6e56; }
+.wd-orphan {
+  margin-left: 6px; padding: 1px 5px; border-radius: 4px; font-size: 10px;
+  color: #854f0b; background: #faeeda; font-weight: 400; vertical-align: middle;
+}
 
 /* ── 折叠动画 ── */
 .detail-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.2s linear; }
@@ -497,4 +720,34 @@ onMounted(load)
   .wd-header, .wd-toolbar { padding-left: 14px; padding-right: 14px; }
   .wd-row { padding: 12px 14px; }
 }
+
+/* 搜索 / 筛选 / 分页 */
+.wd-filters { display: flex; align-items: center; gap: 10px; padding: 10px 14px 6px; flex-wrap: wrap; }
+.wd-search {
+  flex: 1 1 180px; min-width: 140px; padding: 7px 10px; border: 0.5px solid rgba(0,0,0,0.14);
+  border-radius: 8px; font-family: var(--sans, sans-serif); font-size: 12.5px; background: #fff; outline: none; color: #334155;
+}
+.wd-search:focus { border-color: #3d3591; }
+.wd-phase-chips { display: flex; gap: 4px; }
+.wd-phase-chip {
+  display: flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 6px;
+  border: 0.5px solid rgba(0,0,0,0.1); background: #fff; font-size: 11.5px; color: #8a8880;
+  cursor: pointer; font-family: var(--sans, sans-serif); transition: all .12s;
+}
+.wd-phase-chip.active { background: #3d3591; border-color: #3d3591; color: #fff; }
+.wd-phase-num { font-size: 10px; opacity: .7; }
+.wd-sort {
+  padding: 6px 8px; border-radius: 7px; border: 0.5px solid rgba(0,0,0,0.12);
+  background: #fff; font-size: 11.5px; color: #5f5e5a; font-family: var(--sans, sans-serif); outline: none;
+}
+.wd-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px;
+  border-top: 0.5px solid rgba(0,0,0,0.06); font-family: var(--sans, sans-serif);
+  font-size: 12px; color: #8a8880;
+}
+.wd-pager button {
+  padding: 5px 12px; border-radius: 6px; border: 0.5px solid rgba(0,0,0,0.12);
+  background: #fff; font-size: 12px; cursor: pointer; color: #5f5e5a;
+}
+.wd-pager button:disabled { opacity: .45; cursor: default; }
 </style>

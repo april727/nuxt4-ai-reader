@@ -6,7 +6,9 @@
       </svg>
       <span class="pl-title">精听列表</span>
       <span class="pl-count">{{ savedCues.length }} 句</span>
-      <span class="pl-arrow">{{ isCollapsed ? '▶' : '▼' }}</span>
+      <svg class="pl-chevron" :class="{ open: !isCollapsed }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
     </div>
 
     <div v-if="!isCollapsed" class="pl-body">
@@ -88,6 +90,13 @@ const emit = defineEmits<{
 
 const isCollapsed = ref(false)
 
+// 窄屏默认折叠
+onMounted(() => {
+  if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    isCollapsed.value = true
+  }
+})
+
 // 已保存的字幕
 const savedCues = computed(() => {
   return props.cues.filter(c => props.practice[c.id])
@@ -134,7 +143,8 @@ function formatTime(seconds: number): string {
 
 .pl-title { font-weight: 500; color: #4a4a46; }
 .pl-count { font-family: 'DM Mono', monospace; font-size: 11px; color: #a09e97; margin-left: auto; }
-.pl-arrow { font-size: 9px; color: #c0bdb4; margin-left: 4px; }
+.pl-chevron { flex-shrink: 0; color: #c0bdb4; margin-left: 4px; transition: transform 0.2s ease; }
+.pl-chevron.open { transform: rotate(180deg); }
 
 .pl-body {
   max-height: 300px;

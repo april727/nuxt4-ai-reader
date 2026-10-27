@@ -1,6 +1,6 @@
 import type { Paragraph } from '#shared/types'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { getPromptTemplate } from '../../utils/promptManager'
+import { deepseekChat } from '../../utils/deepseek'
 
 type SegmentType = 'document' | 'subtitle'
 
@@ -81,15 +81,12 @@ function mergeTinyTails(segments: Paragraph[], minChars = 50): Paragraph[] {
   return segments
 }
 
-// 启动时加载 prompt 模板（一次读盘，常驻内存）
-const segmentTemplate = readFileSync(resolve('prompt/segment.md'), 'utf-8')
-
-function buildPrompt(inputText: string, overrides?: { minSentences: number; maxSentences: number }): string {
+function buildPrompt(template: string, inputText: string, overrides?: { minSentences: number; maxSentences: number }): string {
   const sizeRule = overrides
     ? `用户指定：每段 ${overrides.minSentences}-${overrides.maxSentences} 句。严格按照此范围分段，不参考内容类型。`
     : `根据内容类型自动决定（见下方对照表）。`
 
-  return segmentTemplate
+  return template
     .replace('{sizeRule}', sizeRule)
     .replace('{inputText}', inputText)
 }
@@ -103,14 +100,6 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{ text: string; type?: SegmentType; size?: SegmentSize }>(event)
   const segmentType: SegmentType = body.type || 'document'
 
-  const apiKey = process.env.DEEPSEEK_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-
-  if (!apiKey) {
-    throw createError({ statusCode: 500, message: 'DEEPSEEK_API_KEY not configured' })
-  }
-
   const rawText = segmentType === 'subtitle' ? deduplicateText(body.text) : body.text
 
   const maxInputChars = 15000
@@ -118,32 +107,48 @@ export default defineEventHandler(async (event) => {
     ? rawText.slice(0, maxInputChars) + '\n\n[全文共 ' + rawText.length + ' 字符，此处仅提供前 ' + maxInputChars + ' 字符]'
     : rawText
 
-  const prompt = buildPrompt(inputText, body.size)
+  // 从 Prompt 管理器获取模板（失败时自动降级到本地常量）
+  const segmentTemplate = await getPromptTemplate('segment')
+  const prompt = buildPrompt(segmentTemplate, inputText, body.size)
 
   try {
-    const response = await $fetch<{
-      choices: Array<{ message: { content: string } }>
-    }>(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 8000,
-      },
-    })
+    const content = await deepseekChat(
+      [{ role: 'user', content: prompt }],
+      { temperature: 0.1, maxTokens: 12000, responseFormat: { type: 'json_object' }, timeoutMs: 180_000 },
+    )
 
-    const content = response.choices[0]?.message?.content || ''
-    const jsonMatch = content.match(/\[[\s\S]*\]/)
+    let raw: Array<{ index: number; text: string }>
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      throw new Error('Failed to parse AI response')
+      // 兼容旧格式：尝试匹配数组
+      const arrMatch = content.match(/\[[\s\S]*\]/)
+      if (!arrMatch) throw new Error('Failed to parse AI response')
+      try {
+        raw = JSON.parse(arrMatch[0])
+      } catch {
+        throw new Error('Failed to parse AI response')
+      }
+    } else {
+      let jsonStr = jsonMatch[0]
+      try {
+        const obj = JSON.parse(jsonStr)
+        raw = obj.segments || obj
+      } catch {
+        jsonStr = jsonStr.replace(/\}\s*\n\s*\{/g, '},\n{')
+          .replace(/\]\s*\n\s*\{/g, '],\n{')
+          .replace(/"\s*\n\s*\{/g, '",\n{')
+          .replace(/,(\s*[}\]])/g, '$1')
+        try {
+          const obj = JSON.parse(jsonStr)
+          raw = obj.segments || obj
+        } catch (repairErr: any) {
+          console.error('[segment] JSON 修复失败:', repairErr.message)
+          throw new Error('Failed to parse AI response')
+        }
+      }
     }
 
-    const raw = JSON.parse(jsonMatch[0]) as Array<{ index: number; text: string }>
+    if (!Array.isArray(raw)) throw new Error('AI response is not an array')
     const segments: Paragraph[] = raw.map((s, i) => ({
       id: `p-${i}`,
       index: i,

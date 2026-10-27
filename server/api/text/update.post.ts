@@ -1,127 +1,118 @@
-import { getDb, saveDb } from '../../utils/db'
+import { queryOne, runQuery } from '../../utils/db'
+import { syncMarks } from '../../utils/marksSync'
+import { snapshotText } from '../../utils/textHistory'
+import { mutateSegments } from '../../utils/segmentsStore'
 
-// 标记类型 → 默认单词本 ID 映射
-const MARK_TO_BOOK: Record<string, string> = {
-  word: 'wb_default',
-  phrase: 'wb_phrases',
-  sentence: 'wb_sentences',
-}
-
-// 从 mark detail 中提取音标和释义
-function extractPhonetic(detail: string): string {
-  if (!detail) return ''
-  const m = detail.match(/\[PHONETIC\]\s*(\/[^/]+\/)\s*\[\/PHONETIC\]/)
-  return m?.[1] || ''
-}
-
-function extractMeaning(detail: string): string {
-  if (!detail) return ''
-  // 匹配 "### 基本释义" 之后到下一个 "###" 或标签之间的内容
-  const m = detail.match(/###\s*基本释义\s*\n+([\s\S]*?)(?=\n###|\n\[PHONETIC\]|\n\[LEMMA\]|$)/)
-  if (!m) return ''
-  return m[1]
-    .replace(/^[-*]\s*/gm, '')   // 去掉列表符号
-    .replace(/\n+/g, '；')        // 多行合并为分号分隔
-    .trim()
-    .slice(0, 120)
-}
-
-function extractLemma(mark: any): string {
-  // 优先用 mark 对象本身的 lemma 字段
-  if (mark.lemma) return mark.lemma.trim()
-  // 兜底从 detail 中解析 [LEMMA] 标签
-  const m = (mark.detail || '').match(/\[LEMMA\]\/(.+?)\/\[\/LEMMA\]/)
-  return m?.[1]?.trim() || ''
-}
-
-// 同步新增标记到对应的默认单词本
-async function syncMarksToWordbooks(db: any, textId: string, oldMarksJson: string, newMarksJson: string) {
-  let oldMarks: any[] = []
-  let newMarks: any[] = []
-  try { oldMarks = oldMarksJson ? JSON.parse(oldMarksJson) : [] } catch {}
-  try { newMarks = JSON.parse(newMarksJson) } catch {}
-  if (!newMarks.length) return
-
-  // 找出新增的标记（旧列表中不存在的）
-  const oldIds = new Set(oldMarks.map((m: any) => m.id))
-  const added = newMarks.filter((m: any) => m.id && !oldIds.has(m.id))
-  if (!added.length) return
-
-  const now = new Date().toISOString()
-
-  for (const mark of added) {
-    const bookId = MARK_TO_BOOK[mark.type]
-    if (!bookId || !mark.text?.trim()) continue
-
-    // 确认目标单词本存在
-    const wb = db.prepare('SELECT id FROM wordbooks WHERE id=?')
-    wb.bind([bookId])
-    if (!wb.step()) { wb.free(); continue }
-    wb.free()
-
-    // 去重：同一单词本中不重复添加相同文本
-    const dup = db.prepare('SELECT id FROM words WHERE bookId=? AND word=?')
-    dup.bind([bookId, mark.text.trim()])
-    if (dup.step()) { dup.free(); continue }
-    dup.free()
-
-    const wordId = `w_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-    const phonetic = extractPhonetic(mark.detail || '')
-    const meaning = extractMeaning(mark.detail || '')
-    const lemma = extractLemma(mark)
-    // 有原词时以原词为主词条，原文作为笔记
-    const wordText = lemma || mark.text.trim()
-    const note = lemma && lemma !== mark.text.trim()
-      ? `原文: ${mark.text.trim()}${mark.note ? '\n' + mark.note : ''}`
-      : mark.note || ''
-
-    db.run(
-      `INSERT INTO words (id,bookId,word,phonetic,meaning,note,source,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?)`,
-      [wordId, bookId, wordText, phonetic, meaning, note, textId, now, now]
-    )
-  }
-}
-
+/**
+ * 更新文本的若干字段。
+ *
+ * 这里有一条必须守住的规则：**只写请求里真正给出的列**。
+ *
+ * 旧实现无论传了什么，都会把 title/analysis/segments/explanations/marks/...
+ * 一次性全量写回，而 `segments` 用的是这次请求开始时读到的旧值。
+ * 这个接口被高频调用（保存标记、阅读位置、段落笔记、解释缓存……），
+ * 于是只要用户合并段落的同时有一个 `text/update` 在飞，
+ * 合并结果就会被那份旧 segments 覆盖 —— 已合并的段落"复活"、
+ * 段落内容顺序错乱。这也是"合并完过一会儿段落就乱了"的真正来源。
+ */
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
     id: string; title?: string; analysis?: any; segments?: any[]; explanations?: Record<string,string>
     marks?: any[]; readingPosition?: any; paragraphChats?: Record<string, any[]>
+    paragraphNotes?: any[]; paragraphNotesMap?: Record<string, string>
   }>(event)
   if (!body?.id) throw createError({ statusCode: 400 })
 
-  const db = await getDb()
-  // 先读现有数据
-  const stmt = db.prepare('SELECT * FROM texts WHERE id=?')
-  stmt.bind([body.id])
-  if (!stmt.step()) { stmt.free(); throw createError({ statusCode: 404 }) }
-  const existing = stmt.getAsObject()
-  stmt.free()
+  const existing = await queryOne('SELECT * FROM texts WHERE id=?', [body.id])
+  if (!existing) throw createError({ statusCode: 404 })
 
-  // 合并
-  const title = body.title || existing.title
-  const analysis = body.analysis ? JSON.stringify(body.analysis) : existing.analysis
-  const segments = body.segments ? JSON.stringify(body.segments) : existing.segments
-  let explanations = existing.explanations || '{}'
-  if (body.explanations) {
-    const cur = existing.explanations ? JSON.parse(existing.explanations) : {}
-    explanations = JSON.stringify({ ...cur, ...body.explanations })
+  const sets: string[] = []
+  const args: any[] = []
+
+  if (body.title !== undefined) {
+    sets.push('title=?')
+    args.push(body.title)
   }
+
+  if (body.analysis !== undefined) {
+    sets.push('analysis=?')
+    args.push(body.analysis ? JSON.stringify(body.analysis) : '')
+  }
+
+  // 段落结构：走统一的串行通道，避免与合并/插入/删除互相覆盖
+  let segmentsHandledByStore = false
+  if (body.segments !== undefined) {
+    await snapshotText(body.id, '段落结构更新')
+    const nextSegs = Array.isArray(body.segments) ? body.segments : []
+    await mutateSegments(body.id, (segs) => {
+      // 内容完全一致就不写（避免无意义的历史快照与同步）
+      if (JSON.stringify(segs) === JSON.stringify(nextSegs)) {
+        return { segments: segs, changed: false }
+      }
+      segs.length = 0
+      segs.push(...nextSegs.map((s: any, i: number) => ({ ...s, index: i })))
+      return { segments: segs, changed: true }
+    })
+    segmentsHandledByStore = true
+  }
+
+  // 解释缓存是「按段落 ID 增量合并」，必须保留已有条目
+  if (body.explanations !== undefined) {
+    let cur: Record<string, string> = {}
+    try { cur = existing.explanations ? JSON.parse(existing.explanations) : {} } catch {}
+    if (body.explanations) {
+      for (const [k, v] of Object.entries(body.explanations)) {
+        if (v) cur[k] = v
+        else delete cur[k]
+      }
+    }
+    sets.push('explanations=?')
+    args.push(JSON.stringify(cur))
+  }
+
   const marksChanged = body.marks !== undefined
-  const marks = marksChanged ? JSON.stringify(body.marks) : existing.marks
-  const readingPosition = body.readingPosition !== undefined ? JSON.stringify(body.readingPosition) : existing.readingPosition
-  let paragraphChats = existing.paragraphChats || '{}'
-  if (body.paragraphChats) {
-    paragraphChats = JSON.stringify(body.paragraphChats)
-  }
-
-  db.run(`UPDATE texts SET title=?,analysis=?,segments=?,explanations=?,marks=?,readingPosition=?,paragraphChats=?,updatedAt=? WHERE id=?`,
-    [title, analysis, segments, explanations, marks, readingPosition, paragraphChats, new Date().toISOString(), body.id])
-
-  // markers 变更时，自动同步新增标记到对应单词本
   if (marksChanged) {
-    await syncMarksToWordbooks(db, body.id, existing.marks || '[]', marks)
+    sets.push('marks=?')
+    args.push(JSON.stringify(body.marks))
   }
 
-  await saveDb()
+  if (body.readingPosition !== undefined) {
+    sets.push('readingPosition=?')
+    args.push(JSON.stringify(body.readingPosition))
+  }
+
+  if (body.paragraphChats !== undefined) {
+    sets.push('paragraphChats=?')
+    args.push(JSON.stringify(body.paragraphChats))
+  }
+
+  if (body.paragraphNotes !== undefined) {
+    sets.push('paragraphNotes=?')
+    args.push(JSON.stringify(body.paragraphNotes))
+  }
+
+  if (body.paragraphNotesMap !== undefined) {
+    sets.push('paragraphNotesMap=?')
+    args.push(JSON.stringify(body.paragraphNotesMap))
+  }
+
+  // 只有确实有字段要改时才发 UPDATE（segments 已由串行通道单独写）
+  const hasPlainFields = sets.length > 0
+  if (hasPlainFields) {
+    sets.push('updatedAt=?')
+    args.push(new Date().toISOString())
+    args.push(body.id)
+    await runQuery(`UPDATE texts SET ${sets.join(',')} WHERE id=?`, args)
+  } else if (!segmentsHandledByStore) {
+    // 什么都没传：只刷新 updatedAt，绝不触碰任何内容列
+    await runQuery('UPDATE texts SET updatedAt=? WHERE id=?', [new Date().toISOString(), body.id])
+  }
+
+  // markers 变更时，同步 marks 独立表 + 单词本
+  if (marksChanged) {
+    const title = body.title !== undefined ? body.title : existing.title
+    await syncMarks(body.id, title, existing.folder || 'default', existing.marks || '[]', JSON.stringify(body.marks))
+  }
+
   return { ok: true }
 })

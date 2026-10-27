@@ -5,9 +5,19 @@
     @dragleave.prevent="dragOver = false"
     @drop.prevent="handleGlobalDrop"
   >
+    <!-- 隐藏的文件夹选择器 -->
+    <input
+      ref="batchFolderInput"
+      type="file"
+      webkitdirectory
+      multiple
+      class="file-input-hidden"
+      @change="onFolderSelected"
+    />
+
     <!-- 全局拖拽提示 -->
     <Transition name="drag-fade">
-      <div v-if="dragOver" class="drag-overlay">
+      <div v-if="dragOver && !batchActive" class="drag-overlay">
         <div class="drag-hint">
           <div class="drag-hint-ring">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
@@ -16,32 +26,88 @@
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
           </div>
-          <p>释放以上传文件</p>
+          <p>释放以上传文件（支持 PDF / 视频 / 批量拖放）</p>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 批量上传进度面板 -->
+    <Transition name="drag-fade">
+      <div v-if="batchActive" class="batch-overlay">
+        <div class="batch-card">
+          <div class="batch-header">
+            <span class="batch-title">批量导入</span>
+            <button class="batch-close" @click="batchActive = false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+
+          <!-- 进行中 -->
+          <template v-if="batchDone < batchTotal">
+            <div class="batch-progress-track">
+              <div class="batch-progress-fill" :style="{ width: (batchTotal > 0 ? (batchDone / batchTotal) * 100 : 0) + '%' }"></div>
+            </div>
+            <p class="batch-progress-text">{{ batchDone }}/{{ batchTotal }}</p>
+            <p class="batch-current">{{ batchCurrentName }}</p>
+          </template>
+
+          <!-- 完成 -->
+          <template v-else>
+            <div class="batch-done-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"/><polyline points="16 10 11 15 8 12"/>
+              </svg>
+            </div>
+            <p class="batch-result-text">
+              成功导入 {{ batchDone - batchErrors.length }} 个
+              <template v-if="batchErrors.length">，{{ batchErrors.length }} 个失败</template>
+            </p>
+            <div v-if="batchErrors.length" class="batch-errors">
+              <div v-for="(err, i) in batchErrors" :key="i" class="batch-error-item">{{ err }}</div>
+            </div>
+          </template>
         </div>
       </div>
     </Transition>
 
     <!-- 左侧文件夹 -->
-    <aside class="lib-sidebar">
+    <aside class="lib-sidebar" :class="{ hidden: sidebarCollapsed }">
       <FolderSidebar
         ref="sidebarRef"
         :folders="folders"
         :active-folder="activeFolder"
         :counts="folderCounts"
-        @select="activeFolder = $event"
+        :collapsed="sidebarCollapsed"
+        @toggle="sidebarCollapsed = !sidebarCollapsed"
+        @select="handleFolderSelect"
         @create="handleCreateFolder"
         @drop-on-folder="handleDropOnFolder"
         @delete-folder="handleDeleteFolder"
         @add-sub="(pid: string) => sidebarRef?.startSubCreate(pid)"
+        @rename-folder="handleRenameFolder"
+        @refresh="loadFolders"
       />
     </aside>
+
+    <!-- 手机端抽屉遮罩 -->
+    <div v-if="isMobile && !sidebarCollapsed" class="sidebar-scrim" @click="sidebarCollapsed = true"></div>
 
     <!-- 右侧内容区 -->
     <main class="lib-main">
       <header class="lib-toolbar">
+      
         <div class="lib-toolbar-row">
           <div class="lib-toolbar-left">
+            <!-- 手机端：抽屉打开按钮 -->
+            <button v-if="isMobile" class="drawer-open-btn" @click="sidebarCollapsed = false" title="打开文件夹目录">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+              </svg>
+            </button>
             <h1 class="lib-title">{{ activeFolderName }}</h1>
+            <button v-if="reviewDueCount" class="review-chip" @click="openReviewToday" :title="`${reviewDueCount} 篇到期需要复习`">
+              今日复习 · {{ reviewDueCount }}
+            </button>
             <span v-if="searchedBooks.length" class="lib-count">{{ searchedBooks.length }} 本</span>
           </div>
           <div class="lib-filter-bar">
@@ -60,18 +126,22 @@
               {{ sortLabel }}
             </button>
           </div>
+      <!-- 便签按钮 -->
+      <button class="notes-trigger-btn" @click="showNotes = true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 21V4h11l5 5v12z"/><polyline points="14 4 14 10 20 10"/></svg>
+        <span>便签</span>
+      </button>
           <div class="lib-actions">
-            <NuxtLink to="/wordbooks" class="lib-wordbook-btn" title="单词本">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              <span>单词本</span>
-            </NuxtLink>
             <ToolbarActions
               @import-video="showVideoImport = true"
               @upload="showUpload = true"
               @url="showUrl = true"
+              @batch-upload="openBatchPicker"
+              @folder-upload="openFolderPicker"
             />
           </div>
         </div>
+     
       </header>
 
       <!-- 搜索条 -->
@@ -83,6 +153,7 @@
           v-model="searchQuery"
           class="lib-search-input"
           placeholder="搜索书名或来源..."
+          autocomplete="off"
           @input="onSearchInput"
         />
         <button v-if="searchQuery" class="lib-search-clear" @click="searchQuery = ''; searchDebounced = ''">×</button>
@@ -99,9 +170,16 @@
           :source="book.source"
           :read-count="book.readCount"
           :mark-count="book.markCount"
+          :mark-types="book.markTypes"
+          :words="book.words"
+          :para-count="book.paraCount"
+          :created-at="book.createdAt"
           :duration="book.duration"
           :thumbnail="(book as any).thumbnail"
           :completed-at="(book as any).completedAt"
+          :ai-segmented="(book as any).aiSegmented"
+          :content-kind="(book as any).contentKind"
+          :sheet-pages="(book as any).sheetPages"
           :draggable="true"
           :style="{ '--enter-delay': Math.min(i * 0.03, 0.6) + 's' }"
           @dragstart="handleBookDragStart($event, book.id)"
@@ -119,15 +197,15 @@
         </template>
         <template v-else>
           <div class="lib-empty-illustration">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" class="lib-empty-icon">
-              <path d="M4 19V6a2 2 0 0 1 2-2h13a.5.5 0 0 1 .5.5v13"/>
-              <path d="M4 19a2 2 0 0 0 2 2h13a.5.5 0 0 0 .5-.5V17"/>
-              <path d="M4 19a2 2 0 0 1 2-2h13.5"/>
-            </svg>
+            <img :src="'/icon.png'" alt="AI Reader" class="lib-empty-icon" width="72" height="72" />
           </div>
           <p class="lib-empty-title">{{ sourceFilter === 'video' ? '还没有视频' : '书架是空的' }}</p>
           <p class="lib-empty-hint">开始你的阅读之旅</p>
           <div class="lib-empty-actions">
+            <button class="lib-empty-btn" @click="openBatchPicker">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><polyline points="9 14 12 11 15 14"/></svg>
+              批量上传
+            </button>
             <button class="lib-empty-btn" @click="showVideoImport = true">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
               导入视频
@@ -151,6 +229,10 @@
         @close="showVideoImport = false"
       />
     </main>
+    <!-- 便签弹窗 -->
+    <ClientOnly>
+      <StickyNotesModal v-model="showNotes" />
+    </ClientOnly>
 
     <!-- 右键菜单 -->
     <Teleport to="body">
@@ -177,7 +259,7 @@
 
     <!-- 网址输入弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showUrl" class="modal-overlay" @click.self="showUrl = false">
+      <div v-if="showUrl" class="modal-overlay" @click.self="safeClose(() => { showUrl = false })">
         <div class="modal-card">
           <div class="modal-header">
             <h3 class="modal-title">提取网页文章</h3>
@@ -197,6 +279,26 @@
               <div class="spinner"></div>
               <p>正在提取文章内容…</p>
             </div>
+            <div class="block-mode" role="group" aria-label="分块粒度">
+              <span class="block-mode-label">分块</span>
+              <button
+                class="block-mode-btn"
+                :class="{ active: blockMode === 'large' }"
+                :disabled="urlLoading"
+                @click="setBlockMode('large')"
+              >大块（按章节合并）</button>
+              <button
+                class="block-mode-btn"
+                :class="{ active: blockMode === 'small' }"
+                :disabled="urlLoading"
+                @click="setBlockMode('small')"
+              >小块（每段一块）</button>
+            </div>
+            <p class="block-mode-hint">
+              {{ blockMode === 'large'
+                ? '同一章节的多个自然段会合并成一块，适合每块做一次详细解释。图片并入所属块。'
+                : '每个自然段单独成块，适合逐句精读。图片单独成段。' }}
+            </p>
           </div>
           <div class="modal-footer">
             <button class="btn-ghost" @click="showUrl = false">取消</button>
@@ -208,7 +310,7 @@
 
     <!-- 上传弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showUpload || showPaste" class="modal-overlay" @click.self="closeModal">
+      <div v-if="showUpload || showPaste" class="modal-overlay" @click.self="safeClose(closeModal)">
         <div class="modal-card" style="max-width: 520px">
           <div class="modal-header">
             <h3 class="modal-title">{{ showUpload ? '上传文件' : '粘贴文本' }}</h3>
@@ -223,6 +325,7 @@
               @submit-text="handleModalText"
               @analyze="() => {}"
               @clear="closeModal"
+              @batch-done="closeModal(); loadBooks()"
             />
           </div>
         </div>
@@ -231,7 +334,7 @@
 
     <!-- 重命名弹窗 -->
     <Transition name="modal-fade">
-      <div v-if="showRename" class="modal-overlay" @click.self="showRename = false">
+      <div v-if="showRename" class="modal-overlay" @click.self="safeClose(() => { showRename = false })">
         <div class="modal-card" style="max-width: 400px">
           <div class="modal-header">
             <h3 class="modal-title">重命名</h3>
@@ -259,10 +362,12 @@
 </template>
 
 <script setup lang="ts">
-useHead({ title: 'AI 阅读分析 - 书架' })
+import { captureVideoThumbnail } from '~/composables/useVideoThumbnail'
 
+useHead({ title: 'AI 阅读分析 - 书架' })
+const showNotes = ref(false)
 interface Folder { id: string; name: string }
-interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string }
+interface BookItem { id: string; title: string; source: string; length: number; duration?: number; completedAt?: string; aiSegmented?: boolean; readCount?: number; markCount?: number; words?: number; paraCount?: number; createdAt?: string; markTypes?: { word: number; phrase: number; sentence: number }; contentKind?: string; sheetPages?: number; thumbnail?: string }
 
 const videoSources = ['youtube', 'bilibili', 'video_file', 'audio_file']
 
@@ -275,18 +380,98 @@ const filterOptions = [
   { key: 'video', label: '视频' },
 ]
 
-// SSR 预取
-const { data: folders, refresh: refreshFolders } = await useAsyncData('folders', () =>
-  $fetch<Folder[]>('/api/folder/list'), { default: () => [] as Folder[] }
-)
+// 首屏数据改为纯客户端拉取（server:false）：SSR 阶段不带登录 cookie 会 401，且非 await 的
+// useAsyncData 服务端结果不会序列化到首屏，导致首次进入书架/侧栏为空、点一下文件夹才刷新。
+// getCachedData：返回首页时立即复用上次的客户端缓存（秒显），挂载后再后台静默刷新保鲜。
+const nuxtApp = useNuxtApp()
+/**
+ * 快照闸门：只对「首屏第一帧」放行，组件挂载完成后彻底关闭。
+ *
+ * 为什么单靠 cause 判断不够 —— 看 nuxt/dist/app/composables/asyncData.js 的
+ * key 监听分支：切文件夹会让 key 从 books-A 变成 books-B，Nuxt 用
+ * `cause: 'initial'` 去取 getCachedData，**一旦拿到值就把缓存当结果直接
+ * return，连请求都不发**。所以「cause === initial 就放行」等于：切到任何
+ * 预热过的文件夹都只看快照、永不刷新 —— 刚移走的卡片就永远赖在原位。
+ * 挂载后一刀关掉，之后每次切换都是真请求（本地 7ms，无感）。
+ */
+let snapshotGateOpen = true
+function clientCached(key: string, _app?: any, ctx?: { cause?: string }) {
+  if (!snapshotGateOpen) return undefined
+  // 白名单而不是黑名单：首屏之外一律真请求。
+  const cause = ctx?.cause
+  if (cause && cause !== 'initial') return undefined
+  return (nuxtApp.payload.data as Record<string, any>)?.[key] ?? (nuxtApp.static.data as Record<string, any>)?.[key]
+}
 
-const { data: books, refresh: refreshBooks } = await useAsyncData(
+// 刷新页面时 payload 是空的，先把上次的列表从 localStorage 灌回去，
+// 这样首帧就能渲染书架，不必等接口。本地为主之后接口本身已很快，
+// 但「有快照 → 零等待」和「没有 → 至少一个往返」的体感差别仍然明显。
+primeSnapshots(nuxtApp, ['folders', `books-${activeFolder.value}`])
+
+const { data: folders, pending: foldersPending, refresh: refreshFolders } = useAsyncData('folders', async () => {
+  const list = await $fetch<Folder[]>('/api/folder/list')
+  saveSnapshot('folders', list)
+  // 注意：这里曾经把每个文件夹的书架快照都 prime 进 payload，想让切文件夹「零等待」。
+  // 现已删除 —— 预热别的文件夹 = 把「移动前的旧名单」塞进 payload，配合上面
+  // getCachedData 的短路行为，切过去就是看到旧名单。本地接口 7ms，不需要这层预热。
+  return list
+}, {
+  default: () => [] as Folder[], server: false, lazy: true,
+  getCachedData: (key, app, ctx) => clientCached(key, app, ctx),
+})
+
+const { data: books, pending: booksPending, refresh: refreshBooks } = useAsyncData(
   () => `books-${activeFolder.value}`,
-  () => $fetch<BookItem[]>(`/api/text/list?folder=${activeFolder.value}`),
-  { watch: [activeFolder], default: () => [] as BookItem[] }
+  async () => {
+    const folder = activeFolder.value
+    const list = await $fetch<BookItem[]>(`/api/text/list?folder=${folder}`)
+    saveSnapshot(`books-${folder}`, list)
+    return list
+  },
+  { watch: [activeFolder], default: () => [] as BookItem[], server: false, lazy: true, getCachedData: (key, app, ctx) => clientCached(key, app, ctx) }
 )
 
 const folderCounts = ref<Record<string, number>>({})
+const sidebarCollapsed = ref(false)
+
+// 视口变窄时自动折叠侧栏，变宽时自动展开；手动拖动仍可随时切换
+const NARROW_BREAKPOINT = 1024
+function syncSidebarByWidth() {
+  if (typeof window === 'undefined') return
+  sidebarCollapsed.value = window.innerWidth < NARROW_BREAKPOINT
+}
+onMounted(() => {
+  syncSidebarByWidth()
+  window.addEventListener('resize', syncSidebarByWidth)
+  // 首屏已经用快照占位，这里关闸：此后包括切换文件夹在内的所有请求都必须走真接口
+  snapshotGateOpen = false
+  // 已有缓存数据时：立即显示缓存（getCachedData 已生效），后台静默刷新最新
+  if ((folders.value?.length ?? 0) > 0) loadFolders()
+  if ((books.value?.length ?? 0) > 0) loadBooks()
+})
+onBeforeUnmount(() => window.removeEventListener('resize', syncSidebarByWidth))
+
+// 手机端抽屉：选中文件夹后自动收回
+const isMobile = useIsMobile()
+function handleFolderSelect(id: string) {
+  activeFolder.value = id
+  if (isMobile.value) sidebarCollapsed.value = true
+}
+function loadSidebarPref(): boolean {
+  try {
+    return localStorage.getItem('sidebar-collapsed') === 'true'
+  } catch { return false }
+}
+onMounted(() => {
+  const stored = loadSidebarPref()
+  sidebarCollapsed.value = stored
+  // 移动端默认折叠
+  if (!localStorage.getItem('sidebar-collapsed') && window.innerWidth <= 767) {
+    sidebarCollapsed.value = true
+  }
+})
+function cycleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
+watch(sidebarCollapsed, v => { try { localStorage.setItem('sidebar-collapsed', String(v)) } catch {} })
 const showUpload = ref(false)
 const showPaste = ref(false)
 const showUrl = ref(false)
@@ -294,11 +479,29 @@ const showVideoImport = ref(false)
 const sidebarRef = ref<any>(null)
 const urlInput = ref('')
 const urlLoading = ref(false)
+/**
+ * 网页导入分块粒度：
+ *  large = 按章节/目标长度合并成大块（默认，每块只做一次详细解释）
+ *  small = 每个自然段一块
+ * 选择记录在 localStorage，下次沿用。
+ */
+const blockMode = ref<'large' | 'small'>('large')
+function setBlockMode(m: 'large' | 'small') {
+  blockMode.value = m
+  try { localStorage.setItem('fetch-url-block-mode', m) } catch {}
+}
 const uploading = ref(false)
 const dragOver = ref(false)
 
+// ── 批量上传状态 ──
+const batchActive = ref(false)
+const batchTotal = ref(0)
+const batchDone = ref(0)
+const batchErrors = ref<string[]>([])
+const batchCurrentName = ref('')
+const batchFolderInput = ref<HTMLInputElement | null>(null)
+
 function onGlobalDragOver(e: DragEvent) {
-  // 仅外部文件拖放显示上传提示，卡片拖拽不显示
   dragOver.value = e.dataTransfer?.types?.includes('Files') || false
 }
 
@@ -347,21 +550,44 @@ function cycleSort() {
   sortBy.value = sortOrders[(idx + 1) % sortOrders.length]
 }
 
-const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '' })
+const contextMenu = reactive({ show: false, x: 0, y: 0, bookId: '', completedAt: '', source: '' })
 const contextMenuRef = ref<HTMLElement | null>(null)
 const showRename = ref(false)
 const renameText = ref('')
 const renameBookId = ref('')
 
-const activeFolderName = computed(() => folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹')
+const activeFolderName = computed(() => {
+  if (activeFolder.value === 'review_today') return '今日复习'
+  return folders.value.find((f) => f.id === activeFolder.value)?.name || '默认文件夹'
+})
+
+/** 今日到期篇数：驱动标题旁的「今日复习」入口 */
+const reviewDueCount = ref(0)
+async function refreshReviewDue() {
+  try {
+    const list = await $fetch<any[]>('/api/text/list?folder=review_today')
+    reviewDueCount.value = Array.isArray(list) ? list.length : 0
+  } catch { reviewDueCount.value = 0 }
+}
+function openReviewToday() {
+  activeFolder.value = 'review_today'
+  navigateTo({ path: '/', query: { folder: 'review_today' } })
+}
+
+// 防止框选文字时误关闭弹窗
+function safeClose(closeFn: () => void) {
+  const selection = window.getSelection()
+  if (selection && selection.toString().trim().length > 0) return
+  closeFn()
+}
 
 async function loadFolders() {
   try { await refreshFolders() } catch {}
 }
 
 async function loadBooks() {
+  counts() // 与列表请求并行，计数徽章不再晚一拍
   try { await refreshBooks() } catch {}
-  counts()
 }
 
 async function handleVideoImported(result: { id: string; title: string }) {
@@ -385,19 +611,45 @@ async function handleDeleteFolder(id: string) {
   try { await $fetch('/api/folder/delete', { method: 'POST', body: { id } }); await loadFolders() } catch (e: any) { alert(e?.message || '删除失败') }
 }
 
+async function handleRenameFolder(id: string, name: string) {
+  try { await $fetch('/api/folder/rename', { method: 'POST', body: { id, name } }); await loadFolders() } catch (e: any) { alert(e?.message || '重命名失败') }
+}
+
 async function handleDropOnFolder(folderId: string) {
   if (!dragBookId || folderId === activeFolder.value) return
+  const movedId = dragBookId
+  const fromFolder = activeFolder.value
+  const movedBook = books.value.find(b => b.id === movedId)
+  // 乐观更新：立即从列表中移除
+  if (movedBook) {
+    books.value = books.value.filter(b => b.id !== movedId)
+    counts()
+  }
+  dragBookId = ''
   try {
-    await $fetch('/api/text/move', { method: 'POST', body: { id: dragBookId, folder: folderId } })
+    await $fetch('/api/text/move', { method: 'POST', body: { id: movedId, folder: folderId } })
+    // 移动跨了两个文件夹：两边的列表都得作废。
+    // 只刷新当前列表是不够的 —— 目标文件夹旧快照里可能还没有这张卡，
+    // 源文件夹旧快照里则还留着它，切来切去就会看到「原位还在」。
+    forgetSnapshot(`books-${fromFolder}`)
+    forgetSnapshot(`books-${folderId}`)
+    clearNuxtData(`books-${folderId}`)
+    // 后台刷新确保数据一致
     await loadBooks()
-    dragBookId = ''
-  } catch (e: any) {}
+  } catch (e: any) {
+    // 失败时回滚：重新加载完整列表
+    forgetSnapshot(`books-${fromFolder}`)
+    await loadBooks()
+  }
 }
 
 function openBook(id: string) {
   const book = books.value.find(b => b.id === id)
   const folder = encodeURIComponent(activeFolder.value)
-  if (book && videoSources.includes(book.source)) {
+  // 图片试卷走画布模式，不能进文字阅读页；带上 folder 让返回时回到同一个文件夹
+  if (book && (book as any).contentKind === 'sheet') {
+    navigateTo(`/sheet/${id}?folder=${folder}`)
+  } else if (book && videoSources.includes(book.source)) {
     navigateTo(`/watch/${id}?folder=${folder}`)
   } else {
     navigateTo(`/read/${id}?folder=${folder}`)
@@ -406,31 +658,114 @@ function openBook(id: string) {
 
 async function handleGlobalDrop(e: DragEvent) {
   dragOver.value = false
-  const file = e.dataTransfer?.files?.[0]
-  if (!file) return
-  await processDroppedFile(file)
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (!files.length) return
+  await processBatchFiles(files)
 }
 
-async function processDroppedFile(file: File) {
-  uploading.value = true
-  try {
-    const ext = file.name.split('.').pop()?.toLowerCase()
+// 支持的文件扩展名分类
+const TEXT_EXTS = ['pdf', 'md', 'markdown', 'txt']
+const VIDEO_EXTS = ['mp4', 'webm', 'ogg', 'mov']
+const AUDIO_EXTS = ['mp3', 'wav', 'm4a']
+
+/** 批量处理文件（拖放 / 文件夹 / 多选） */
+async function processBatchFiles(files: File[]) {
+  // 过滤出支持的文件
+  const supported = files.filter(f => {
+    const ext = f.name.split('.').pop()?.toLowerCase()
+    if (!ext) return false
+    return [...TEXT_EXTS, ...VIDEO_EXTS, ...AUDIO_EXTS].includes(ext)
+  })
+  if (!supported.length) {
+    alert('未找到支持的文件格式（PDF / Markdown / TXT / MP4 / MP3 等）')
+    return
+  }
+
+  batchActive.value = true
+  batchTotal.value = supported.length
+  batchDone.value = 0
+  batchErrors.value = []
+
+  for (let i = 0; i < supported.length; i++) {
+    const file = supported[i]
+    batchCurrentName.value = file.name
+    try {
+      await processSingleFile(file)
+      batchDone.value++
+    } catch (e: any) {
+      batchErrors.value.push(`${file.name}: ${e?.message || '未知错误'}`)
+    }
+  }
+
+  // 刷新书架
+  await loadBooks()
+  batchCurrentName.value = ''
+
+  // 保持结果面板展示几秒后自动关闭
+  setTimeout(() => {
+    if (batchActive.value) batchActive.value = false
+  }, 4000)
+}
+
+/** 处理单个文件（文本 or 视频） */
+async function processSingleFile(file: File) {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+
+  if (TEXT_EXTS.includes(ext!)) {
     if (ext === 'pdf') {
       const fd = new FormData(); fd.append('file', file)
-      const result = await $fetch<{ text: string; filePath: string }>('/api/parse-pdf', { method: 'POST', body: fd })
+      const result = await $fetch<{ text: string; filePath: string; chapters?: any[] }>('/api/parse-pdf', { method: 'POST', body: fd })
       if (result?.text) {
-        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, folder: activeFolder.value, filePath: result.filePath } })
-        await loadBooks()
+        await $fetch('/api/text/save', { method: 'POST', body: { text: result.text, source: file.name, folder: activeFolder.value, filePath: result.filePath, chapters: result.chapters || [] } })
       }
-    } else if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
+    } else {
       const text = await file.text()
       if (text.trim()) {
         await $fetch('/api/text/save', { method: 'POST', body: { text, source: file.name, folder: activeFolder.value } })
-        await loadBooks()
       }
     }
-  } catch (e: any) { alert('上传失败: ' + (e?.message || '')) }
-  finally { uploading.value = false }
+  } else {
+    // 视频/音频文件：上传 → 捕获缩略图 → 保存
+    const fd = new FormData(); fd.append('file', file)
+    const uploadResult = await $fetch<{ filePath: string; url: string; originalName: string }>('/api/file/upload-video', { method: 'POST', body: fd })
+    const fileType = AUDIO_EXTS.includes(ext!) ? 'audio_file' : 'video_file'
+
+    // 视频文件尝试捕获缩略图
+    let thumbPath = ''
+    if (fileType === 'video_file') {
+      try { thumbPath = await captureVideoThumbnail(file) } catch {}
+    }
+
+    await $fetch('/api/video/save', {
+      method: 'POST',
+      body: { title: file.name.replace(/\.[^.]+$/, ''), url: uploadResult.url, type: fileType, folder: activeFolder.value, filePath: uploadResult.filePath, thumbnail: thumbPath },
+    })
+  }
+}
+
+/** 打开批量文件选择器 */
+function openBatchPicker() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.accept = '.pdf,.md,.txt,.markdown,.mp4,.webm,.mp3,.wav,.m4a,.ogg,.mov'
+  input.onchange = async () => {
+    const files = Array.from(input.files || [])
+    if (files.length) await processBatchFiles(files)
+  }
+  input.click()
+}
+
+/** 打开文件夹选择器 */
+function openFolderPicker() {
+  batchFolderInput.value?.click()
+}
+
+async function onFolderSelected(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (files.length) await processBatchFiles(files)
+  input.value = '' // 重置以允许重复选择同一文件夹
 }
 
 let dragBookId = ''
@@ -452,6 +787,7 @@ async function openContextMenu(e: MouseEvent, book: BookItem) {
   contextMenu.y = e.clientY
   contextMenu.bookId = book.id
   contextMenu.completedAt = book.completedAt || ''
+  contextMenu.source = book.source || ''
   // 等 DOM 渲染后根据实际菜单尺寸调整位置，避免溢出屏幕
   await nextTick()
   const el = contextMenuRef.value
@@ -485,30 +821,50 @@ async function doRename() {
 
 async function deleteBook() {
   if (!confirm('确定删除这本书？所有标记和笔记将一并删除。')) return
+  const deletedId = contextMenu.bookId
+  contextMenu.show = false
+  // 乐观更新：立即从列表中移除
+  books.value = books.value.filter(b => b.id !== deletedId)
+  counts()
   try {
-    await $fetch('/api/text/delete', { method: 'POST', body: { id: contextMenu.bookId } })
-    contextMenu.show = false; await loadBooks()
-  } catch (e: any) {}
+    await $fetch('/api/text/delete', { method: 'POST', body: { id: deletedId } })
+    await loadBooks() // 后台确认
+  } catch (e: any) {
+    await loadBooks() // 失败回滚
+  }
+}
+
+function isVideoSource(source: string) {
+  return videoSources.includes(source)
 }
 
 async function toggleComplete() {
   try {
+    const now = new Date().toISOString()
+    const book = books.value.find(b => b.id === contextMenu.bookId)
     if (contextMenu.completedAt) {
       await $fetch('/api/text/uncomplete', { method: 'POST', body: { id: contextMenu.bookId } })
+      if (book) book.completedAt = ''
     } else {
       await $fetch('/api/text/complete', { method: 'POST', body: { id: contextMenu.bookId } })
+      if (book) book.completedAt = now
     }
     contextMenu.show = false
-    await loadBooks()
+    counts()
   } catch (e: any) {}
 }
 
-async function handleModalText(text: string, filePath?: string) {
+async function handleModalText(text: string, filePath?: string, title?: string, chapters?: any[]) {
   uploading.value = true
   try {
+    // 用文件名（去掉扩展名）作为默认标题
+    const cleanTitle = title ? title.replace(/\.[^.]+$/, '').trim() : undefined
+    // 来源判定：带文件名的是上传/解析，不带的是粘贴（此前用 showPaste 判定，
+    // 但该状态从未被置为 true，粘贴也会被标成 upload）
+    const source = cleanTitle ? 'upload' : 'paste'
     const result = await $fetch<{ id: string }>('/api/text/save', {
       method: 'POST',
-      body: { text, source: showPaste.value ? 'paste' : 'upload', folder: activeFolder.value, filePath },
+      body: { text, source, title: cleanTitle, folder: activeFolder.value, filePath, chapters: chapters || [] },
     })
     closeModal(); await loadBooks()
     if (result.id) navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`)
@@ -522,17 +878,61 @@ async function fetchUrl() {
   const u = urlInput.value.trim(); if (!u || urlLoading.value) return
   urlLoading.value = true
   try {
-    const result = await $fetch<{ id: string }>('/api/fetch-url', { method: 'POST', body: { url: u } })
+    const result = await $fetch<{ id: string }>('/api/fetch-url', { method: 'POST', body: { url: u, block: blockMode.value } })
     showUrl.value = false; urlInput.value = ''
     if (result.id) { await loadBooks(); navigateTo(`/read/${result.id}?folder=${encodeURIComponent(activeFolder.value)}`) }
   } catch (e: any) { alert('提取失败: ' + (e?.message || '请检查网址或稍后重试')) }
   finally { urlLoading.value = false }
 }
 
-onMounted(() => { counts() })
+onMounted(() => {
+  counts(); startAutoRefresh(); refreshReviewDue()
+  try {
+    const saved = localStorage.getItem('fetch-url-block-mode')
+    if (saved === 'small' || saved === 'large') blockMode.value = saved
+  } catch {}
+})
+onUnmounted(() => { stopAutoRefresh() })
+
+// 书架静默刷新：检测后台分段完成后自动更新标题颜色
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function startAutoRefresh() {
+  if (refreshTimer) return
+  refreshTimer = setInterval(async () => {
+    const hasPending = books.value.some(b => !(b as any).aiSegmented)
+    if (!hasPending) { stopAutoRefresh(); return }
+    await refreshBooks()
+  }, 5000)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+}
 </script>
 
 <style scoped>
+.notes-trigger-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #6b6963;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.notes-trigger-btn:hover {
+  color: #3d3591;
+  border-color: rgba(61, 53, 145, 0.2);
+  background: #f8f7ff;
+}
 /* ── Layout ── */
 .library-layout {
   display: flex;
@@ -545,11 +945,11 @@ onMounted(() => { counts() })
 .lib-sidebar {
   width: 220px;
   flex-shrink: 0;
+  display: flex; flex-direction: column;
   overflow: hidden;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
-  background: #f0efe9;
+  background: #f9f8f6;
 }
-
 .lib-main {
   flex: 1;
   display: flex;
@@ -564,12 +964,25 @@ onMounted(() => { counts() })
 }
 
 .lib-toolbar-row {
-  display: grid;
-  grid-template-columns: 260px 1fr auto;
+  display: flex;
   align-items: center;
   width: 100%;
   padding-bottom: 16px;
-  gap: 0 14px;
+  gap: 12px;
+}
+.lib-toolbar-left {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.lib-filter-bar {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  margin-left: 48px;
+}
+.lib-actions {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .lib-search-row {
   display: flex;
@@ -643,6 +1056,8 @@ onMounted(() => { counts() })
   text-overflow: ellipsis;
 }
 
+.review-chip{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:3px 10px;border:1px solid rgba(186,117,23,.35);border-radius:20px;background:#fdf6e8;color:#9a6207;font-size:12px;cursor:pointer;font-family:inherit}
+.review-chip:hover{background:#faedd2}
 .lib-count {
   font-size: 13px;
   color: #a09e97;
@@ -792,7 +1207,7 @@ onMounted(() => { counts() })
   transform: rotate(calc((var(--i) - 2) * 3deg));
 }
 
-.lib-empty-icon { color: #d4d1c8; margin-bottom: 16px; }
+.lib-empty-icon { border-radius: 16px; margin-bottom: 16px; }
 .lib-empty-title {
   font-family: 'Lora', Georgia, serif;
   font-size: 1.1em;
@@ -992,6 +1407,50 @@ onMounted(() => { counts() })
   border-color: #3d3591;
   background: #ffffff;
 }
+
+/* 分块粒度选择 */
+.block-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 4px;
+  background: #f2f1ec;
+  border-radius: 10px;
+}
+.block-mode-label {
+  padding: 0 6px;
+  font-size: 12px;
+  color: #8a8880;
+  white-space: nowrap;
+}
+.block-mode-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b6a63;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+  white-space: nowrap;
+}
+.block-mode-btn:hover:not(:disabled):not(.active) { color: #1a1a18; }
+.block-mode-btn.active {
+  background: #ffffff;
+  color: #3d3591;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.block-mode-btn:disabled { cursor: default; opacity: 0.6; }
+.block-mode-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #8a8880;
+}
 .modal-loading {
   display: flex;
   align-items: center;
@@ -1048,4 +1507,151 @@ onMounted(() => { counts() })
 .modal-fade-leave-active { transition: opacity 0.15s; }
 .modal-fade-enter-from,
 .modal-fade-leave-to { opacity: 0; }
+
+/* ── 批量上传进度 ── */
+.batch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(247, 246, 243, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+.batch-card {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.1);
+  width: 380px;
+  max-width: 92vw;
+  padding: 20px;
+}
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.batch-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 1em;
+  font-weight: 500;
+  color: #1a1a18;
+}
+.batch-close {
+  width: 26px; height: 26px;
+  border: none; border-radius: 50%;
+  background: transparent;
+  color: #a09e97;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.batch-close:hover { background: rgba(0,0,0,0.05); color: #4a4640; }
+.batch-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.batch-progress-fill {
+  height: 100%;
+  background: #3d3591;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.batch-progress-text {
+  font-size: 12px;
+  color: #a09e97;
+  font-family: 'DM Mono', monospace;
+  margin: 0 0 4px;
+}
+.batch-current {
+  font-size: 12.5px;
+  color: #6b6963;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.batch-done-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.batch-result-text {
+  font-size: 13.5px;
+  color: #4a4640;
+  text-align: center;
+  margin: 0 0 10px;
+}
+.batch-errors {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.batch-error-item {
+  font-size: 11.5px;
+  color: #b84b2e;
+  padding: 6px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+/* ── 侧栏收起/展开动画 ── */
+.lib-sidebar { position: relative; width: 220px; min-width: 220px; transition: width 0.25s ease, min-width 0.25s ease; overflow: hidden; }
+.lib-sidebar.hidden { width: 44px; min-width: 44px; overflow: hidden; border: none; }
+
+/* ── 手机端 / 窄屏适配 ── */
+@media (max-width: 767px) {
+  .library-layout { flex-direction: row; }
+  /* 手机端抽屉：收起=完全隐藏（零遮挡），展开=悬浮抽屉 + 遮罩 */
+  .lib-sidebar { position: fixed; z-index: 300; left: 0; top: 0; height: 100dvh; width: min(78vw, 280px) !important; min-width: 0 !important; }
+  .lib-sidebar.hidden { display: none; }
+  .lib-sidebar:not(.hidden) { box-shadow: 8px 0 28px rgba(0,0,0,0.22); }
+  .sidebar-scrim { position: fixed; inset: 0; z-index: 290; background: rgba(0,0,0,0.35); }
+  .drawer-open-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; margin-right: 8px; flex-shrink: 0;
+    border: none; border-radius: 8px; background: transparent; color: #55534d; cursor: pointer;
+  }
+  .drawer-open-btn:hover { background: #f0efe9; }
+  .sidebar-toggle { display: none; }
+  .lib-main { width: 100%; padding: 0; }
+
+  /* toolbar 区：改用 flex 换行，保证按钮不溢出 */
+  .lib-toolbar { padding: 12px 14px 0; }
+    .lib-title { font-size: 16px; }
+
+  /* 筛选条：窄屏隐藏 */
+  .lib-filter-bar { display: none; }
+  .lf-chip { font-size: 11px; padding: 4px 10px; white-space: nowrap; }
+  .lf-sep { display: none; }
+
+  /* 操作按钮 */
+  .lib-actions { flex-shrink: 0; }
+
+  /* 搜索条 */
+  .lib-search-row { padding: 8px 14px; }
+
+  /* 网格 */
+  .lib-grid {
+    padding: 16px 12px 24px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  /* 空态 */
+  .lib-empty { padding: 40px 20px; }
+  .lib-empty-actions { flex-direction: column; align-items: stretch; }
+  .lib-empty-btn { justify-content: center; }
+}
 </style>

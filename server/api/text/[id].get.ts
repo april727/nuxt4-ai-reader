@@ -1,14 +1,9 @@
-import { getDb } from '../../utils/db'
+import { queryOne } from '../../utils/db'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
-  const db = await getDb()
 
-  const stmt = db.prepare('SELECT * FROM texts WHERE id=?')
-  stmt.bind([id])
-  let row: any = null
-  if (stmt.step()) row = stmt.getAsObject()
-  stmt.free()
+  const row = await queryOne('SELECT * FROM texts WHERE id=?', [id])
   if (!row) throw createError({ statusCode: 404, message: '文本不存在' })
 
   // 解析 JSON 字段
@@ -20,6 +15,10 @@ export default defineEventHandler(async (event) => {
   if (row.paragraphChats) try { row.paragraphChats = JSON.parse(row.paragraphChats) } catch { row.paragraphChats = null }
   if (row.videoSubtitles) try { row.videoSubtitles = JSON.parse(row.videoSubtitles) } catch { row.videoSubtitles = null }
   if (row.videoMeta) try { row.videoMeta = JSON.parse(row.videoMeta) } catch { row.videoMeta = null }
+  if (row.paragraphNotes) try { row.paragraphNotes = JSON.parse(row.paragraphNotes) } catch { row.paragraphNotes = [] }
+  if (row.paragraphNotesMap) try { row.paragraphNotesMap = JSON.parse(row.paragraphNotesMap) } catch { row.paragraphNotesMap = {} }
+  if (row.chapters) try { row.chapters = JSON.parse(row.chapters) } catch { row.chapters = [] }
+  if (row.annotations) try { row.annotations = JSON.parse(row.annotations) } catch { row.annotations = [] }
 
   return row
 })
