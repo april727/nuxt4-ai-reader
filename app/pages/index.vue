@@ -385,11 +385,6 @@ const filterOptions = [
 // getCachedData：返回首页时立即复用上次的客户端缓存（秒显），挂载后再后台静默刷新保鲜。
 const nuxtApp = useNuxtApp()
 /**
- * 缓存只用于「首帧占位」，refresh 时必须放行真实请求。
- * 不判断 cause 的话，主动刷新（新增/删除文章后的 loadBooks）也会命中缓存，
- * 书架就再也不更新了 —— 这是接 localStorage 快照时最容易踩的坑。
- */
-/**
  * 快照闸门：只对「首屏第一帧」放行，组件挂载完成后彻底关闭。
  *
  * 为什么单靠 cause 判断不够 —— 看 nuxt/dist/app/composables/asyncData.js 的
