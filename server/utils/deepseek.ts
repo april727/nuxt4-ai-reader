@@ -13,9 +13,14 @@
  */
 import { createError } from 'h3'
 
+/** 多模态内容片段：图片走 image_url，本地图用 data URL 直接内联 */
+export type DeepSeekContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
 export interface DeepSeekMessage {
   role: 'system' | 'user' | 'assistant' | string
-  content: string
+  content: string | DeepSeekContentPart[]
 }
 
 export interface DeepSeekOptions {
@@ -121,4 +126,34 @@ export async function deepseekStream(messages: DeepSeekMessage[], opts: DeepSeek
   const res = await post(buildBody(messages, opts, true), opts.timeoutMs ?? STREAM_TIMEOUT)
   if (!res.ok || !res.body) throw await normalizeError(res)
   return res
+}
+
+/**
+ * 看图问答（单图 + 一段文字）。
+ *
+ * 为什么不用阿里云 Qwen-VL：本机这把 DASHSCOPE key 只有文本/向量权限，
+ * qwen-vl 系列返回 403 access_denied / 404 model_not_found；
+ * 而 DeepSeek 网关的模型声明了 `input_modalities: ["text","image"]`，实测可用。
+ *
+ * 图片用 data URL 内联：本地服务没有公网地址，任何需要"给个 URL 让上游拉"的
+ * 方案在这里都不成立。
+ */
+export async function deepseekVision(
+  prompt: string,
+  images: Array<{ dataUrl: string; detail?: 'low' | 'high' | 'auto' }>,
+  opts: DeepSeekOptions & { system?: string } = {},
+): Promise<string> {
+  const messages: DeepSeekMessage[] = []
+  if (opts.system) messages.push({ role: 'system', content: opts.system })
+  messages.push({
+    role: 'user',
+    content: [
+      ...images.map(i => ({
+        type: 'image_url' as const,
+        image_url: { url: i.dataUrl, ...(i.detail ? { detail: i.detail } : {}) },
+      })),
+      { type: 'text' as const, text: prompt },
+    ],
+  })
+  return deepseekChat(messages, { temperature: 0.1, maxTokens: 4000, ...opts })
 }

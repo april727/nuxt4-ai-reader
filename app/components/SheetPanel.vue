@@ -25,7 +25,6 @@
         <p>还没有标注</p>
         <p class="hint">左侧切到「框选」，拖出一个框即可存下这道题</p>
       </div>
-
       <div v-for="a in visible" :key="a.id" class="sp-item" :class="{ open: a.id === selectedId, active: a.id === selectedId }">
         <div class="sp-item-row" @click="emit('select', a.id)">
           <span class="badge" :style="{ background: metaOf(a.kind).color }">{{ idxOf(a) }}</span>
@@ -63,6 +62,23 @@
         </div>
       </div>
     </div>
+
+    <!-- 答案遮挡：只管当前页 -->
+    <div class="sp-covers">
+      <div class="sp-covers-head">
+        <span>答案遮挡</span>
+        <span class="sp-covers-meta">第 {{ currentPageNo }} 页 · {{ covers.length }} 处</span>
+      </div>
+      <div v-if="!covers.length" class="sp-covers-empty">
+        切到顶栏「遮答案」，拖框盖住答案区，复习时会自动盖上
+      </div>
+      <div v-else class="sp-covers-list">
+        <span v-for="(c, i) in covers" :key="i" class="sp-cover-chip">
+          <button class="sp-cover-goto" title="定位到原图" @click="emit('focusCover', i)">遮 {{ i + 1 }}</button>
+          <button class="sp-cover-del" title="删除这块遮挡" @click="emit('removeCover', i)">×</button>
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -75,6 +91,10 @@ const props = defineProps<{
   annotations: SheetAnno[]
   pages: SheetPage[]
   selectedId?: string
+  /** 当前页的答案遮挡区 */
+  covers?: { x: number; y: number; w: number; h: number }[]
+  /** 当前页码（从 1 开始） */
+  pageNo?: number
 }>()
 
 const emit = defineEmits<{
@@ -83,7 +103,12 @@ const emit = defineEmits<{
   (e: 'setKind', id: string, kind: string): void
   (e: 'setNote', id: string, note: string): void
   (e: 'goto', pageId: string, id: string): void
+  (e: 'removeCover', index: number): void
+  (e: 'focusCover', index: number): void
 }>()
+
+const covers = computed(() => props.covers || [])
+const currentPageNo = computed(() => props.pageNo || 1)
 
 const kinds = SHEET_KINDS
 
@@ -196,4 +221,33 @@ function pageNo(pageId: string) {
   padding: 2px 4px;
 }
 .goto:hover { text-decoration: underline; }
+
+.sp-covers {
+  flex-shrink: 0;
+  border-top: 0.5px solid rgba(0, 0, 0, 0.08);
+  padding: 10px 14px 12px;
+  background: rgba(255, 255, 255, 0.5);
+}
+.sp-covers-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 12px; font-weight: 500; color: #1a1a18; margin-bottom: 6px;
+}
+.sp-covers-meta { font-size: 10.5px; font-weight: 400; color: #a09e97; }
+.sp-covers-empty { font-size: 11.5px; color: #a09e97; line-height: 1.5; }
+.sp-covers-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.sp-cover-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 20px;
+  padding: 1px 3px 1px 8px; background: #fff;
+}
+.sp-cover-goto {
+  border: none; background: transparent; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 11px; color: #6b6862; padding: 2px 0;
+}
+.sp-cover-goto:hover { color: #3d3591; }
+.sp-cover-del {
+  border: none; background: transparent; cursor: pointer;
+  color: #b4b2a9; font-size: 13px; line-height: 1; padding: 0 3px;
+}
+.sp-cover-del:hover { color: #a32d2d; }
 </style>

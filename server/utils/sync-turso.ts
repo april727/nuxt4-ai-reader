@@ -34,6 +34,8 @@ const TABLES: Array<{ name: string; columns: string[]; pkIdx: number; noPk?: boo
   { name: 'marks', pkIdx: 0, noPk: true, timeCol: 'createdAt', columns: ['id', 'textId', 'textTitle', 'textFolder', 'type', 'text', 'lemma', 'detail', 'note', 'createdAt', 'deletedAt'] },
   { name: 'knowledge_pages', pkIdx: 0, noPk: true, columns: ['id', 'groupId', 'title', 'content', 'createdAt', 'updatedAt'] },
   { name: 'texts_history', pkIdx: 0, columns: ['id', 'textId', 'segments', 'marks', 'explanations', 'paragraphChats', 'note', 'segmentCount', 'createdAt'] },
+  // 试卷错题（复习进度）。归属仍在 texts.annotations，这里只存调度状态
+  { name: 'sheet_wrong', pkIdx: 0, timeCol: 'updatedAt', columns: ['id', 'sheetId', 'pageId', 'bbox', 'note', 'phase', 'learnCorrect', 'learnTotal', 'learnWrong', 'ease', 'interval', 'reps', 'dueAt', 'lapses', 'reviewCount', 'lastResult', 'lastReviewedAt', 'createdAt', 'updatedAt'] },
 ]
 
 export interface SyncResult {

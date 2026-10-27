@@ -46,3 +46,8 @@ server/data/.mirror-state.json
 server/data/pronounce-cache.json
 server/data/prompts.local.json
 server/data/*.local.json
+
+# 真浏览器回归用的临时 Chrome profile（每次运行重建，绝不能进仓库）
+server/data/.tmp-*/
+# 云端镜像的待推送队列（运行时状态）
+server/data/.pending-cloud-ops.json

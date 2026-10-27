@@ -37,6 +37,7 @@
           <div v-if="menuOpen" class="ph-menu-drop">
             <NuxtLink to="/words/daily" class="ph-menu-link" :class="{ active: active === 'daily' }" @click="menuOpen = false">每日</NuxtLink>
             <NuxtLink to="/reviews" class="ph-menu-link" :class="{ active: active === 'reviews' }" @click="menuOpen = false">复习本</NuxtLink>
+            <NuxtLink to="/sheet/wrong" class="ph-menu-link" :class="{ active: active === 'sheet-wrong' }" @click="menuOpen = false">错题本</NuxtLink>
             <NuxtLink to="/words/analysis" class="ph-menu-link" :class="{ active: active === 'analysis' }" @click="menuOpen = false">分析</NuxtLink>
             <NuxtLink to="/wordbooks" class="ph-menu-link" :class="{ active: active === 'wordbooks' }" @click="menuOpen = false">单词本</NuxtLink>
           </div>

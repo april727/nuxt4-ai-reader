@@ -1,7 +1,7 @@
 import { queryOne, runQuery } from '../../../utils/db'
 
-/** 允许的标注类型：与前端 kind 一一对应 */
-const KINDS = new Set(['wrong', 'key', 'doubt', 'note'])
+/** 允许的标注类型：与前端 kind 一一对应（q = AI 切题产出的题目区） */
+const KINDS = new Set(['wrong', 'key', 'q', 'doubt', 'note'])
 
 function clamp01(v: any): number {
   const n = Number(v)

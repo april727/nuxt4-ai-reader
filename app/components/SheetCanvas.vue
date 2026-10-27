@@ -2,7 +2,7 @@
   <div
     ref="vp"
     class="sheet-vp"
-    :class="{ 'is-box': tool === 'box', 'is-panning': drag?.mode === 'pan' }"
+    :class="{ 'is-box': tool === 'box', 'is-cover': tool === 'cover', 'is-panning': drag?.mode === 'pan' }"
     @wheel.prevent="onWheel"
     @pointerdown="onDown"
     @pointermove="onMove"
@@ -24,6 +24,20 @@
         @dragstart.prevent
       />
 
+      <!-- 答案遮挡：盖在最上层压住题面里的答案，点一下临时显形 3 秒 -->
+      <div
+        v-for="(c, ci) in shownCovers"
+        :key="`cv_${ci}`"
+        class="sheet-cover"
+        :class="{ peeking: peekIdx === ci }"
+        :style="boxStyle(c)"
+        :title="peekIdx === ci ? '再点一次可继续观察' : '点击临时显示答案'"
+        @pointerdown.stop
+        @click.stop="togglePeek(ci)"
+      >
+        <span class="cover-tag" :style="numStyle">{{ peekIdx === ci ? '答案' : `遮 ${ci + 1}` }}</span>
+      </div>
+
       <div
         v-for="item in pageAnnos"
         :key="item.a.id"
@@ -36,7 +50,7 @@
         <span class="anno-num" :style="numStyle">{{ item.i + 1 }}</span>
       </div>
 
-      <div v-if="draft" class="sheet-anno draft" :style="boxStyle(draft)"></div>
+      <div v-if="draft" class="sheet-anno draft" :class="{ 'draft-cover': drag?.mode === 'cover' }" :style="boxStyle(draft)"></div>
     </div>
 
     <div class="sheet-zoombar">
@@ -46,24 +60,29 @@
     </div>
 
     <div class="sheet-hint">
-      {{ tool === 'box' ? '按住拖动框选题目' : '拖动平移 · 滚轮上下 · 双击适配宽度' }}
+      {{ tool === 'box' ? '按住拖动框选题目'
+        : tool === 'cover' ? '按住拖动盖住答案区 · 点遮罩可临时看 3 秒'
+        : '拖动平移 · 滚轮上下 · 双击适配宽度' }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import type { SheetPage, SheetAnno, SheetBBox } from '~/utils/sheetTypes'
 
 const props = defineProps<{
   page: SheetPage | null
   annotations: SheetAnno[]
-  tool: 'pan' | 'box'
+  tool: 'pan' | 'box' | 'cover'
   selectedId?: string
+  /** 顶栏「显示答案」开着时不再渲染遮挡块 */
+  answersVisible?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'create', bbox: SheetBBox): void
+  (e: 'create-cover', bbox: SheetBBox): void
   (e: 'select', id: string): void
   (e: 'ready'): void
 }>()
@@ -86,6 +105,27 @@ const pageAnnos = computed(() => {
     .filter(a => a.pageId === props.page!.id)
     .map((a, i) => ({ a, i }))
 })
+
+/** 当前页的答案遮挡区（顶栏切到「显示答案」时整片撤掉） */
+const shownCovers = computed<SheetBBox[]>(() => {
+  if (props.answersVisible) return []
+  const list = props.page?.covers
+  return Array.isArray(list) ? list : []
+})
+
+/**
+ * 临时显形：点一下遮罩揭开 3 秒再盖回去。
+ * 计时器要清干净，否则快速连点会留下"永远掀开"的那一块。
+ */
+const peekIdx = ref<number | null>(null)
+let peekTimer: ReturnType<typeof setTimeout> | null = null
+function togglePeek(i: number) {
+  if (peekTimer) { clearTimeout(peekTimer); peekTimer = null }
+  if (peekIdx.value === i) { peekIdx.value = null; return }
+  peekIdx.value = i
+  peekTimer = setTimeout(() => { peekIdx.value = null; peekTimer = null }, 3000)
+}
+onBeforeUnmount(() => { if (peekTimer) clearTimeout(peekTimer) })
 
 const stageStyle = computed(() => ({
   width: imgW.value ? `${imgW.value}px` : '100%',
@@ -226,7 +266,7 @@ function onWheel(e: WheelEvent) {
 // ── 指针：单指拖动（平移或框选），双指捏合缩放 ──
 const pointers = new Map<number, { x: number; y: number }>()
 let pinch: { dist: number; scale: number; cx: number; cy: number } | null = null
-const drag = ref<{ mode: 'pan' | 'box'; sx: number; sy: number; ox: number; oy: number } | null>(null)
+const drag = ref<{ mode: 'pan' | 'box' | 'cover'; sx: number; sy: number; ox: number; oy: number } | null>(null)
 
 function toImg(clientX: number, clientY: number) {
   const el = vp.value!
@@ -259,12 +299,13 @@ function onDown(e: PointerEvent) {
   if (pointers.size > 2) return
 
   const r = el.getBoundingClientRect()
-  if (props.tool === 'box' && e.button === 0) {
+  const drawMode = props.tool === 'box' || props.tool === 'cover' ? props.tool : null
+  if (drawMode && e.button === 0) {
     const p = toImg(e.clientX, e.clientY)
     const x = clamp(p.x, 0, 1)
     const y = clamp(p.y, 0, 1)
     draft.value = { x, y, w: 0, h: 0 }
-    drag.value = { mode: 'box', sx: x, sy: y, ox: 0, oy: 0 }
+    drag.value = { mode: drawMode, sx: x, sy: y, ox: 0, oy: 0 }
   } else {
     drag.value = {
       mode: 'pan',
@@ -314,12 +355,12 @@ function onUp(e: PointerEvent) {
   if (pointers.size < 2) pinch = null
   const d = drag.value
   drag.value = null
-  if (d?.mode !== 'box') return
+  if (d?.mode !== 'box' && d?.mode !== 'cover') return
 
   const b = draft.value
   draft.value = null
   // 小于 0.4% 的框视为误触（点一下会留下噪点标注）
-  if (b && b.w > 0.004 && b.h > 0.004) emit('create', b)
+  if (b && b.w > 0.004 && b.h > 0.004) emit(d.mode === 'cover' ? 'create-cover' : 'create', b)
 }
 
 defineExpose({ fitAll, fitWidth, focusOn })
@@ -337,6 +378,7 @@ defineExpose({ fitAll, fitWidth, focusOn })
 }
 .sheet-vp.is-panning { cursor: grabbing; }
 .sheet-vp.is-box { cursor: crosshair; }
+.sheet-vp.is-cover { cursor: cell; }
 .sheet-blank {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: #a09e97; font-size: 13px;
@@ -364,6 +406,7 @@ defineExpose({ fitAll, fitWidth, focusOn })
 .sheet-anno.k-key { border-color: #ba7517; background: rgba(186, 117, 23, 0.09); }
 .sheet-anno.k-doubt { border-color: #378add; background: rgba(55, 138, 221, 0.08); }
 .sheet-anno.k-note { border-color: #0f6e56; background: rgba(15, 110, 86, 0.08); }
+.sheet-anno.k-q { border-color: #5b57c4; background: rgba(91, 87, 196, 0.06); border-style: dashed; }
 .sheet-anno.active { box-shadow: 0 0 0 2px rgba(61, 53, 145, 0.35); }
 .sheet-anno.draft {
   border-style: dashed;
@@ -371,6 +414,42 @@ defineExpose({ fitAll, fitWidth, focusOn })
   background: rgba(61, 53, 145, 0.1);
   pointer-events: none;
 }
+.sheet-anno.draft-cover {
+  border-color: #6b6862;
+  background: rgba(107, 104, 98, 0.18);
+}
+
+/* 答案遮挡块：必须不透明，半透明等于没遮住 */
+.sheet-cover {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 3px;
+  cursor: pointer;
+  background-color: #eeece6;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.045) 0 6px,
+    transparent 6px 12px
+  );
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  transition: opacity 0.16s ease;
+}
+.sheet-cover:hover { box-shadow: inset 0 0 0 1px rgba(61, 53, 145, 0.4); }
+/* 临时显形：留一层极淡的灰，能看出"这里被遮着"但不挡读 */
+.sheet-cover.peeking {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: inset 0 0 0 1.5px rgba(61, 53, 145, 0.5);
+}
+.cover-tag {
+  position: absolute; top: 0; left: 0;
+  transform: translate(0, -100%);
+  background: #8a8880; color: #fff;
+  border-radius: 3px 3px 3px 0;
+  font-family: 'DM Mono', monospace; line-height: 1;
+  white-space: nowrap;
+}
+.sheet-cover.peeking .cover-tag { background: #3d3591; }
 .anno-num {
   position: absolute; top: 0; left: 0;
   transform: translate(-100%, -100%);
@@ -383,6 +462,7 @@ defineExpose({ fitAll, fitWidth, focusOn })
 .k-key .anno-num { background: #ba7517; }
 .k-doubt .anno-num { background: #378add; }
 .k-note .anno-num { background: #0f6e56; }
+.k-q .anno-num { background: #5b57c4; }
 
 .sheet-zoombar {
   position: absolute; right: 14px; bottom: 14px;

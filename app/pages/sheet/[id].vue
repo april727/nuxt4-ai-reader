@@ -19,7 +19,15 @@
         <div class="tool-group">
           <button class="tool" :class="{ on: tool === 'pan' }" title="平移（V）" @click="tool = 'pan'">平移</button>
           <button class="tool" :class="{ on: tool === 'box' }" title="框选（B）" @click="tool = 'box'">框选</button>
+          <button class="tool" :class="{ on: tool === 'cover' }" title="遮答案（C）：框住答案区，复习时盖上" @click="tool = 'cover'">遮答案</button>
         </div>
+        <button
+          v-if="coverTotal"
+          class="answer-toggle"
+          :class="{ on: answersVisible }"
+          :title="answersVisible ? '当前显示答案，点击盖上' : '当前已遮挡，点击临时全显'"
+          @click="answersVisible = !answersVisible"
+        >{{ answersVisible ? '显示答案' : `答案已遮 ${coverTotal}` }}</button>
         <div class="kind-group">
           <button
             v-for="m in kinds"
@@ -31,6 +39,16 @@
             @click="defaultKind = m.k"
           >{{ m.label }}</button>
         </div>
+        <div class="ai-wrap">
+          <button class="tool ai-btn" :disabled="aiRunning" @click="aiMenu = !aiMenu" :title="aiRunning ? 'AI 正在切题…' : 'AI 自动切题（本地图直传模型）'">
+            {{ aiRunning ? '切题中…' : 'AI 切题' }}
+          </button>
+          <div v-if="aiMenu" class="ai-menu">
+            <button @click="runAutoTag('page')">只切当前页</button>
+            <button v-if="pages.length > 1" @click="runAutoTag('all')">全部 {{ pages.length }} 页</button>
+          </div>
+        </div>
+        <NuxtLink class="tb-link" to="/sheet/wrong" title="试卷错题本（按间隔重复复习）">错题本</NuxtLink>
         <span class="save-state" :class="saveState">{{ saveText }}</span>
       </div>
     </header>
@@ -43,7 +61,9 @@
           :annotations="annotations"
           :tool="tool"
           :selected-id="selectedId"
+          :answers-visible="answersVisible"
           @create="onCreate"
+          @create-cover="onCreateCover"
           @select="onSelectBox"
           @ready="onCanvasReady"
         />
@@ -56,16 +76,30 @@
           :annotations="annotations"
           :pages="pages"
           :selected-id="selectedId"
+          :covers="currentPage?.covers || []"
+          :page-no="pageIdx + 1"
           @select="selectedId = $event"
           @remove="onRemove"
           @set-kind="onSetKind"
           @set-note="onSetNote"
           @goto="onGoto"
+          @remove-cover="onRemoveCover"
+          @focus-cover="onFocusCover"
         />
       </aside>
     </div>
 
     <div v-if="loading" class="sheet-loading">加载中…</div>
+
+    <!-- AI 切题结果确认：误判很正常，先看一眼再决定是否落库 -->
+    <div v-if="aiPreview" class="ai-bar">
+      <span class="ai-bar-text">
+        AI 识别出 <strong>{{ aiPreview.count }}</strong> 道题
+        <span v-if="aiPreview.failed" class="ai-bar-warn">· {{ aiPreview.failed }} 页失败</span>
+      </span>
+      <button class="ai-bar-ok" @click="commitAutoTag">写入</button>
+      <button class="ai-bar-cancel" @click="aiPreview = null">取消</button>
+    </div>
   </div>
 </template>
 
@@ -82,8 +116,13 @@ const pages = ref<SheetPage[]>([])
 const annotations = ref<SheetAnno[]>([])
 const activePageId = ref('')
 const selectedId = ref<string | undefined>()
-const tool = ref<'pan' | 'box'>('pan')
+const tool = ref<'pan' | 'box' | 'cover'>('pan')
 const defaultKind = ref('key')
+/** 顶栏「显示答案」：开着时不渲染遮挡块（临时核对答案用，不落盘） */
+const answersVisible = ref(false)
+const coverTotal = computed(() =>
+  pages.value.reduce((s, p) => s + (Array.isArray(p.covers) ? p.covers.length : 0), 0),
+)
 const loading = ref(true)
 const panelW = ref(368)
 const canvasRef = ref<any>(null)
@@ -118,6 +157,17 @@ onMounted(async () => {
     pages.value = Array.isArray(row.segments) ? row.segments : []
     annotations.value = Array.isArray(row.annotations) ? row.annotations : []
     activePageId.value = pages.value[0]?.id || ''
+    // 深链：错题本「在试卷里打开」会带 page / box，直接落到那道题上
+    const qPage = String(route.query.page || '')
+    const qBox = String(route.query.box || '')
+    const qAnno = qBox ? annotations.value.find(a => a.id === qBox) : null
+    if (qAnno) {
+      selectedId.value = qAnno.id
+      pendingFocus = qAnno
+      activePageId.value = qAnno.pageId
+    } else if (qPage && pages.value.some(p => p.id === qPage)) {
+      activePageId.value = qPage
+    }
     prefetchPages()
   } catch {
     // 保持在空态，用户可以返回
@@ -197,6 +247,45 @@ function onSelectBox(boxId: string) {
   selectedId.value = boxId
 }
 
+// ── 答案遮挡区（页级，存在 segments 的 page 上）──
+/**
+ * 只改了当前页的 covers，存库走独立接口（mutateSegments + CAS）。
+ * 不能搭 annotations 的顺风车：两者是不同字段，整体覆盖会把页结构冲掉。
+ */
+function onCreateCover(bbox: SheetBBox) {
+  const idx = pageIdx.value
+  const p = pages.value[idx]
+  if (!p) return
+  const covers = [...(p.covers || []), bbox]
+  pages.value[idx] = { ...p, covers }
+  void saveCovers(p.id, covers)
+  answersVisible.value = false // 刚画完就显形会让人以为没画上
+}
+
+function onRemoveCover(ci: number) {
+  const idx = pageIdx.value
+  const p = pages.value[idx]
+  if (!p) return
+  const covers = (p.covers || []).filter((_, k) => k !== ci)
+  pages.value[idx] = { ...p, covers }
+  void saveCovers(p.id, covers)
+}
+
+function onFocusCover(ci: number) {
+  const b = currentPage.value?.covers?.[ci]
+  if (b) canvasRef.value?.focusOn?.(b)
+}
+
+async function saveCovers(pageId: string, covers: SheetBBox[]) {
+  saveState.value = 'saving'
+  try {
+    await $fetch(`/api/sheet/${id}/covers`, { method: 'POST', body: { pageId, covers } })
+    saveState.value = 'saved'
+  } catch {
+    saveState.value = 'error'
+  }
+}
+
 function onRemove(boxId: string) {
   annotations.value = annotations.value.filter(a => a.id !== boxId)
   if (selectedId.value === boxId) selectedId.value = undefined
@@ -242,6 +331,71 @@ function goPage(idx: number) {
   }
 }
 
+// ── AI 自动切题 ──
+const aiMenu = ref(false)
+const aiRunning = ref(false)
+const aiPreview = ref<{
+  count: number
+  failed: number
+  pages: Array<{ pageId: string; regions: Array<{ no: string; label: string; bbox: SheetBBox }> }>
+} | null>(null)
+
+async function runAutoTag(scope: 'page' | 'all') {
+  aiMenu.value = false
+  if (aiRunning.value) return
+  aiRunning.value = true
+  try {
+    const pageIds = scope === 'page'
+      ? [activePageId.value]
+      : pages.value.map(p => p.id)
+    const res = await $fetch<any>(`/api/sheet/${id}/auto-tag`, {
+      method: 'POST',
+      body: { pageIds },
+    })
+    const list = Array.isArray(res?.pages) ? res.pages : []
+    const failed = list.filter((p: any) => !p.regions?.length).length
+    const count = list.reduce((s: number, p: any) => s + (p.regions?.length || 0), 0)
+    if (!count) {
+      alert(failed ? 'AI 没认出题目（可看下服务端日志）' : '这一页没有识别到题目')
+      return
+    }
+    aiPreview.value = { count, failed, pages: list }
+  } catch (e: any) {
+    alert(e?.data?.message || 'AI 切题失败')
+  } finally {
+    aiRunning.value = false
+  }
+}
+
+/**
+ * 写入题目区：先清掉该页原有的「题目」标注再写新的。
+ * 不清的话，同一页连点两次会得到两套重叠框，删起来很烦。
+ */
+function commitAutoTag() {
+  const pv = aiPreview.value
+  if (!pv) return
+  const touched = new Set(pv.pages.map(p => p.pageId))
+  const kept = annotations.value.filter(a => !(a.kind === 'q' && touched.has(a.pageId)))
+  const stamp = Date.now()
+  const added: SheetAnno[] = []
+  for (const p of pv.pages) {
+    p.regions.forEach((r, i) => {
+      added.push({
+        id: `an_${stamp}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+        pageId: p.pageId,
+        kind: 'q',
+        bbox: r.bbox,
+        note: [r.no, r.label].filter(Boolean).join(' · '),
+        createdAt: new Date().toISOString(),
+      })
+    })
+  }
+  annotations.value = [...kept, ...added]
+  aiPreview.value = null
+  // 切完直接能改类型：把工具切回框选，避免用户还停在平移以为框不动
+  tool.value = 'box'
+}
+
 // ── 面板宽度 ──
 function startResize(e: MouseEvent) {
   const startX = e.clientX
@@ -263,7 +417,9 @@ function onKey(e: KeyboardEvent) {
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
   if (e.key === 'v' || e.key === 'V') tool.value = 'pan'
   else if (e.key === 'b' || e.key === 'B') tool.value = 'box'
-  else if (e.key === 'Escape') selectedId.value = undefined
+  else if (e.key === 'c' || e.key === 'C') tool.value = 'cover'
+  else if (e.key === 'a' || e.key === 'A') answersVisible.value = !answersVisible.value
+  else if (e.key === 'Escape') { selectedId.value = undefined; aiMenu.value = false }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId.value) {
     e.preventDefault()
     onRemove(selectedId.value)
@@ -319,6 +475,60 @@ function goBack() {
 }
 .tool.on { background: #fff; color: #3d3591; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08); }
 .kind-pick.on { background: #fff; }
+.answer-toggle {
+  border: 0.5px solid rgba(0, 0, 0, 0.14); background: #fff; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 11.5px; color: #6b6862;
+  padding: 4px 9px; border-radius: 7px; white-space: nowrap;
+}
+.answer-toggle:hover { border-color: rgba(61, 53, 145, 0.4); color: #3d3591; }
+.answer-toggle.on { background: #edeafd; border-color: rgba(61, 53, 145, 0.25); color: #3d3591; }
+.tb-link {
+  font-size: 11.5px; color: #6b6862; text-decoration: none;
+  border: 0.5px solid rgba(0, 0, 0, 0.12); border-radius: 7px; padding: 4px 9px;
+  white-space: nowrap;
+}
+.tb-link:hover { border-color: rgba(61, 53, 145, 0.4); color: #3d3591; }
+
+.ai-wrap { position: relative; }
+.ai-btn {
+  border: 0.5px solid rgba(61, 53, 145, 0.28); background: #f6f5ff; color: #3d3591;
+  border-radius: 7px; padding: 4px 9px; cursor: pointer; font-size: 11.5px;
+  font-family: 'DM Sans', sans-serif; white-space: nowrap;
+}
+.ai-btn:hover { background: #edeafd; }
+.ai-btn:disabled { opacity: 0.6; cursor: default; }
+.ai-menu {
+  position: absolute; top: calc(100% + 5px); right: 0; z-index: 30;
+  background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); padding: 4px; min-width: 128px;
+}
+.ai-menu button {
+  display: block; width: 100%; text-align: left;
+  border: none; background: transparent; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 12px; color: #4a4843;
+  padding: 7px 9px; border-radius: 6px;
+}
+.ai-menu button:hover { background: #f5f4f0; color: #3d3591; }
+
+.ai-bar {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 60;
+  background: #1f1f1d; color: #fff; border-radius: 11px;
+  padding: 10px 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  font-size: 12.5px;
+}
+.ai-bar-text strong { font-weight: 600; }
+.ai-bar-warn { color: #e5b96a; margin-left: 6px; }
+.ai-bar-ok {
+  border: none; background: #6d68d8; color: #fff; cursor: pointer;
+  border-radius: 7px; padding: 5px 13px; font-size: 12px; font-family: inherit;
+}
+.ai-bar-ok:hover { background: #5f5ad0; }
+.ai-bar-cancel {
+  border: none; background: transparent; color: #b9b7b0; cursor: pointer;
+  font-size: 12px; font-family: inherit; padding: 5px 6px;
+}
+.ai-bar-cancel:hover { color: #fff; }
 .save-state { font-size: 11px; color: #a09e97; min-width: 42px; text-align: right; }
 .save-state.saved { color: #0f6e56; }
 .save-state.error { color: #a32d2d; }
