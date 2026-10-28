@@ -9,7 +9,8 @@
     <div class="rp-body">
       <p class="rp-intro">
         同一个词被反复标记，说明它一直没真正掌握。这里按标记次数排出优先级 ——
-        次数越多越该优先解决。计数已剔除保存链路产生的重复写入。
+        次数越多越该优先解决。计数已剔除保存链路产生的重复写入。<br />
+        每张卡下方按引用格式逐条列出<strong>全部来源</strong>，点一下就跳到原文里这个词所在的段落。
       </p>
 
       <div class="rp-filters">
@@ -65,16 +66,16 @@
               <span class="rp-dot">·</span>
               <span class="rp-docs-n">{{ it.docCount }} 篇</span>
             </div>
-            <div class="rp-docs">
-              <NuxtLink
-                v-for="d in it.docs.slice(0, 3)"
-                :key="d.textId"
-                :to="`/read/${d.textId}`"
-                class="rp-doc"
-                :title="d.title"
-              >{{ d.title }}<span v-if="d.n > 1" class="rp-doc-n">×{{ d.n }}</span></NuxtLink>
-              <span v-if="it.docs.length > 3" class="rp-doc-more" :title="restTitles(it)">+{{ it.docs.length - 3 }}</span>
-            </div>
+            <ol class="rp-src">
+              <li v-for="(d, i) in it.docs" :key="d.textId" class="rp-src-item">
+                <NuxtLink :to="jumpUrl(d)" class="rp-src-row" :title="`打开《${d.title}》并定位到这个词`">
+                  <span class="rp-src-br">[{{ i + 1 }}]</span>
+                  <span class="rp-src-title">{{ d.title }}</span>
+                  <span v-if="d.n > 1" class="rp-src-times" :title="`本篇标记 ${d.n} 次`">×{{ d.n }}</span>
+                  <span class="rp-src-go">定位</span>
+                </NuxtLink>
+              </li>
+            </ol>
           </div>
         </li>
       </ul>
@@ -85,6 +86,16 @@
 </template>
 
 <script setup lang="ts">
+interface RepeatDoc {
+  textId: string
+  title: string
+  n: number
+  /** 该词在这篇文章里的某条标记 id —— 阅读页用它定位到段落并弹出释义 */
+  markId?: string
+  /** 兜底的段落 id（标记 id 在正文里找不到时用） */
+  paragraphId?: string
+}
+
 interface RepeatItem {
   term: string
   type: string
@@ -95,7 +106,7 @@ interface RepeatItem {
   phonetic: string
   meaning: string
   pos: string
-  docs: { textId: string; title: string; n: number }[]
+  docs: RepeatDoc[]
 }
 
 const minOptions = [
@@ -127,9 +138,16 @@ function typeLabel(t: string) {
   return t === 'phrase' ? '短语' : t === 'sentence' ? '句子' : '单词'
 }
 
-/** 被「+N」收起来的那些篇名，挂在 title 上备查 */
-function restTitles(it: RepeatItem) {
-  return it.docs.slice(3).map(d => d.title).join('\n')
+/**
+ * 跳到原文里这个词的位置。
+ *
+ * 优先用 markId：阅读页拿到 `?mark=` 会 focusMark —— 滚到所在段落、闪一下、并把释义弹窗打开，
+ * 一眼就能看到当时的笔记。只有 markId 缺失（正文 marks 与标记表不同步）时才退回段落 id，
+ * 那种情况下只能滚动定位，不会有弹窗。
+ */
+function jumpUrl(d: RepeatDoc) {
+  const anchor = d.markId || d.paragraphId
+  return `/read/${d.textId}${anchor ? `?mark=${encodeURIComponent(anchor)}` : ''}`
 }
 
 useHead({ title: '重点攻克 · 阅读' })
@@ -302,29 +320,68 @@ useHead({ title: '重点攻克 · 阅读' })
 .rp-dot { color: #cfccc3; }
 .rp-docs-n { color: #8a8880; font-variant-numeric: tabular-nums; }
 
-.rp-docs { display: flex; flex-wrap: wrap; gap: 5px; }
-.rp-doc {
-  font-size: 11px;
-  color: #6b6a63;
-  background: #f7f6f2;
+/*
+ * 来源列表按「参考文献」的排法：一行一条，[1] 编号 + 篇名（衬线斜体），
+ * 悬挂缩进 —— 篇名换行时对齐到编号右侧，而不是缩回行首。
+ */
+.rp-src {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rp-src-item { min-width: 0; }
+.rp-src-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px 3px 3px;
   border-radius: 5px;
-  padding: 2px 7px;
   text-decoration: none;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  transition: background 0.14s, color 0.14s;
 }
-.rp-doc:hover { background: #eeedf7; color: #3d3591; }
-.rp-doc-n { margin-left: 3px; color: #9a6207; }
-.rp-doc-more {
-  font-size: 11px;
-  color: #a09e97;
-  background: #f2f1ec;
-  border-radius: 5px;
-  padding: 2px 6px;
-  cursor: default;
+.rp-src-row:hover { background: #f5f4fb; }
+.rp-src-br {
+  font-size: 10.5px;
+  color: #b5b2a9;
+  font-variant-numeric: tabular-nums;
 }
+.rp-src-row:hover .rp-src-br { color: #8a86bd; }
+.rp-src-title {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #45443e;
+  /* 长标题换行时与篇名起点对齐（悬挂缩进） */
+  padding-left: 1.1em;
+  text-indent: -1.1em;
+  overflow-wrap: anywhere;
+}
+.rp-src-row:hover .rp-src-title {
+  color: #3d3591;
+  text-decoration: underline;
+  text-decoration-color: rgba(61, 53, 145, 0.35);
+  text-underline-offset: 2px;
+}
+.rp-src-times {
+  font-size: 10.5px;
+  color: #9a6207;
+  background: #fdf4e6;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+.rp-src-go {
+  font-size: 10.5px;
+  color: #b5b2a9;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity 0.14s, transform 0.14s, color 0.14s;
+}
+.rp-src-row:hover .rp-src-go { opacity: 1; transform: none; color: #3d3591; }
 
 .rp-foot {
   margin: 18px 0 0;
