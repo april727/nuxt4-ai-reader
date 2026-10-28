@@ -14,16 +14,17 @@
       </div>
     </div>
 
-    <div v-if="error" class="wp-empty wp-error">{{ error }}</div>
+    <div class="wp-scroll">
+      <div v-if="error" class="wp-empty wp-error">{{ error }}</div>
 
-    <div v-else-if="!items.length" class="wp-empty">
-      <p class="wp-empty-title">{{ dueOnly ? '今天没有要复习的错题' : '还没有错题' }}</p>
-      <p class="wp-empty-hint">
-        在试卷里切到「框选」，把做错的题框出来存为<strong>错题</strong>，它就会出现在这里按间隔重复复习。
-      </p>
-    </div>
+      <div v-else-if="!items.length" class="wp-empty">
+        <p class="wp-empty-title">{{ dueOnly ? '今天没有要复习的错题' : '还没有错题' }}</p>
+        <p class="wp-empty-hint">
+          在试卷里切到「框选」，把做错的题框出来存为<strong>错题</strong>，它就会出现在这里按间隔重复复习。
+        </p>
+      </div>
 
-    <div v-else class="wp-grid">
+      <div v-else class="wp-grid">
       <article
         v-for="it in items"
         :key="it.id"
@@ -47,6 +48,7 @@
           </div>
         </div>
       </article>
+      </div>
     </div>
 
     <!-- 复习浮层：整页 + 框出该题，先想再看答案 -->
@@ -208,10 +210,13 @@ async function grade(g: 'again' | 'hard' | 'good' | 'easy') {  const cur = activ
 
 <style scoped>
 .wrong-page {
-  min-height: 100vh; background: #f7f6f3; color: #1a1a18;
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  background: #f7f6f3; color: #1a1a18;
   font-family: 'DM Sans', sans-serif;
 }
-.wp-meta { padding: 14px 22px 8px; }
+/* 全局 body 锁死了文档滚动（阅读页需要），所以列表页自己当滚动容器 */
+.wp-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.wp-meta { padding: 14px 22px 8px; flex-shrink: 0; }
 .wp-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wp-chip {
   border: 0.5px solid rgba(0, 0, 0, 0.12); background: #fff; cursor: pointer;
