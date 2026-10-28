@@ -110,6 +110,17 @@
             <span class="mp-picker-tip">可直接 Ctrl+V 粘贴</span>
           </div>
 
+          <!-- 输入框里显示的就是「实际检索词」；被改写时给出来路与退回入口 -->
+          <p v-if="img.rewrittenFrom" class="mp-img-hint">
+            已按 <b>{{ img.q }}</b> 检索（由「{{ img.rewrittenFrom }}」改写）
+            <button class="mp-img-literal" @click="searchImages(false)">用原词搜</button>
+          </p>
+          <p v-else-if="img.usedQuery" class="mp-img-hint">检索词：{{ img.usedQuery }}</p>
+
+          <p v-if="img.weak" class="mp-img-warn">
+            这些结果与检索词的相关度偏低，可换个说法重搜，或改用原词检索。
+          </p>
+
           <p v-if="img.error" class="mp-img-error">{{ img.error }}</p>
 
           <div v-if="img.items.length" class="mp-img-grid">
@@ -117,7 +128,7 @@
               v-for="(it, i) in img.items"
               :key="it.full"
               class="mp-img-cell"
-              :title="it.source"
+              :title="it.title ? `${it.title}\n${it.source}` : it.source"
               @click="useImage(it, i)"
             >
               <img
@@ -129,8 +140,6 @@
               />
             </button>
           </div>
-
-          <p v-if="img.usedQuery" class="mp-img-hint">检索词：{{ img.usedQuery }}</p>
         </div>
       </div>
     </div>
@@ -156,10 +165,16 @@ interface ImageCandidate { thumb: string; full: string; source: string; title?: 
 const img = reactive({
   open: false,
   q: '',
+  /** 打开时的原始词条，用于「用原词搜」与改写前后对照 */
+  original: '',
   loading: false,
   busy: -1,
   error: '',
   usedQuery: '',
+  /** 本次检索词由 original 改写而来时的原词；为空表示没改写 */
+  rewrittenFrom: '',
+  /** 结果相关性偏低（服务端判定），如实提示 */
+  weak: false,
   items: [] as ImageCandidate[],
 })
 
@@ -268,11 +283,14 @@ function onThumbError(u: string) {
 function openImagePicker() {
   img.open = true
   // 每次打开都以「当前标记」为准，避免沿用上一条的检索词
-  img.q = (props.mark.lemma || props.mark.text || '').trim().slice(0, 40)
+  img.original = (props.mark.lemma || props.mark.text || '').trim().slice(0, 40)
+  img.q = img.original
   img.items = []
   img.busy = -1
   img.error = ''
   img.usedQuery = ''
+  img.rewrittenFrom = ''
+  img.weak = false
   if (img.q) void searchImages(true)
 }
 
@@ -281,7 +299,10 @@ function closeImagePicker() {
   // 清空残留，下一次打开不会看到旧内容
   img.items = []
   img.q = ''
+  img.original = ''
   img.usedQuery = ''
+  img.rewrittenFrom = ''
+  img.weak = false
   img.error = ''
 }
 
@@ -298,13 +319,16 @@ watch(() => props.mark.id, () => {
 let searchSeq = 0
 
 async function searchImages(smart = false) {
-  const q = img.q.trim()
+  // smart：自动改写后再搜（打开弹窗时用）。判定为 false 时按字面搜，
+  // 「用原词搜」走的也是这条路 —— 用户要看的就是原词到底能搜出什么。
+  const q = (smart ? img.q : (img.original || img.q)).trim()
   if (!q) return
+  if (!smart) img.q = q
   // 先作废上一条在途请求，再发起新搜索
   const seq = ++searchSeq
-  img.loading = true; img.error = ''; img.usedQuery = ''
+  img.loading = true; img.error = ''; img.usedQuery = ''; img.weak = false; img.rewrittenFrom = ''
   try {
-    const res = await $fetch<{ candidates: ImageCandidate[]; query: string; error?: string }>('/api/images/search', {
+    const res = await $fetch<{ candidates: ImageCandidate[]; query: string; error?: string; weak?: boolean }>('/api/images/search', {
       query: {
         q,
         count: 4,
@@ -318,7 +342,15 @@ async function searchImages(smart = false) {
     // 期间换了标记或重新搜索，丢弃旧结果
     if (seq !== searchSeq) return
     img.items = res.candidates || []
-    if (res.query && res.query.toLowerCase() !== q.toLowerCase()) img.usedQuery = res.query
+    img.weak = Boolean(res.weak)
+    const used = (res.query || '').trim()
+    if (used && used.toLowerCase() !== q.toLowerCase()) {
+      // 关键：把输入框改成「实际检索词」。之前输入框一直显示原词、页脚却写着别的，
+      // 用户看到的和搜的完全是两回事，才会怀疑「是不是没用检索词搜」。
+      img.usedQuery = used
+      img.q = used
+      img.rewrittenFrom = q
+    }
     if (!img.items.length) img.error = res.error || '没有找到合适的图片，换个关键词试试'
   } catch (e: any) {
     if (seq !== searchSeq) return
@@ -535,6 +567,16 @@ const popupStyle = computed(() => ({ left: `${popupX.value}px`, top: `${popupY.v
 }
 .mp-img-go:disabled { opacity: 0.55; cursor: default; }
 .mp-img-error { margin: 6px 0 0; font-size: 11.5px; color: #b45309; line-height: 1.5; }
+.mp-img-warn {
+  margin: 6px 0 0; padding: 5px 8px; font-size: 11px; line-height: 1.5;
+  color: #9a6207; background: #fdf6ea; border-radius: 6px;
+}
+.mp-img-literal {
+  margin-left: 4px; padding: 1px 6px; font-size: 10.5px; font-family: inherit;
+  color: #3d3591; background: #fff; border: 0.5px solid rgba(61, 53, 145, 0.3);
+  border-radius: 5px; cursor: pointer;
+}
+.mp-img-literal:hover { background: #f3f1fb; }
 .mp-img-expand {
   display: flex; align-items: center; gap: 5px; margin-top: 7px;
   font-size: 11px; color: #8a8880; cursor: pointer; user-select: none;
