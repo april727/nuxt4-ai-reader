@@ -999,6 +999,7 @@ import { useDeepSeek } from '~/composables/useDeepSeek'
 import { useTextStream } from '~/composables/useTextStream'
 import { useIsMobile } from '~/composables/useIsMobile'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
+import { applyFigureGroups } from '~/utils/figureGroups'
 import ReadingAppearance from '~/components/ReadingAppearance.vue'
 import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
 import { compressImageFile } from '~/utils/imageCompress'
@@ -3211,6 +3212,44 @@ function closeSegMenu(e: MouseEvent) {
 onMounted(() => document.addEventListener('click', closeSegMenu))
 onUnmounted(() => document.removeEventListener('click', closeSegMenu))
 
+// ── 段落里的连续竖图并排 ──
+// 同一页教材被切成多块插入时，markdown 里是一串独立的 ![]()，各占一个 <p>；
+// `.para-text img{max-width:100%}` 让每张按原宽独占一行，三张竖切书页就是三屏。
+// 渲染后把「相邻的纯图片段落」合并成等分列宽的图组（详见 utils/figureGroups.ts）。
+let figGroupTimer: ReturnType<typeof setTimeout> | null = null
+let figObserver: MutationObserver | null = null
+
+function runParaFigureGroups() {
+  const pane = document.querySelector('.reader-article-pane')
+  if (!pane) return
+  for (const el of pane.querySelectorAll<HTMLElement>('.para-text')) {
+    // 单图段落不参与，省掉绝大多数段落的遍历开销
+    if (el.querySelectorAll('img').length < 2) continue
+    applyFigureGroups(el)
+  }
+}
+function scheduleParaFigureGroups() {
+  if (figGroupTimer) clearTimeout(figGroupTimer)
+  figGroupTimer = setTimeout(() => {
+    figGroupTimer = null
+    runParaFigureGroups()
+  }, 200)
+}
+onMounted(() => {
+  scheduleParaFigureGroups()
+  const pane = document.querySelector('.reader-article-pane')
+  if (pane) {
+    // v-html 重渲染（标记更新、编辑段落）会重建 DOM，分组标记随之丢失，需重跑
+    figObserver = new MutationObserver(scheduleParaFigureGroups)
+    figObserver.observe(pane, { childList: true, subtree: true })
+  }
+})
+onBeforeUnmount(() => {
+  if (figGroupTimer) clearTimeout(figGroupTimer)
+  figObserver?.disconnect()
+  figObserver = null
+})
+
 // ── 书内搜索 ──
 const searchVisible = ref(false)
 const searchText = ref('')
@@ -4387,6 +4426,47 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
 .para-text :deep(h2) { font-size: 1.2em; }
 .para-text :deep(h3) { font-size: 1.05em; }
 .para-text :deep(p) { margin: 0.4em 0; }
+
+/* ── 连续竖图并排（figureGroups.ts 打的分组）──
+   等分列宽 + 每张等比缩放：三张竖切书页一定并排，不会各占一屏。
+   别给 img 设 width:100% —— 那会按原宽占满格子、把比例撑坏。 */
+.para-text :deep(.md-figure-group) {
+  display: grid;
+  grid-template-columns: repeat(var(--md-fig-cols, 3), minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+  justify-items: center;
+  margin: 10px 0;
+}
+.para-text :deep(.md-figure) {
+  margin: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.para-text :deep(.md-figure img) {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(50vh, 520px);
+  margin: 0;
+}
+@media (max-width: 760px) {
+  /* 窄屏放不下一排，改成横滑（像翻书页），比换行成 2+1 好读 */
+  .para-text :deep(.md-figure-group) {
+    grid-auto-flow: column;
+    grid-auto-columns: 46vw;
+    grid-template-columns: none;
+    justify-content: start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    padding-bottom: 4px;
+  }
+  .para-text :deep(.md-figure) { scroll-snap-align: start; }
+  .para-text :deep(.md-figure img) { max-height: 46vh; }
+}
 .para-text :deep(strong) { font-weight: 600; }
 .para-text :deep(em) { font-style: italic; }
 .para-text :deep(ul), .para-text :deep(ol) { padding-left: 1.5em; margin: 0.3em 0; }

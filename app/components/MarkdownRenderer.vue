@@ -1,5 +1,5 @@
 <template>
-  <div class="markdown-renderer prose" :class="{ 'image-resizable': imageResizable }" v-html="renderedHtml" @click="onContentClick"></div>
+  <div ref="rootEl" class="markdown-renderer prose" :class="{ 'image-resizable': imageResizable }" v-html="renderedHtml" @click="onContentClick"></div>
   <Teleport to="body">
     <div
       v-if="resizeImg && !isStreaming"
@@ -30,6 +30,7 @@
 <script setup lang="ts">
 import { marked } from 'marked'
 import { splitStreamContent, escapeHtml } from '~/utils/streamBuffer'
+import { applyFigureGroups } from '~/utils/figureGroups'
 
 const props = defineProps<{
   content: string
@@ -154,6 +155,31 @@ function normalizeTables(md: string): string {
   return result.join('\n')
 }
 
+/** 图组：连续的纯图片段落合并成横排（逻辑见 utils/figureGroups.ts） */
+let groupTimer: ReturnType<typeof setTimeout> | null = null
+const rootEl = ref<HTMLElement | null>(null)
+
+function runFigureGroups() {
+  if (rootEl.value) applyFigureGroups(rootEl.value)
+}
+function scheduleFigureGroups() {
+  if (groupTimer) clearTimeout(groupTimer)
+  groupTimer = setTimeout(() => {
+    groupTimer = null
+    runFigureGroups()
+  }, 120)
+}
+
+onMounted(() => {
+  runFigureGroups()
+  // 图片解码晚于 mounted，补两次即可覆盖（markdown 图片是 eager 加载的）
+  scheduleFigureGroups()
+  setTimeout(scheduleFigureGroups, 600)
+})
+onUnmounted(() => {
+  if (groupTimer) clearTimeout(groupTimer)
+})
+
 const renderedHtml = computed(() => {
   if (!props.content) return ''
   try {
@@ -187,6 +213,9 @@ const renderedHtml = computed(() => {
     return props.content.replace(/\n/g, '<br>')
   }
 })
+
+// v-html 重渲染会重建 DOM，分组标记随之丢失 —— 每次内容变化后重新套用
+watch(renderedHtml, () => nextTick(scheduleFigureGroups))
 </script>
 
 <style scoped>
@@ -247,6 +276,32 @@ const renderedHtml = computed(() => {
 }
 .markdown-renderer :deep(img) {
   max-width: 100%; height: auto;
+}
+
+/* ── 竖图组（连续插入的书页切图）──
+   等分列宽 + 每张等比缩放：三张竖图一定并排，不会换行成 2+1。
+   关键是不给 img 设 width:100%（那会让每张按原宽占满一行，变回竖向堆叠），
+   而是 max-width/max-height 双向约束，宽度由列宽决定、比例自己保住。 */
+.markdown-renderer :deep(.md-figure-group) {
+  display: grid;
+  grid-template-columns: repeat(var(--md-fig-cols, 3), minmax(0, 1fr));
+  gap: 8px;
+  align-items: start;
+  justify-items: center;
+  margin: 14px 0;
+}
+.markdown-renderer :deep(.md-figure) {
+  margin: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.markdown-renderer :deep(.md-figure img) {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(50vh, 520px);
 }
 .markdown-renderer.image-resizable :deep(img) {
   cursor: pointer;
@@ -317,5 +372,21 @@ const renderedHtml = computed(() => {
 .markdown-renderer :deep(th) {
   background: #f8fafc;
   font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  /* 窄屏放不下一排，改成横滑查看（像翻书页），比换行成 2+1 好读 */
+  .markdown-renderer :deep(.md-figure-group) {
+    grid-auto-flow: column;
+    grid-auto-columns: 46vw;
+    grid-template-columns: none;
+    justify-content: start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    padding-bottom: 4px;
+  }
+  .markdown-renderer :deep(.md-figure) { scroll-snap-align: start; }
+  .markdown-renderer :deep(.md-figure img) { max-height: 46vh; }
 }
 </style>

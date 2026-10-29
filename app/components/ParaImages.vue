@@ -19,7 +19,11 @@
       </div>
     </div>
 
-    <div v-if="!collapsed" class="pim-grid" :style="{ '--pim-cols': cols }">
+    <div
+      v-if="!collapsed" class="pim-grid"
+      :class="{ 'pim-grid--figures': figures }"
+      :style="{ '--pim-cols': cols }"
+    >
       <div
         v-for="(img, i) in images" :key="`${img}#${i}`"
         class="pim-cell"
@@ -129,6 +133,21 @@ function srcsetOf(img: string) {
   return DERIVE_STEPS.map((w) => `${base}?w=${w} ${w}w`).join(', ')
 }
 
+/** 真实宽高比，未加载完先给 16:9 占位（照片最常见，跳变最小） */
+const ratios = reactive<Record<string, number>>({})
+
+/** 首图宽高比。同组配图通常来自同一页/同一套图，用它代表整组即可 */
+const leadRatio = computed(() => ratios[props.images[0]] || 16 / 9)
+
+/**
+ * 竖图组：多图 + 首图是竖的（宽高比 < 0.85）。
+ *
+ * 这类图（书页竖切、手机长截图）如果沿用 grid + aspect-ratio，格子高度 = 列宽 ÷ 0.55，
+ * 两列时单格接近 1200px、三张图就是三屏 —— 观感上等于"竖向排列"，每张都巨大。
+ * 改成「先定高度、宽度由比例推出」：三张各约 250×450 并排一行，一屏内看完。
+ */
+const figures = computed(() => props.images.length > 1 && leadRatio.value < 0.85)
+
 /**
  * sizes 必须是"图片在布局里占多宽"的诚实估计：给大了只会多下一档、白费流量，
  * 给小了浏览器挑低分辨率的档位，图片就糊 —— 这里按主栏宽约 1330px 标定。
@@ -137,12 +156,12 @@ const sizesAttr = computed(() => {
   const n = props.images.length
   const mobile = '96vw'
   if (n === 1) return `(max-width: 760px) ${mobile}, 1000px`
+  // 竖图组按高度封顶，宽度只有 200~280px，报 680px 会让浏览器白下一档
+  if (figures.value) return `(max-width: 760px) 46vw, 280px`
   if (n <= 4) return `(max-width: 760px) 48vw, 680px`
   return `(max-width: 760px) 32vw, 450px`
 })
 
-/** 真实宽高比，未加载完先给 16:9 占位（照片最常见，跳变最小） */
-const ratios = reactive<Record<string, number>>({})
 /** 单图明显窄于栏宽时居中（靠左会出现一大片右侧空洞，版面失衡） */
 const narrow = ref(false)
 function onLoad(img: string, e: Event) {
@@ -288,6 +307,29 @@ const cellStyle = computed(() => {
 .pim--md .pim-grid { max-width: 100%; }
 .pim--lg .pim-grid { width: calc(100% + 72px); margin-inline: -36px; max-width: none; }
 
+/* ── 竖图组：按高度排，不按宽度排 ──
+   书页竖切 / 长截图的宽高比常在 0.5~0.65。若沿用 grid 的 aspect-ratio，
+   单格高度 = 列宽 ÷ 0.55（两列时接近 1200px），三张就是三屏，等于"竖向排列"。
+   改成 flex 等高横排：高度由档位封顶，宽度按比例自然推出（约 200~280px），
+   三张并排一行、一屏内看完；要看整页细节点开灯箱。 */
+.pim-grid--figures {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 9px;
+}
+.pim-grid--figures .pim-cell {
+  flex: 0 0 auto;
+  width: auto;
+  /* 大屏兜底：54vh 在 1440p 上会到 780px，超过 520 就停，别又变回"一屏一张" */
+  height: min(var(--pim-fig-h, 44vh), 520px);
+}
+/* 档位对竖图组是"高度档"：紧凑更矮、通栏更高，不再是宽度上限 */
+.pim--sm .pim-grid--figures { max-width: none; --pim-fig-h: 32vh; }
+.pim--md .pim-grid--figures { --pim-fig-h: 44vh; }
+.pim--lg .pim-grid--figures { --pim-fig-h: 54vh; }
+
 /* 单图的高度约束由 .pim--single .pim-cell img 的 max-height 负责 */
 
 /* 序号角标：多图时告诉读者"这是第几张"，也让点击目标更明确 */
@@ -337,8 +379,21 @@ const cellStyle = computed(() => {
   .pim--lg .pim-grid { width: 100%; margin-inline: 0; }
   .pim--sm .pim-grid { max-width: 100%; }
   .pim-grid { gap: 6px; }
-  /* 移动端多图统一 1:1：窄屏两列若各按原比例，一横一竖会撕出大片空洞 */
-  .pim:not(.pim--single) .pim-cell { aspect-ratio: 1 / 1 !important; }
+  /* 移动端多图统一 1:1：窄屏两列若各按原比例，一横一竖会撕出大片空洞。
+     竖图组除外 —— 它靠高度约束，硬压成方形会把书页裁掉一大半。 */
+  .pim:not(.pim--single) .pim-grid:not(.pim-grid--figures) .pim-cell { aspect-ratio: 1 / 1 !important; }
+  /* 竖图组在窄屏放不下一行，改成横滑（像翻书页），比换行成 2+1 好读 */
+  .pim-grid--figures {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    padding-bottom: 4px;
+  }
+  .pim-grid--figures .pim-cell { height: min(40vh, 380px); scroll-snap-align: start; }
+  .pim--sm .pim-grid--figures .pim-cell { height: min(30vh, 280px); }
+  .pim--lg .pim-grid--figures .pim-cell { height: min(48vh, 460px); }
   .pim--single .pim-cell img { max-height: 56vh; }
   .pim-del { width: 18px; height: 18px; font-size: 12px; opacity: 0.62; }
 }
