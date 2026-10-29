@@ -382,26 +382,18 @@
               </svg>
             </button>
           </div>
-          <!-- 段落关联图片 -->
-          <div v-if="(para as any).images?.length" class="para-images" :class="`para-images--${paraImageSize(para.id)}`">
-            <div class="para-images-bar">
-              <button class="para-images-toggle" @click.stop="toggleParaImages(para.id)" :title="isParaImagesCollapsed(para.id) ? '展开图片' : '收起图片'">
-                <svg class="pi-chevron" :class="{ open: !isParaImagesCollapsed(para.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-                {{ (para as any).images.length }} 张
-              </button>
-              <div class="para-images-size">
-                <button :class="{ active: paraImageSize(para.id) === 'sm' }" @click.stop="setParaImageSize(para.id, 'sm')" title="小">◉</button>
-                <button :class="{ active: paraImageSize(para.id) === 'md' }" @click.stop="setParaImageSize(para.id, 'md')" title="中">◉</button>
-                <button :class="{ active: paraImageSize(para.id) === 'lg' }" @click.stop="setParaImageSize(para.id, 'lg')" title="大">◉</button>
-              </div>
-            </div>
-            <div v-if="!isParaImagesCollapsed(para.id)" v-for="(img, i) in (para as any).images" :key="i" class="para-image-wrap">
-              <img :src="`/api/file/${img}`" :alt="`段落图片 ${i + 1}`" @click.stop="viewImage(`/api/file/${img}`)" />
-              <button class="para-image-del" @click.stop="removeParaImage(para.id, img)" title="删除图片">×</button>
-            </div>
-          </div>
+          <!-- 段落配图：杂志式 figure，比例随图自适应，不裁切 -->
+          <ParaImages
+            v-if="(para as any).images?.length"
+            :images="(para as any).images"
+            :para-id="para.id"
+            :size="paraImageSize(para.id)"
+            :collapsed="isParaImagesCollapsed(para.id)"
+            @update:size="setParaImageSize(para.id, $event)"
+            @toggle-collapse="toggleParaImages(para.id)"
+            @remove="removeParaImage(para.id, $event)"
+            @open="openParaImage($event, (para as any).images)"
+          />
           </div>
           <!-- 阅读位置小红旗 -->
           <span
@@ -856,6 +848,15 @@
       :src="floatingImage.src"
       :title="floatingImage.title"
       @close="floatingImage = null"
+    />
+
+    <!-- 段落配图灯箱：整屏查看 + 左右翻 -->
+    <ImageLightbox
+      :open="!!lightbox"
+      :list="lightbox?.list || []"
+      :index="lightbox?.index || 0"
+      @close="lightbox = null"
+      @update:index="setLightboxIndex"
     />
 
     <!-- 手动分段 / 播客整理上传 -->
@@ -2142,10 +2143,18 @@ function createMark(type: MarkType) {
 // ---- 段落点击 ----
 function handleParaClick(p: Paragraph, e: MouseEvent) {
   const target = e.target as HTMLElement
-  // 点击 Markdown 渲染的图片 → 打开图片查看器
+  // 点击 Markdown 渲染的图片 → 打开灯箱（同段落的图一起，可左右翻）
   if (target.tagName === 'IMG') {
     const src = (target as HTMLImageElement).src
-    if (src) { viewImage(src); return }
+    if (src) {
+      const block = target.closest('.para-block') as HTMLElement | null
+      const imgs = block
+        ? [...block.querySelectorAll<HTMLImageElement>('.para-text img')].map((i) => i.src)
+        : []
+      const list = imgs.length ? imgs : [src]
+      lightbox.value = { list, index: Math.max(0, list.indexOf(src)) }
+      return
+    }
   }
   if (target.tagName === 'MARK') {
     const mid = target.dataset.markId
@@ -3568,6 +3577,15 @@ async function removeParaImage(paraId: string, imageName: string) {
 
 const floatingImage = ref<{ src: string; title: string } | null>(null)
 
+/** 段落配图灯箱：保存整段图片列表，支持左右翻（比 FloatingImage 更适合看细节） */
+const lightbox = ref<{ list: string[]; index: number } | null>(null)
+function openParaImage(index: number, list: string[]) {
+  lightbox.value = { list: [...list], index }
+}
+function setLightboxIndex(i: number) {
+  if (lightbox.value) lightbox.value = { ...lightbox.value, index: i }
+}
+
 function viewImage(url: string) {
   floatingImage.value = { src: url, title: '图片预览' }
 }
@@ -4318,59 +4336,6 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
   flex: 1; min-width: 0;
 }
 
-/* ── 段落图片 ── */
-.para-images {
-  display: flex; flex-wrap: wrap; gap: 8px;
-  margin-top: 10px; padding-top: 8px;
-  border-top: 1px dashed #e8e6e0;
-}
-
-.para-images-bar {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-}
-.para-images-toggle {
-  display: flex; align-items: center; gap: 3px;
-  border: none; background: none; cursor: pointer;
-  font-size: 0.7rem; color: #aaa; font-family: 'DM Sans', system-ui, sans-serif;
-  padding: 2px 4px; border-radius: 3px;
-}
-.para-images-toggle:hover { color: #555; background: #f0efe9; }
-.pi-chevron { transition: transform 0.2s ease; }
-.pi-chevron.open { transform: rotate(180deg); }
-.para-images-size {
-  display: flex; gap: 2px;
-}
-.para-images-size button {
-  width: 20px; height: 20px; border: none; background: none; cursor: pointer;
-  color: #ccc; font-size: 8px; border-radius: 50%; transition: all 0.15s;
-  display: flex; align-items: center; justify-content: center;
-}
-.para-images-size button:hover { background: #f0efe9; }
-.para-images-size button.active { color: #3d3591; background: rgba(61,53,145,0.08); }
-
-.para-image-wrap {
-  position: relative; border-radius: 6px; overflow: hidden;
-  cursor: pointer; flex-shrink: 0;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.para-image-wrap img { width: 100%; height: 100%; object-fit: cover; }
-
-/* 小 */
-.para-images--sm .para-image-wrap { width: 100px; height: 75px; }
-/* 中（默认） */
-.para-images--md .para-image-wrap { width: 160px; height: 120px; }
-/* 大 */
-.para-images--lg .para-image-wrap { width: 240px; height: 180px; }
-.para-image-del {
-  position: absolute; top: 4px; right: 4px;
-  width: 22px; height: 22px; border-radius: 50%;
-  border: none; background: rgba(0,0,0,0.55); color: #fff;
-  font-size: 14px; line-height: 1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 0.15s;
-}
-.para-image-wrap:hover .para-image-del { opacity: 1; }
-.para-image-del:hover { background: rgba(220,38,38,0.85); }
 
 .para-edit-area {
   font-family: 'Lora', Georgia, serif;
@@ -4430,14 +4395,20 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
 .para-text :deep(pre) { background: #f5f4f0; padding: 0.8em 1em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
 .para-text :deep(pre code) { background: none; padding: 0; }
 .para-text :deep(img) {
-  max-width: 100%; height: auto;
-  border-radius: 6px; margin: 8px 0;
-  cursor: pointer;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-  transition: box-shadow 0.15s;
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 78vh;
+  object-fit: contain;
+  border-radius: 7px;
+  margin: 12px 0 6px;
+  cursor: zoom-in;
+  outline: 1px solid rgba(0, 0, 0, 0.06);
+  outline-offset: -1px;
+  transition: outline-color 0.15s;
 }
 .para-text :deep(img:hover) {
-  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  outline-color: rgba(61, 53, 145, 0.28);
 }
 
 .para-action-btn.active { background: #edeafd; color: #3d3591; border-color: rgba(61,53,145,0.2); }
