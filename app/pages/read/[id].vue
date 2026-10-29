@@ -39,7 +39,7 @@
           </svg>
           <span class="tb-label">回到播放模式</span>
         </button>
-        <button v-if="pdfUrl" class="reader-icon-btn" @click="pdfPage = null; showPdf = true" title="查看 PDF 原文">
+        <button v-if="pdfUrl" class="reader-icon-btn" @click="openPdf(null)" title="查看 PDF 原文">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
           </svg>
@@ -813,6 +813,8 @@
       :typing-content="markPopup.typingContent"
       :position="markPopup.position"
       :auto-generate="markAutoGenerate"
+      :has-pdf="!!pdfUrl"
+      @open-pdf="openPdfForMark"
       @close="markPopup.visible = false"
       @update-note="handleUpdateNote"
       @update-detail="handleUpdateDetail"
@@ -822,13 +824,16 @@
       @pronounce="handlePronounce"
     />
 
-    <!-- PDF 查看 -->
-    <div v-if="showPdf && pdfUrl" class="pdf-overlay" @click.self="showPdf = false">
-      <div class="pdf-viewer">
-        <div class="pdf-viewer-header"><span>PDF 原文</span><button class="modal-close" @click="showPdf = false">&times;</button></div>
-        <iframe :src="pdfViewerUrl" class="pdf-iframe" frameborder="0"></iframe>
-      </div>
-    </div>
+    <!-- PDF 原文：pdfjs 自渲染，段落里标过的词会在原页上高亮 -->
+    <PdfPageViewer
+      :open="showPdf && !!pdfUrl"
+      :src="pdfUrl"
+      :page="pdfPage"
+      :anchors="pdfAnchors"
+      :marks="marks"
+      :focus-paragraph="pdfFocusPara"
+      @close="showPdf = false"
+    />
 
     <!-- 迷你播放条（字幕阅读页底部） -->
     <MiniPlayer
@@ -1182,11 +1187,10 @@ const quickQuestions = [
 ]
 const progressMsg = ref('')
 const pdfUrl = ref(''); const showPdf = ref(false); const pdfPage = ref<number | null>(null)
-const pdfViewerUrl = computed(() => {
-  if (!pdfUrl.value) return ''
-  if (pdfPage.value) return `${pdfUrl.value}#page=${pdfPage.value}`
-  return pdfUrl.value
-})
+/** PDF 原页锚点（段落→页码、标记→矩形）。null 表示这篇没有坐标表 */
+const pdfAnchors = ref<any>(null)
+const pdfFocusPara = ref<string | null>(null)
+const isPdf = computed(() => /\.pdf(\?|$)/i.test(pdfUrl.value))
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
 /** 未软删除的标记（软删除 = deletedAt 非空，进回收站） */
 const activeMarks = computed(() => marks.value.filter(m => !m.deletedAt))
@@ -3471,14 +3475,43 @@ function locateParagraphPage(para: Paragraph): number | null {
   return parseInt(matches[matches.length - 1][1], 10)
 }
 
-function openPdfAtParagraph(para: Paragraph) {
-  const page = locateParagraphPage(para)
-  if (page !== null) {
-    pdfPage.value = page
-  } else {
-    pdfPage.value = null
-  }
+/**
+ * 打开 PDF 原页。传段落则定位到该段所在页。
+ *
+ * 页码优先取坐标表（anchors.paragraphs[pid].page）：旧的 locateParagraphPage
+ * 靠正文里的 [PAGE:n] 锚点，那只在旧解析路径下才有，新解析已经不再往正文写它，
+ * 老文章又从来没写过 —— 两条路都指望不上。坐标表是唯一对全部 PDF 都成立的来源。
+ */
+async function openPdf(para: Paragraph | null) {
+  pdfFocusPara.value = para?.id || null
+  pdfPage.value = para ? locateParagraphPage(para) : null
+  await loadPdfAnchors()
+  const anchorPage = para ? pdfAnchors.value?.paragraphs?.[para.id]?.page : null
+  if (anchorPage) pdfPage.value = anchorPage
   showPdf.value = true
+}
+
+/** 拉锚点表（服务端有缓存，同一篇反复打开不会重复对齐） */
+async function loadPdfAnchors() {
+  if (!isPdf.value) { pdfAnchors.value = null; return }
+  try {
+    const r = await $fetch<any>('/api/pdf/anchors', { query: { id } })
+    pdfAnchors.value = r?.ok ? r : null
+  } catch {
+    pdfAnchors.value = null
+  }
+}
+
+function openPdfAtParagraph(para: Paragraph) {
+  openPdf(para)
+}
+
+/** 从标记弹窗跳到原页：先用标记所在段落定位，找不到就只开原页 */
+function openPdfForMark() {
+  const pid = markPopup.mark?.paragraphId
+  markPopup.visible = false
+  const para = pid ? paragraphs.value.find((p) => p.id === pid) : null
+  openPdf(para || null)
 }
 
 /** 整理段落：补标点、分句、排版 */

@@ -4,6 +4,11 @@
       <div class="mp-header" :style="{ background: mark.color }" @mousedown="startDrag" @touchstart.stop="startDragTouch">
         <span class="mp-type">{{ typeLabel }}</span>
         <div class="mp-header-actions">
+          <button v-if="hasPdf" class="mp-btn-icon" @click.stop="emit('open-pdf')" title="在原文中查看">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </button>
           <button class="mp-btn-icon mp-delete" @click.stop="handleDelete" title="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
           <button class="mp-btn-icon mp-expand-btn" @click.stop="toggleExpand">
             <svg class="mp-chevron" :class="{ open: expanded }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -151,8 +156,8 @@ import type { Mark } from '#shared/types'
 import { setMarkdownImageWidth } from '#shared/utils/explainRenderer'
 import { compressImageFile } from '~/utils/imageCompress'
 
-const props = defineProps<{ visible: boolean; mark: Mark; textId?: string; loading: boolean; typing: boolean; typingContent: string; position: { x: number; y: number }; autoGenerate: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'update-note', n: string): void; (e: 'delete'): void; (e: 'pronounce', w: string): void; (e: 'update-detail', d: string): void; (e: 'generate'): void; (e: 'update-auto-generate', value: boolean): void }>()
+const props = defineProps<{ visible: boolean; mark: Mark; textId?: string; loading: boolean; typing: boolean; typingContent: string; position: { x: number; y: number }; autoGenerate: boolean; hasPdf?: boolean }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'update-note', n: string): void; (e: 'delete'): void; (e: 'pronounce', w: string): void; (e: 'update-detail', d: string): void; (e: 'generate'): void; (e: 'update-auto-generate', value: boolean): void; (e: 'open-pdf'): void }>()
 
 const expanded = ref(true); const localNote = ref(''); const popupX = ref(0); const popupY = ref(0); const popupW = ref(380); const popupH = ref(420); const isPlaying = ref(false)
 const viewTab = ref<'edit' | 'view'>('view')

@@ -291,14 +291,20 @@ try {
   }
 
   // ── 坐标表（可选，给原页高亮用）──
+  //
+  // 顺序必须是**阅读顺序**，不是 pdfjs 的内容流顺序：内容流里双栏页的左右栏
+  // 常常交错，甚至整页倒序。段落文本是按阅读顺序排的，顺序一错，后面的词级
+  // 对齐会整体错位（表现为高亮飘到别的行）。
+  // bodyLines 已经是「分栏 → 排行 → 行内按 x」的结果，直接顺着导出即可；
+  // 顺带把页眉页码这类非正文行排除掉 —— 它们本来就不该被高亮。
   if (geomPath) {
     const words = []
-    for (const pg of pages) {
-      for (const it of pg.items) {
+    for (const ln of bodyLines) {
+      for (const it of ln.items) {
         const w = it.str.trim()
         if (!w) continue
         words.push({
-          p: pg.page,
+          p: ln.page,
           t: w,
           x: +it.transform[4].toFixed(2),
           y: +it.transform[5].toFixed(2),

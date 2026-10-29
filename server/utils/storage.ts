@@ -166,6 +166,34 @@ export function moveToFinal(
 }
 
 /**
+ * 将 PDF 坐标表（parse_pdf_layout.mjs --geometry 的产物）随源文件一起归档。
+ *
+ * 临时名约定为 `<uploads里的pdf文件名>.layout.json`：parse-pdf 只拿到临时文件名，
+ * 归档时用同一个名字找回来。找不到就返回 null —— 坐标表是可选增强，
+ * 没有它只是「原页高亮」不可用，绝不能影响导入。
+ *
+ * 放在 contentDir 里而不是单独目录：删文章时按目录整体删，自动带走。
+ */
+export function moveLayoutToFinal(
+  tempName: string,
+  folderId: string,
+  contentId: string,
+): string | null {
+  const src = join(LEGACY_UPLOADS, `${tempName}.layout.json`)
+  if (!existsSync(src)) return null
+  const dir = getContentDir(folderId, contentId)
+  ensureDir(dir)
+  const dest = join(dir, 'layout.json')
+  try {
+    renameSync(src, dest)
+  } catch {
+    copyFileSync(src, dest)
+    try { unlinkSync(src) } catch {}
+  }
+  return dest
+}
+
+/**
  * 将缩略图从临时路径移动到最终目录
  */
 export function moveThumbToFinal(

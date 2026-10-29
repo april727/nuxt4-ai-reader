@@ -1,5 +1,5 @@
 import { writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, unlinkSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
 import path from 'node:path'
 
@@ -125,7 +125,12 @@ export default defineEventHandler(async (event) => {
   await writeFile(pdfPath, fileEntry.data)
 
   // 主路径：版面重建（段落结构 + 坐标）；失败降级 pymupdf4llm；再失败降级纯 JS 抽取
-  let result = parseWithLayout(pdfPath)
+  //
+  // 坐标表写到 `<uploads里的pdf名>.layout.json`，由 text/save 在归档源文件时
+  // 一起搬进内容目录（见 storage.moveLayoutToFinal）。这里不直接写目标位置：
+  // 此刻还没有 contentId，目录都还不存在。
+  const layoutTempPath = `${pdfPath}.layout.json`
+  let result = parseWithLayout(pdfPath, layoutTempPath)
   let parser = 'layout'
   if (!result) {
     result = parseWithPyMuPDF4LLM(pdfPath)
@@ -141,10 +146,14 @@ export default defineEventHandler(async (event) => {
       message: 'PDF 解析失败：版面重建、pymupdf4llm、pdfjs 均未能提取文字层',
     })
   }
+  // 走到回退路径时 layout 不会有坐标表，清掉可能残留的空文件
+  const hasLayout = parser === 'layout' && existsSync(layoutTempPath)
 
   // 扫描版 / 无文字层检测：去掉页码标记后正文文字过少即视为无效
   const textChars = result.markdown.replace(/\[PAGE:\d+\]/g, '').replace(/\s+/g, '').length
   if (textChars < 50) {
+    try { unlinkSync(layoutTempPath) } catch {}
+    try { unlinkSync(pdfPath) } catch {}
     throw createError({ statusCode: 422, message: '未从 PDF 提取到有效文本（可能是扫描版图片 PDF）' })
   }
 
@@ -153,5 +162,7 @@ export default defineEventHandler(async (event) => {
     chapters: result.chapters,
     filePath: path.basename(pdfPath),
     parser,
+    // 坐标表是否已生成。前端不需要它，但导入链路要把它带给 text/save
+    hasLayout,
   }
 })

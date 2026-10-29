@@ -1,5 +1,5 @@
 import { queryAll, runQuery } from '../../utils/db'
-import { LEGACY_UPLOADS, moveToFinal } from '../../utils/storage'
+import { LEGACY_UPLOADS, moveLayoutToFinal, moveToFinal } from '../../utils/storage'
 import { clearCache } from '../../utils/cache'
 import { invalidateFolderCache } from '../../utils/folderCache'
 import { withFingerprintLock } from '../../utils/fingerprintLock'
@@ -54,9 +54,12 @@ export default defineEventHandler(async (event) => {
     // 处理文件：从临时目录移动到最终位置
     let finalPath = body.filePath || ''
     if (finalPath && !finalPath.includes('/')) {
-      const tempPath = path.join(LEGACY_UPLOADS, finalPath)
+      const tempName = finalPath
+      const tempPath = path.join(LEGACY_UPLOADS, tempName)
       if (existsSync(tempPath)) {
-        finalPath = moveToFinal(tempPath, folderId, id, finalPath)
+        finalPath = moveToFinal(tempPath, folderId, id, tempName)
+        // PDF 的坐标表跟着源文件走（没有就返回 null，不影响导入）
+        try { moveLayoutToFinal(tempName, folderId, id) } catch {}
       }
       // 文件不存在时只保留原始名（PDF 等已在 parse-pdf 阶段保存的）
     }
