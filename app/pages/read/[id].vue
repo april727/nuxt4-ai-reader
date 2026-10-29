@@ -230,7 +230,7 @@
           </div>
           <div class="para-body">
             <!-- 展示模式 -->
-            <div v-if="editingParagraphId !== para.id" class="para-text" v-html="renderMarkedText(para)"></div>
+            <div v-if="editingParagraphId !== para.id" class="para-text" :data-para-id="para.id" v-html="renderMarkedText(para)"></div>
             <!-- 编辑模式 -->
             <template v-else>
               <textarea
@@ -850,14 +850,8 @@
       @close="floatingImage = null"
     />
 
-    <!-- 段落配图灯箱：整屏查看 + 左右翻 -->
-    <ImageLightbox
-      :open="!!lightbox"
-      :list="lightbox?.list || []"
-      :index="lightbox?.index || 0"
-      @close="lightbox = null"
-      @update:index="setLightboxIndex"
-    />
+    <!-- 段落配图：贴图浮层（透明、单张、可拖动缩放，无翻页无工具栏） -->
+    <ImageLightbox :open="!!lightbox" :src="lightbox || ''" @close="lightbox = null" />
 
     <!-- 手动分段 / 播客整理上传 -->
     <Teleport to="body">
@@ -1000,6 +994,7 @@ import { useTextStream } from '~/composables/useTextStream'
 import { useIsMobile } from '~/composables/useIsMobile'
 import MarkdownRenderer from '~/components/MarkdownRenderer.vue'
 import { applyFigureGroups } from '~/utils/figureGroups'
+import { decorateParaImages } from '~/utils/paraImageTools'
 import ReadingAppearance from '~/components/ReadingAppearance.vue'
 import GlobalKnowledgeBtn from '~/components/GlobalKnowledgeBtn.vue'
 import { compressImageFile } from '~/utils/imageCompress'
@@ -2144,16 +2139,11 @@ function createMark(type: MarkType) {
 // ---- 段落点击 ----
 function handleParaClick(p: Paragraph, e: MouseEvent) {
   const target = e.target as HTMLElement
-  // 点击 Markdown 渲染的图片 → 打开灯箱（同段落的图一起，可左右翻）
+  // 点击 Markdown 渲染的图片 → 贴图浮层（只贴这一张，不做轮播）
   if (target.tagName === 'IMG') {
     const src = (target as HTMLImageElement).src
     if (src) {
-      const block = target.closest('.para-block') as HTMLElement | null
-      const imgs = block
-        ? [...block.querySelectorAll<HTMLImageElement>('.para-text img')].map((i) => i.src)
-        : []
-      const list = imgs.length ? imgs : [src]
-      lightbox.value = { list, index: Math.max(0, list.indexOf(src)) }
+      lightbox.value = src
       return
     }
   }
@@ -2387,7 +2377,11 @@ function confirmInsert() {
 }
 
 // ── 段落删除 ──
-async function deleteParagraph(pid: string) {
+/**
+ * @param skipConfirm 调用方已经确认过（例如删掉本段最后一张图 → 段落自然空了），
+ *                    避免「删图」再弹一次「删段落」的二次确认
+ */
+async function deleteParagraph(pid: string, opts?: { skipConfirm?: boolean }) {
   const idx = paragraphs.value.findIndex(p => p.id === pid)
   if (idx === -1) { editingParagraphId.value = null; editText.value = ''; return }
 
@@ -2399,7 +2393,7 @@ async function deleteParagraph(pid: string) {
   const parts: string[] = [`确定删除「段落 ${idx + 1}」？`]
   if (markCount > 0) parts.push(`${markCount} 个标记将同时移除`)
   if (imageCount > 0) parts.push(`${imageCount} 张图片将同时移除`)
-  if (!confirm(parts.join('，') + '。')) { editingParagraphId.value = null; editText.value = ''; editTextareaEl = null; return }
+  if (!opts?.skipConfirm && !confirm(parts.join('，') + '。')) { editingParagraphId.value = null; editText.value = ''; editTextareaEl = null; return }
 
   // 清理此段落的标记
   let marksChanged = false
@@ -3212,35 +3206,40 @@ function closeSegMenu(e: MouseEvent) {
 onMounted(() => document.addEventListener('click', closeSegMenu))
 onUnmounted(() => document.removeEventListener('click', closeSegMenu))
 
-// ── 段落里的连续竖图并排 ──
-// 同一页教材被切成多块插入时，markdown 里是一串独立的 ![]()，各占一个 <p>；
-// `.para-text img{max-width:100%}` 让每张按原宽独占一行，三张竖切书页就是三屏。
-// 渲染后把「相邻的纯图片段落」合并成等分列宽的图组（详见 utils/figureGroups.ts）。
+// ── 段落图片的 DOM 后处理（删除按钮 + 连续竖图并排）──
+// 正文是 v-html 渲染的字符串，图是 marked 输出的裸 <img>，没有组件可挂事件，
+// 只能渲染后改 DOM：
+// 1) 每张图包一层 span + hover 删除按钮 —— 删除直接改段落 markdown，不必手动编辑文本
+// 2) 相邻的纯图片段落合并成等分列宽的图组（详见 utils/figureGroups.ts）
+// v-html 重渲染会整体替换 innerHTML，标记与 wrapper 随之丢失，所以用
+// MutationObserver 观察并重跑；两个函数都幂等，重复执行无副作用。
 let figGroupTimer: ReturnType<typeof setTimeout> | null = null
 let figObserver: MutationObserver | null = null
 
-function runParaFigureGroups() {
+function runParaImageTools() {
   const pane = document.querySelector('.reader-article-pane')
   if (!pane) return
   for (const el of pane.querySelectorAll<HTMLElement>('.para-text')) {
-    // 单图段落不参与，省掉绝大多数段落的遍历开销
-    if (el.querySelectorAll('img').length < 2) continue
-    applyFigureGroups(el)
+    decorateParaImages(el, (img) => removeMarkdownImage(el.dataset.paraId || '', img))
+    // 单图段落不参与分组，省掉绝大多数段落的遍历开销
+    // 阅读页的段落配图一律是缩略图，横图竖图都合成一条缩略图条：
+    // 否则三张横图会一条条堆成竖列，右边空一大片（Infinity = 不按比例筛）
+    if (el.querySelectorAll('img').length >= 2) applyFigureGroups(el, Infinity)
   }
 }
-function scheduleParaFigureGroups() {
+function scheduleParaImageTools() {
   if (figGroupTimer) clearTimeout(figGroupTimer)
   figGroupTimer = setTimeout(() => {
     figGroupTimer = null
-    runParaFigureGroups()
+    runParaImageTools()
   }, 200)
 }
 onMounted(() => {
-  scheduleParaFigureGroups()
+  scheduleParaImageTools()
   const pane = document.querySelector('.reader-article-pane')
   if (pane) {
-    // v-html 重渲染（标记更新、编辑段落）会重建 DOM，分组标记随之丢失，需重跑
-    figObserver = new MutationObserver(scheduleParaFigureGroups)
+    // v-html 重渲染（标记更新、编辑段落）会重建 DOM，分组与删除按钮随之丢失，需重跑
+    figObserver = new MutationObserver(scheduleParaImageTools)
     figObserver.observe(pane, { childList: true, subtree: true })
   }
 })
@@ -3531,7 +3530,9 @@ function reAnalyzeParagraph(pid: string, ptext: string) {
 const paraImageSizes = ref<Record<string, 'sm' | 'md' | 'lg'>>({})
 
 function paraImageSize(paraId: string): 'sm' | 'md' | 'lg' {
-  return paraImageSizes.value[paraId] || 'md'
+  // 默认「小图」：配图先当缩略图，不抢正文版面；要看细节点开贴图，
+  // 或在图组工具条里临时切「标准 / 通栏」
+  return paraImageSizes.value[paraId] || 'sm'
 }
 function setParaImageSize(paraId: string, size: 'sm' | 'md' | 'lg') {
   paraImageSizes.value = { ...paraImageSizes.value, [paraId]: size }
@@ -3614,15 +3615,77 @@ async function removeParaImage(paraId: string, imageName: string) {
   }
 }
 
+/**
+ * 从段落 markdown 里移除一张内嵌图片（点图片右上角的 ×）。
+ *
+ * 只传「哪一段、哪张图」，文本由服务端现读现改（`/api/text/remove-image`）。
+ * 不能在客户端算新文本再整段写回：页面手里的 `para.text` 可能是过期的，
+ * 实测会把库里 3 张图写成 1 张 —— 因为客户端只看到 2 张。
+ *
+ * 只移除引用，不删磁盘文件：同一张图可能被别的段落/文章引用。
+ * 真正的文件清理交给删除文章时按内容目录整体删。
+ */
+async function removeMarkdownImage(paraId: string, imgEl: HTMLImageElement) {
+  if (!paraId) return
+  const src = imgEl.getAttribute('src') || ''
+  // 同一张图可能在一个段落里出现多次，按 DOM 顺序定位到"被点的这一张"
+  const block = imgEl.closest('.para-text')
+  const ordinal = block ? Array.from(block.querySelectorAll('img')).indexOf(imgEl) : 0
+
+  try {
+    const res = await queueSegmentsOp(() => $fetch<any>('/api/text/remove-image', {
+      method: 'POST',
+      body: { textId: id, segmentId: paraId, src, ordinal: Math.max(0, ordinal) },
+    }))
+
+    if (res?.outcome === 'not_found') {
+      progressError.value = true
+      progressMsg.value = '这张图不在段落标记里，请手动编辑段落删除'
+      setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3200)
+      return
+    }
+    if (res?.outcome === 'missing') {
+      await refreshParagraphs()
+      progressError.value = true
+      progressMsg.value = '段落已不存在，已重新同步'
+      setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
+      return
+    }
+
+    // 服务端是最新结构：直接用它的段落覆盖本地（顺带修正过期的客户端文本）
+    adoptServerSegments(res?.segments)
+
+    // 这张图是本段唯一内容 → 段落会变空，问一下是否整段删掉
+    if (res?.wouldEmpty) {
+      if (confirm('这张图是本段唯一的内容，删除后段落会变空。要连同这个段落一起删除吗？')) {
+        await deleteParagraph(paraId, { skipConfirm: true })
+      } else {
+        await refreshParagraphs()
+      }
+      return
+    }
+
+    progressMsg.value = '图片已从本段移除'
+    setTimeout(() => { if (progressMsg.value?.startsWith('图片已从')) progressMsg.value = '' }, 2200)
+  } catch {
+    await refreshParagraphs()
+    progressError.value = true
+    progressMsg.value = '删除失败，已重新同步段落'
+    setTimeout(() => { progressMsg.value = ''; progressError.value = false }, 3000)
+  }
+}
+
 const floatingImage = ref<{ src: string; title: string } | null>(null)
 
-/** 段落配图灯箱：保存整段图片列表，支持左右翻（比 FloatingImage 更适合看细节） */
-const lightbox = ref<{ list: string[]; index: number } | null>(null)
+/**
+ * 段落配图贴图浮层：只贴被点的那一张。
+ * 旧版是"整段图片列表 + 左右翻"的灯箱，翻页和底部工具栏都是干扰项，
+ * 已改成截图工具那种贴图：透明背景、可自由拖动、滚轮缩放、双击/Esc 关闭。
+ */
+const lightbox = ref<string | null>(null)
 function openParaImage(index: number, list: string[]) {
-  lightbox.value = { list: [...list], index }
-}
-function setLightboxIndex(i: number) {
-  if (lightbox.value) lightbox.value = { ...lightbox.value, index: i }
+  const v = list[index]
+  if (v) lightbox.value = v
 }
 
 function viewImage(url: string) {
@@ -4427,45 +4490,79 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
 .para-text :deep(h3) { font-size: 1.05em; }
 .para-text :deep(p) { margin: 0.4em 0; }
 
+/* ── 段落内嵌图片的删除按钮（paraImageTools.ts 包的 wrapper）──
+   <img> 不能有子元素，按钮必须挂在 wrapper 上；直接相对 .para-text
+   定位会跑到段落右上角，段落里有文字时完全对不上图。 */
+.para-text :deep(.para-img-wrap) {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  vertical-align: bottom;
+}
+.para-text :deep(.para-img-del) {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.62);
+  color: #fff;
+  font-size: 15px;
+  line-height: 22px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.14s, background 0.14s;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+}
+.para-text :deep(.para-img-wrap:hover .para-img-del) {
+  opacity: 1;
+  pointer-events: auto;
+}
+.para-text :deep(.para-img-del:hover) { background: rgba(220, 38, 38, 0.92); }
+/* 触屏没有 hover：常显半透明，否则用户永远删不到 */
+@media (hover: none) {
+  .para-text :deep(.para-img-del) { opacity: 0.72; pointer-events: auto; }
+}
+
 /* ── 连续竖图并排（figureGroups.ts 打的分组）──
-   等分列宽 + 每张等比缩放：三张竖切书页一定并排，不会各占一屏。
-   别给 img 设 width:100% —— 那会按原宽占满格子、把比例撑坏。 */
+   和小图档同一个口径：缩略图条，按各自比例缩进 168×132 的框，**不裁切**。
+   之前是 3 等分列 + 每张按列宽铺开，三张竖切书页合起来有 1.5 屏，正文被顶走；
+   现在只是"这里有三张图"的索引，点开才是整页。 */
 .para-text :deep(.md-figure-group) {
-  display: grid;
-  grid-template-columns: repeat(var(--md-fig-cols, 3), minmax(0, 1fr));
-  gap: 8px;
-  align-items: start;
-  justify-items: center;
-  margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 8px 0;
 }
 .para-text :deep(.md-figure) {
   margin: 0;
-  width: 100%;
-  display: flex;
-  justify-content: center;
+  width: auto;
+  flex: 0 0 auto;
 }
 .para-text :deep(.md-figure img) {
   display: block;
   width: auto;
   height: auto;
-  max-width: 100%;
-  max-height: min(50vh, 520px);
+  /* 宽图给 168、竖图被 132 的高度卡住 → 横竖混排也不会出现 50px 的细条 */
+  max-width: 168px;
+  max-height: 132px;
   margin: 0;
 }
 @media (max-width: 760px) {
-  /* 窄屏放不下一排，改成横滑（像翻书页），比换行成 2+1 好读 */
-  .para-text :deep(.md-figure-group) {
-    grid-auto-flow: column;
-    grid-auto-columns: 46vw;
-    grid-template-columns: none;
-    justify-content: start;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    padding-bottom: 4px;
-  }
-  .para-text :deep(.md-figure) { scroll-snap-align: start; }
-  .para-text :deep(.md-figure img) { max-height: 46vh; }
+  /* 窄屏再收一档，一行仍能贴 3 张（108×3 + 间距 ≈ 360） */
+  .para-text :deep(.md-figure-group) { gap: 5px; }
+  .para-text :deep(.md-figure img) { max-width: 108px; max-height: 108px; }
+  .para-text :deep(img) { max-width: min(168px, 100%); max-height: 168px; }
 }
 .para-text :deep(strong) { font-weight: 600; }
 .para-text :deep(em) { font-style: italic; }
@@ -4474,14 +4571,17 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
 .para-text :deep(blockquote) { border-left: 3px solid #6366f1; padding-left: 1em; margin: 0.5em 0; color: #64748b; }
 .para-text :deep(pre) { background: #f5f4f0; padding: 0.8em 1em; border-radius: 6px; overflow-x: auto; margin: 0.4em 0; }
 .para-text :deep(pre code) { background: none; padding: 0; }
+/* 段落里的 Markdown 图片默认是**缩略图**（正文以文字为主，图先给个大概），
+   要看细节就点开贴图（ImageLightbox）—— 那里加载原图，可拖动、滚轮缩放。 */
 .para-text :deep(img) {
   display: block;
-  max-width: 100%;
+  width: auto;
   height: auto;
-  max-height: 78vh;
+  max-width: min(200px, 100%);
+  max-height: 200px;
   object-fit: contain;
   border-radius: 7px;
-  margin: 12px 0 6px;
+  margin: 10px 0 4px;
   cursor: zoom-in;
   outline: 1px solid rgba(0, 0, 0, 0.06);
   outline-offset: -1px;

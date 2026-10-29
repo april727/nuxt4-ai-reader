@@ -62,7 +62,7 @@ const props = withDefaults(defineProps<{
   paraId: string
   size?: 'sm' | 'md' | 'lg'
   collapsed?: boolean
-}>(), { size: 'md', collapsed: false })
+}>(), { size: 'sm', collapsed: false })
 
 defineEmits<{
   'update:size': ['sm' | 'md' | 'lg']
@@ -72,7 +72,7 @@ defineEmits<{
 }>()
 
 const SIZE_OPTS = [
-  { v: 'sm' as const, label: '紧凑', hint: '窄幅：单图 320px / 多图 460px 上限' },
+  { v: 'sm' as const, label: '小图', hint: '缩略图：约 130px，点一下看大图' },
   { v: 'md' as const, label: '标准', hint: '按原图尺寸，最宽到文本栏宽' },
   { v: 'lg' as const, label: '通栏', hint: '出血：左右突破文本栏，适合大图/信息图' },
 ]
@@ -113,12 +113,16 @@ const DERIVE_STEPS = [480, 800, 1200, 1600, 2000]
  *
  * 多图不受影响：格子是 width:100% + object-fit:cover，img 的内在尺寸不参与布局。
  */
-const SINGLE_SRC_W = 1600
+/**
+ * 单图档位：小图只要 200px 显示宽，给 480 就够 2x 屏；标准/通栏才要 1600。
+ * 给 1600 是浪费 —— 缩略图用不上，还得多传 150KB。
+ */
+const singleSrcW = computed(() => (props.size === 'sm' ? 480 : 1600))
 
 function imgSrc(img: string) {
   const base = srcOf(img)
   if (props.images.length !== 1) return base
-  return isLocalKey(img) ? `${base}?w=${SINGLE_SRC_W}` : base
+  return isLocalKey(img) ? `${base}?w=${singleSrcW.value}` : base
 }
 
 /**
@@ -154,6 +158,10 @@ const figures = computed(() => props.images.length > 1 && leadRatio.value < 0.85
  */
 const sizesAttr = computed(() => {
   const n = props.images.length
+  // 小图是固定 132×132（手机 108）的缩略图，报大只会白下一档
+  if (props.size === 'sm') {
+    return n === 1 ? '(max-width: 760px) 168px, 200px' : '(max-width: 760px) 108px, 132px'
+  }
   const mobile = '96vw'
   if (n === 1) return `(max-width: 760px) ${mobile}, 1000px`
   // 竖图组按高度封顶，宽度只有 200~280px，报 680px 会让浏览器白下一档
@@ -180,14 +188,15 @@ function onLoad(img: string, e: Event) {
 function ratioOf(img: string) {
   return ratios[img] || 16 / 9
 }
-/**
- * 单图：不设比例，让 <img> 按自身像素尺寸显示（max-width/max-height 约束），
+/* 单图：不设比例，让 <img> 按自身像素尺寸显示（max-width/max-height 约束），
  * 小图不会被拉大糊掉、大图不会铺满一屏。
  *
  * 多图：**整组共用一个比例**（取首图），同一行才等高。若各用各的比例，
  * 一横一竖并排就会一高一矮，右侧留一片空洞 —— 那正是"粗糙"观感的来源之一。
+ * 小图（默认档）不用这套：它是缩略图条，见下方 .pim--sm。
  */
 const cellStyle = computed(() => {
+  if (props.size === 'sm') return {}
   if (props.images.length === 1) return {}
   return { aspectRatio: String(ratioOf(props.images[0])) }
 })
@@ -301,9 +310,7 @@ const cellStyle = computed(() => {
 }
 .pim--single .pim-cell:hover img { outline-color: rgba(61, 53, 145, 0.28); }
 
-/* 单张图：不再铺满整幅，按档位控宽，避免"一张图吃掉一屏" */
-.pim--sm .pim-grid { max-width: 460px; }
-.pim--sm.pim--single .pim-grid { max-width: 320px; }
+/* 档位只对 md/lg 生效；小图是缩略图条，走下方 .pim--sm */
 .pim--md .pim-grid { max-width: 100%; }
 .pim--lg .pim-grid { width: calc(100% + 72px); margin-inline: -36px; max-width: none; }
 
@@ -325,12 +332,55 @@ const cellStyle = computed(() => {
   /* 大屏兜底：54vh 在 1440p 上会到 780px，超过 520 就停，别又变回"一屏一张" */
   height: min(var(--pim-fig-h, 44vh), 520px);
 }
-/* 档位对竖图组是"高度档"：紧凑更矮、通栏更高，不再是宽度上限 */
-.pim--sm .pim-grid--figures { max-width: none; --pim-fig-h: 32vh; }
+/* 档位对竖图组是"高度档"：通栏更高，不再是宽度上限（小图走下方缩略图条） */
 .pim--md .pim-grid--figures { --pim-fig-h: 44vh; }
 .pim--lg .pim-grid--figures { --pim-fig-h: 54vh; }
 
 /* 单图的高度约束由 .pim--single .pim-cell img 的 max-height 负责 */
+
+/* ── 小图（默认档）：缩略图条 ──
+   段落里的图默认只当"略图"：一眼看清有哪几张、占多大版面，要看细节点开贴图。
+   做法是给每张图一个 132×132 的框、按自身比例缩进去（**不裁切**，
+   横图就是 132×74、竖图 99×132），而不是继续用 aspect-ratio 网格 ——
+   竖长的书页在网格里会被压成一条缝，横图又会被抬成一大块。
+   flex-wrap 而不是 nowrap：10 张图不会挤成一条看不见的线。 */
+.pim--sm .pim-grid,
+.pim--sm .pim-grid--figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  max-width: none;
+}
+.pim--sm .pim-cell,
+.pim--sm .pim-grid--figures .pim-cell {
+  flex: 0 0 auto;
+  width: auto;
+  height: auto;
+  /* 内联的 aspect-ratio 来自 cellStyle（sm 已不返回），这里再兜一层 */
+  aspect-ratio: auto !important;
+  background: none;
+  box-shadow: none;
+  border-radius: 5px;
+  transition: transform 0.14s ease;
+}
+.pim--sm .pim-cell:hover {
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+.pim--sm .pim-cell img {
+  width: auto;
+  height: auto;
+  max-width: 132px;
+  max-height: 132px;
+  object-fit: contain;
+  border-radius: 5px;
+  outline: 1px solid rgba(0, 0, 0, 0.07);
+  outline-offset: -1px;
+}
+.pim--sm.pim--single .pim-cell img { max-width: 200px; max-height: 200px; }
+.pim--sm .pim-cell:hover img { outline-color: rgba(61, 53, 145, 0.32); }
 
 /* 序号角标：多图时告诉读者"这是第几张"，也让点击目标更明确 */
 .pim-no {
@@ -377,13 +427,15 @@ const cellStyle = computed(() => {
 @media (max-width: 760px) {
   .pim-bar { opacity: 1; }
   .pim--lg .pim-grid { width: 100%; margin-inline: 0; }
-  .pim--sm .pim-grid { max-width: 100%; }
   .pim-grid { gap: 6px; }
   /* 移动端多图统一 1:1：窄屏两列若各按原比例，一横一竖会撕出大片空洞。
-     竖图组除外 —— 它靠高度约束，硬压成方形会把书页裁掉一大半。 */
-  .pim:not(.pim--single) .pim-grid:not(.pim-grid--figures) .pim-cell { aspect-ratio: 1 / 1 !important; }
+     竖图组除外 —— 它靠高度约束，硬压成方形会把书页裁掉一大半；
+     小图也除外 —— 它是定尺寸缩略图，压成方块就裁图了。 */
+  .pim:not(.pim--single):not(.pim--sm) .pim-grid:not(.pim-grid--figures) .pim-cell {
+    aspect-ratio: 1 / 1 !important;
+  }
   /* 竖图组在窄屏放不下一行，改成横滑（像翻书页），比换行成 2+1 好读 */
-  .pim-grid--figures {
+  .pim:not(.pim--sm) .pim-grid--figures {
     flex-wrap: nowrap;
     justify-content: flex-start;
     overflow-x: auto;
@@ -391,10 +443,12 @@ const cellStyle = computed(() => {
     scroll-snap-type: x proximity;
     padding-bottom: 4px;
   }
-  .pim-grid--figures .pim-cell { height: min(40vh, 380px); scroll-snap-align: start; }
-  .pim--sm .pim-grid--figures .pim-cell { height: min(30vh, 280px); }
-  .pim--lg .pim-grid--figures .pim-cell { height: min(48vh, 460px); }
+  .pim:not(.pim--sm) .pim-grid--figures .pim-cell { height: min(40vh, 380px); scroll-snap-align: start; }
+  .pim--lg:not(.pim--sm) .pim-grid--figures .pim-cell { height: min(48vh, 460px); }
   .pim--single .pim-cell img { max-height: 56vh; }
+  /* 缩略图在手机上再收一档，一行能贴 3 张 */
+  .pim--sm .pim-cell img { max-width: 108px; max-height: 108px; }
+  .pim--sm.pim--single .pim-cell img { max-width: 168px; max-height: 168px; }
   .pim-del { width: 18px; height: 18px; font-size: 12px; opacity: 0.62; }
 }
 </style>

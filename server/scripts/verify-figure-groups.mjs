@@ -11,11 +11,11 @@
  * 覆盖：
  *   1  竖图组被识别并合并（存在 .md-figure-group）
  *   2  组内图片**同一行**（top 差 ≤ 4px）
- *   3  列宽等分（三列宽度差 ≤ 2px）
- *   4  图片不溢出自己的格子（宽 ≤ 列宽 + 1）
- *   5  组的总高度 ≤ 1.2 屏（合并前是 3 屏）
- *   6  横图组**不**合并（三张 16:9 并排每张只剩 290px，细节全丢）
- *   7  移动端（390px）：图组可横向滑动（scrollWidth > clientWidth）
+ *   3  每张都是缩略图（≤168px）
+ *   4  缩略图紧邻成条（相邻间距 ≤ 8px，不铺满栏宽）
+ *   5  组的总高度只占一行（≤190px；合并前是 3 屏）
+ *   6  横图组**也**合并成一条（都缩略图了，堆成竖列只会右边空一片）
+ *   7  移动端（390px）：缩略图 ≤108px 且不需要横滑
  *
  * 用法：node server/scripts/verify-figure-groups.mjs
  * 需要服务在跑（npm run dev / npm start）。
@@ -103,14 +103,16 @@ try {
     if (!el) return null
     const imgs = [...el.querySelectorAll('img')]
     const rects = imgs.map((i) => i.getBoundingClientRect())
-    // 列宽带 px 单位，必须 parseFloat；Number('439.6px') 是 NaN（NaN 经 CDP 序列化还会变 null）
-    const cols = getComputedStyle(el).gridTemplateColumns.split(' ').map(parseFloat)
+    // 相邻两张之间的水平空隙：证明是"挨着的缩略图条"，而不是铺满整行的大格子
+    const sorted = [...rects].sort((a, b) => a.left - b.left)
+    const gaps = []
+    for (let i = 1; i < sorted.length; i++) gaps.push(Math.round(sorted[i].left - sorted[i - 1].right))
     return {
       n: imgs.length,
-      cols,
       tops: rects.map((r) => Math.round(r.top)),
       widths: rects.map((r) => Math.round(r.width)),
-      boxTop: Math.round(el.getBoundingClientRect().top),
+      heights: rects.map((r) => Math.round(r.height)),
+      gaps,
       boxH: Math.round(el.getBoundingClientRect().height),
       vh: window.innerHeight,
     }
@@ -122,32 +124,49 @@ try {
     const sameRow = Math.max(...g.tops) - Math.min(...g.tops) <= 4
     check('组内图片在同一行（top 差 ≤ 4px）', sameRow, `tops=${g.tops.join('/')}`)
 
-    const colEq = g.cols.length >= 2 && Math.max(...g.cols) - Math.min(...g.cols) <= 2
-    check('列宽等分（差 ≤ 2px）', colEq, g.cols.map((n) => n.toFixed(0)).join(' / '))
+    // 竖图组现在是缩略图条：每张 ≤168×132，不再各自铺满一列
+    const maxSide = Math.max(...g.widths, ...g.heights)
+    check('每张都是缩略图（≤168px）', maxSide <= 169, `最大 ${maxSide}px`)
 
-    const overflow = g.widths.filter((w, i) => w > (g.cols[i] || 0) + 1)
-    check('图片不溢出自己的格子', overflow.length === 0,
-      `${g.n} 张里 ${overflow.length} 张超宽`)
+    const tight = g.gaps.every((d) => d >= 0 && d <= 8)
+    check('缩略图紧邻成条（间距 ≤ 8px，不铺满栏宽）', g.gaps.length > 0 && tight, `gaps=${g.gaps.join('/')}`)
 
-    // 合并前三张竖图≈3 屏；合并后应压到 1.2 屏以内
-    check('图组高度 ≤ 1.2 屏（合并前约 3 屏）', g.boxH <= g.vh * 1.2,
+    // 合并前三张竖图≈3 屏；缩略图条应该只占一行的零头
+    check('图组高度只占一行（≤ 190px，合并前约 3 屏）', g.boxH <= 190,
       `高 ${g.boxH}px / 视口 ${g.vh}px`)
   }
 
-  // ── 桌面：横图组不应合并 ──
+  // ── 桌面：横图组同样合并（都是缩略图，堆成竖列会空一大片）──
   if (wide) {
     await page.goto(`${BASE}/read/${wide.id}`)
     await waitFor(async () => (await page.evalInPage('document.querySelectorAll(".para-block").length')) > 0,
       { timeout: 30000, interval: 400, label: '正文渲染' })
     // 给图组逻辑留出图片解码后的重试窗口
     await sleep(2500)
-    const wideGroups = await page.evalInPage(`document.querySelectorAll('.md-figure-group').length`)
-    check('横图组不合并（三张 16:9 并排会太小）', wideGroups === 0, `${wideGroups} 组`)
+    const wg = await page.evalInPage(`(() => {
+      const el = document.querySelector('.md-figure-group')
+      if (!el) return { groups: 0 }
+      const rects = [...el.querySelectorAll('img')].map((i) => i.getBoundingClientRect())
+      const sorted = [...rects].sort((a, b) => a.left - b.left)
+      const gaps = []
+      for (let i = 1; i < sorted.length; i++) gaps.push(Math.round(sorted[i].left - sorted[i - 1].right))
+      return {
+        groups: document.querySelectorAll('.md-figure-group').length,
+        n: rects.length,
+        rows: new Set(rects.map((r) => Math.round(r.top))).size,
+        maxW: Math.round(Math.max(...rects.map((r) => r.width))),
+        gaps,
+      }
+    })()`)
+    check('横图组也合并成缩略图条', wg.groups >= 1 && wg.n >= 2, `${wg.groups} 组 / ${wg.n} 张`)
+    check('横图缩略图同一行且不超 168px', wg.rows === 1 && wg.maxW <= 169,
+      `${wg.rows} 行，最宽 ${wg.maxW}px，gaps=${(wg.gaps || []).join('/')}`)
   } else {
-    check('横图组不合并（三张 16:9 并排会太小）', true, '库里没有横图组样本，跳过')
+    check('横图组也合并成缩略图条', true, '库里没有横图组样本，跳过')
+    check('横图缩略图同一行且不超 168px', true, '跳过')
   }
 
-  // ── 移动端：图组可横滑 ──
+  // ── 移动端：缩略图再收一档，仍并排（不再需要横滑）──
   await page.send('Emulation.setDeviceMetricsOverride', {
     width: 390, height: 844, deviceScaleFactor: 2, mobile: true,
   })
@@ -159,9 +178,16 @@ try {
   const m = await page.evalInPage(`(() => {
     const el = document.querySelector('.md-figure-group')
     if (!el) return null
-    return { scrollW: el.scrollWidth, clientW: el.clientWidth }
+    const imgs = [...el.querySelectorAll('img')]
+    const rects = imgs.map((i) => i.getBoundingClientRect())
+    return {
+      max: Math.max(...rects.map((r) => Math.max(r.width, r.height))),
+      tops: rects.map((r) => Math.round(r.top)),
+      scrollW: el.scrollWidth, clientW: el.clientWidth,
+    }
   })()`)
-  check('移动端图组可横向滑动', !!m && m.scrollW > m.clientW,
+  check('手机缩略图 ≤108px', !!m && m.max <= 109, m ? `最大 ${Math.round(m.max)}px` : '没找到图组')
+  check('手机图组不需要横滑（缩略图直接并排）', !!m && m.scrollW <= m.clientW + 1,
     m ? `内容 ${m.scrollW}px / 视口 ${m.clientW}px` : '没找到图组')
 } catch (e) {
   console.error('\n脚本异常：', e?.message || e)

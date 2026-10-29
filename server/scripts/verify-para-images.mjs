@@ -98,16 +98,17 @@ try {
     return true
   })()`)
 
-  const measured = await page.evalInPage(`(() => {
+  const measure = () => page.evalInPage(`(() => {
     const groups = [...document.querySelectorAll('.pim')].map((fig) => {
       const cells = [...fig.querySelectorAll('.pim-cell')]
       const imgs = cells.map((c) => c.querySelector('img'))
+      const grid = fig.querySelector('.pim-grid')
       return {
         n: cells.length,
         mini: fig.classList.contains('pim--single'),
-        cols: fig.querySelector('.pim-grid')
-          ? getComputedStyle(fig.querySelector('.pim-grid')).gridTemplateColumns.split(' ').length
-          : 0,
+        tier: ([...fig.classList].find((c) => /^pim--(sm|md|lg)$/.test(c)) || '').replace('pim--', ''),
+        disp: grid ? getComputedStyle(grid).display : '',
+        cols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
         cells: cells.map((c, i) => {
           const cr = c.getBoundingClientRect()
           const im = imgs[i]
@@ -124,6 +125,55 @@ try {
     const pane = document.querySelector('.reader-article-pane')
     return { groups, vh: window.innerHeight, paneTop: pane ? pane.getBoundingClientRect().top : 0 }
   })()`)
+
+  /** 把整篇文章滚一遍，逼 lazy 图全部落地（不滚动时视口外的 img 尺寸是 0） */
+  const warmup = () => page.evalInPage(`(async () => {
+    const el = document.querySelector('.reader-article-pane')
+    el.style.scrollBehavior = 'auto'
+    const total = el.scrollHeight
+    for (let y = 0; y < total; y += 500) { el.scrollTop = y; await new Promise(r => setTimeout(r, 60)) }
+    el.scrollTop = 0
+    await new Promise(r => setTimeout(r, 800))
+    return true
+  })()`)
+
+  // ── 默认档「小图」：段落里只放缩略图，点开才看大图 ──
+  const smInfo = await measure()
+  const smGroups = smInfo.groups || []
+  check('默认档位是小图',
+    smGroups.length > 0 && smGroups.every((g) => g.tier === 'sm'),
+    smGroups.map((g) => g.tier || '?').join('/') || '没有配图')
+
+  const smCells = smGroups.flatMap((g) => g.cells.map((c) => ({ ...c, n: g.n })))
+  const tooBig = smCells.filter((c) => (c.n === 1 ? c.iw > 202 || c.ih > 202 : c.iw > 133 || c.ih > 133))
+  check('小图是真缩略图（多图 ≤132px，单图 ≤200px）', smCells.length > 0 && tooBig.length === 0,
+    `最大 ${Math.max(...smCells.map((c) => Math.max(c.iw, c.ih)))}px / ${smCells.length} 张`)
+
+  // 缩略图也要保比例：压成方框会裁掉图的一半，等于把"粗糙"换个尺寸重演
+  const smCrop = smCells.filter((c) => {
+    if (!c.nw || !c.nh || !c.iw || !c.ih) return false
+    const natR = c.nw / c.nh
+    return Math.abs(natR - c.iw / c.ih) / natR > 0.03
+  })
+  check('小图不裁切（按原比例缩进方框）', smCells.length > 0 && smCrop.length === 0,
+    `${smCells.length} 张里 ${smCrop.length} 张失真`)
+
+  const smFlex = smGroups.filter((g) => g.n >= 2)
+  check('多图小图横向排开（flex 缩略图条）', smFlex.length > 0 && smFlex.every((g) => g.disp === 'flex'),
+    smFlex.map((g) => `${g.n}张/${g.disp}`).join(' ') || '没有多图样本')
+
+  // 切到「标准」再测原有版面规则：列数/等高/比例只对 md、lg 有意义
+  await page.evalInPage(`(() => {
+    document.querySelectorAll('.pim').forEach((f) => {
+      const b = [...f.querySelectorAll('.pim-size')].find((x) => x.textContent.trim() === '标准')
+      b?.click()
+    })
+    return true
+  })()`)
+  await sleep(700)
+  await warmup()
+
+  const measured = await measure()
 
   const groups = measured.groups || []
   check('配图区渲染出来', groups.length > 0, `${groups.length} 组`)
@@ -221,20 +271,23 @@ try {
     await page.evalInPage(`document.querySelectorAll('.pim')[${multiIdx}].querySelectorAll('.pim-cell')[0].click()`)
     await sleep(500)
     const lb1 = await page.evalInPage(`(() => {
-      const lb = document.querySelector('.lb')
-      return { open: !!lb, count: lb?.querySelector('.lb-count')?.textContent?.trim() || '' }
+      const box = document.querySelector('.lb')
+      const big = document.querySelector('.lb-img')
+      if (!box || !big) return { open: false }
+      const cs = getComputedStyle(box)
+      return {
+        open: true, bg: cs.backgroundColor, pe: cs.pointerEvents,
+        chrome: document.querySelectorAll('.lb-nav, .lb-hud, .lb-count, .lb-zoom').length,
+        src: big.getAttribute('src') || '',
+      }
     })()`)
-    check('点图打开灯箱', lb1.open === true)
-    check('灯箱计数正确（1 / N）', lb1.count.startsWith('1 /'), lb1.count)
+    check('点图浮出贴图浮层', lb1.open === true)
+    check('浮层无黑色遮罩、不吃页面点击',
+      lb1.bg === 'rgba(0, 0, 0, 0)' && lb1.pe === 'none', `${lb1.bg} / ${lb1.pe}`)
+    check('没有翻页、没有底部工具栏', lb1.chrome === 0, `${lb1.chrome} 个残留控件`)
 
-    await page.evalInPage(`document.querySelector('.lb-nav--next')?.click()`)
-    await sleep(500)
-    const lb2 = await page.evalInPage(`document.querySelector('.lb .lb-count')?.textContent?.trim() || ''`)
-    check('→ 切到下一张', lb2.startsWith('2 /'), lb2)
-
-    // 灯箱必须用原图：缩略图在整屏下会糊，"看细节"是这个入口的唯一理由
-    const lbSrc = await page.evalInPage(`document.querySelector('.lb-img')?.getAttribute('src') || ''`)
-    check('灯箱加载原图（不带 ?w=）', !!lbSrc && !lbSrc.includes('?w='), lbSrc.split('/').pop())
+    // 贴图必须用原图：缩略图在放大后会糊，"看细节"是这个入口的唯一理由
+    check('贴图加载原图（不带 ?w=）', !!lb1.src && !lb1.src.includes('?w='), lb1.src.split('/').pop())
 
     // 用页面内 dispatch 而不是 CDP Input：headless 下焦点不在文档时按键会被丢掉，
     // 那样断言的是「CDP 有没有送到」而不是「组件有没有监听 Esc」。
@@ -260,6 +313,35 @@ try {
     await new Promise(r => setTimeout(r, 600))
     return true
   })()`)
+
+  // 手机默认同样是缩略图，且要能一行贴下 3 张（108px 档）
+  const mobileSm = await page.evalInPage(`(() => {
+    const cells = [...document.querySelectorAll('.pim:not(.pim--single) .pim-cell')]
+    const sizes = cells.map((c) => { const r = c.querySelector('img').getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) } })
+    const maxW = sizes.length ? Math.max(...sizes.map((s) => s.w)) : 0
+    const figs = [...document.querySelectorAll('.pim:not(.pim--single)')]
+    const perRow = figs.map((f) => {
+      const tops = [...f.querySelectorAll('.pim-cell')].map((c) => Math.round(c.getBoundingClientRect().top))
+      return tops.filter((t) => t === tops[0]).length
+    })
+    return { n: cells.length, maxW, perRow, counts: figs.map((f) => f.querySelectorAll('.pim-cell').length) }
+  })()`)
+  check('手机缩略图更小（≤108px）', mobileSm.n > 0 && mobileSm.maxW <= 109, `最大 ${mobileSm.maxW}px`)
+  // 390px 手机一行该排下 3 张（108×3 + 间距 ≈ 336）；≤3 张的组若分行就是没排下
+  const wrapBad = (mobileSm.counts || []).filter((c, i) => c <= 3 && mobileSm.perRow[i] !== c)
+  check('手机一行排下 3 张缩略图（≤3 张时分行即不合格）',
+    (mobileSm.counts || []).length > 0 && wrapBad.length === 0,
+    `每组 ${(mobileSm.counts || []).join('/')} 张，首行 ${(mobileSm.perRow || []).join('/')}`)
+
+  // 切「标准」再验 1:1 网格（缩略图不是网格，不适用这条）
+  await page.evalInPage(`(() => {
+    document.querySelectorAll('.pim').forEach((f) => {
+      const b = [...f.querySelectorAll('.pim-size')].find((x) => x.textContent.trim() === '标准')
+      b?.click()
+    })
+    return true
+  })()`)
+  await sleep(900)
   const mobile = await page.evalInPage(`(() => {
     const figs = [...document.querySelectorAll('.pim:not(.pim--single)')]
     return figs.map((fig) => [...fig.querySelectorAll('.pim-cell')].map((c) => {
