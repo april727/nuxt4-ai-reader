@@ -16,10 +16,11 @@
  */
 import { createReadStream, existsSync, statSync, writeFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
-import { createError, getHeader, setHeader, setResponseStatus, sendRedirect } from 'h3'
+import { createError, getHeader, getQuery, setHeader, setResponseStatus, sendRedirect } from 'h3'
 import type { H3Event } from 'h3'
 import { resolveFilePath, filesRoot, ensureDir } from './storage'
 import { useR2, r2Head, r2GetStream, r2GetBuffer, r2SignedUrl } from './r2'
+import { canDerive, ensureDerived, normalizeDeriveWidth } from './imageDerive'
 
 const MIME: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -79,7 +80,6 @@ export async function serveStoredFile(event: H3Event, name: string) {
   const ext = path.extname(name).toLowerCase()
   const mime = mimeOf(name)
   const isImage = IMAGE_EXTS.has(ext)
-
   // ── 1) 本地优先 ──
   let localPath = resolveFilePath(name)
   let size = 0
@@ -105,10 +105,30 @@ export async function serveStoredFile(event: H3Event, name: string) {
   }
 
   if (size > 0) {
-    // 排查用：local = 本来就在本地；r2-cache = 这次刚从 R2 取回来并缓存到本地
-    setHeader(event, 'X-File-Source', hydrated ? 'r2-cache' : 'local')
+    // ── 派生缩略图：?w=800 → 现算/复用 WebP，体积从 MB 级掉到百 KB 级 ──
+    //    失败（sharp 不可用、GIF/SVG、原图本来就不宽）一律忽略，保持原图语义。
+    let source = hydrated ? 'r2-cache' : 'local'
+    let contentType = mime
+    if (isImage && canDerive(name)) {
+      const width = normalizeDeriveWidth(getQuery(event).w)
+      if (width) {
+        const derived = await ensureDerived(localPath, width)
+        if (derived) {
+          // 实际宽度可能小于请求档位（原图不够宽时不放大），按文件名回报真实值
+          const realW = path.basename(derived).match(/@(\d+)w\.webp$/)?.[1] || String(width)
+          localPath = derived
+          size = statSync(derived).size
+          contentType = 'image/webp'
+          source = `${source}+derive${realW}`
+        }
+      }
+    }
+
+    // 排查用：local = 本来就在本地；r2-cache = 这次刚从 R2 取回来并缓存到本地；
+    //        末尾 +derive<宽度> 表示这次返回的是派生的 WebP
+    setHeader(event, 'X-File-Source', source)
     setHeader(event, 'Accept-Ranges', 'bytes')
-    setHeader(event, 'Content-Type', mime)
+    setHeader(event, 'Content-Type', contentType)
     // 图片按内容寻址，永远不变 → 让浏览器强缓存，二次打开直接读磁盘缓存（0 请求）
     setHeader(
       event,
