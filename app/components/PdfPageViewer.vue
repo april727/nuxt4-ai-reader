@@ -36,7 +36,7 @@
         </header>
 
         <div ref="bodyEl" class="pdfv-body">
-          <div class="pdfv-stage" :style="stageStyle">
+          <div class="pdfv-stage" :style="stageStyle" @mouseup="onSelectionEnd">
             <canvas ref="canvasEl" class="pdfv-canvas"></canvas>
             <div class="pdfv-layer">
               <div
@@ -48,6 +48,8 @@
                 :title="h.label"
               ></div>
             </div>
+            <!-- 选区层：透明文字，只为让浏览器在那里画原生选区蓝 -->
+            <div ref="textEl" class="pdfv-text"></div>
             <div v-if="status" class="pdfv-status">{{ status }}</div>
           </div>
         </div>
@@ -68,7 +70,9 @@
  * viewport.convertToViewportPoint，比自己算 `页高 - y` 稳 —— 页面有旋转、
  * CropBox 有偏移时，手算角度会整体歪掉。
  *
- * 只读：这一版不接收划词，原页划词属于 L2（需要把选区反查回段落偏移）。
+ * 三层结构按 DOM 顺序叠：canvas（画面）→ 高亮层（半透明色块）→ 选区层（透明文字）。
+ * 选区层必须能真正被选中，所以文字是**透明**的而不是隐藏的：canvas 上已经画了字，
+ * 这里只负责给浏览器提供可选择的文本节点，选区蓝会自然盖在色块上。
  */
 
 /** 与 server/utils/pdfLayout.ts 的 PdfRect 一致（PDF 用户空间，原点左下） */
@@ -92,16 +96,27 @@ const props = withDefaults(defineProps<{
   focusParagraph?: string | null
 }>(), { page: 1, anchors: null, marks: () => [], focusParagraph: null })
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  /** 用户在原页上选中了一段文字。rects 是选区的 PDF 坐标，建完标记直接当高亮用 */
+  (e: 'select-text', p: { page: number; text: string; rects: PdfRect[]; clientRect: { left: number; top: number; right: number; bottom: number } }): void
+}>()
 
 const bodyEl = ref<HTMLElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
+const textEl = ref<HTMLElement | null>(null)
 const pageNum = ref(1)
 const pageCount = ref(0)
 const zoom = ref(1)
 const status = ref('')
 const stageStyle = ref<Record<string, string>>({})
 const highlights = ref<{ key: string; style: Record<string, string>; label: string; flash?: boolean }[]>([])
+/**
+ * 本次会话里新建的标记矩形（原页划词产生）。
+ * 服务端的 anchors 是打开时拉的快照，不含刚建的标记；不在这里补一份，
+ * 用户「划完就消失了」—— 得关掉重开才看得到。
+ */
+const localRects = ref<Record<string, PdfRect[]>>({})
 
 // pdfjs 文档对象**不能**放进 ref/reactive：它内部是 class 实例，
 // 被 Vue 代理后 getPage 里的 this 会指向 Proxy，报私有字段访问错误。
@@ -117,7 +132,7 @@ const hlCount = computed(() => {
   if (!a) return 0
   let n = 0
   for (const m of props.marks) {
-    const rects = a.marks?.[m.id]
+    const rects = localRects.value[m.id] || a.marks?.[m.id]
     if (rects?.some((r) => r.p === pageNum.value)) n++
   }
   return n
@@ -178,6 +193,7 @@ function setZoom(z: number) {
 /** 按容器宽度的适宽比例 × 用户缩放 */
 async function render() {
   if (!pdfDoc || rendering) return
+  lastSelKey = ''
   rendering = true
   status.value = ''
   try {
@@ -209,7 +225,11 @@ async function render() {
     await renderTask.promise
     renderTask = null
 
+    lastVp = vp
     buildHighlights(vp)
+    // 文字层要等 canvas 落笔后再建：它的目的是给浏览器提供可选文本，
+    // 先建的话用户可能选到一段还没画出来的内容，选区高亮却已经出现
+    await buildTextLayer(page, vp)
   } catch (err: any) {
     if (err?.name !== 'RenderingCancelledException') {
       status.value = '渲染失败：' + (err?.message || err)
@@ -241,7 +261,7 @@ function buildHighlights(vp: any) {
   }
 
   for (const m of props.marks) {
-    const rects = a.marks?.[m.id]
+    const rects = localRects.value[m.id] || a.marks?.[m.id]
     if (!rects) continue
     rects.filter((r) => r.p === pageNum.value).forEach((r, i) => {
       const c = m.color || 'rgba(245,158,11,0.42)'
@@ -285,6 +305,164 @@ function buildHighlights(vp: any) {
   }
 }
 
+/** 当前页的 viewport，选区换算要用 */
+let lastVp: any = null
+
+/** 把当前页文字铺成透明 span，供浏览器做选区 */
+async function buildTextLayer(page: any, vp: any) {
+  const host = textEl.value
+  if (!host) return
+  host.innerHTML = ''
+  let items: any[] = []
+  try {
+    const tc = await page.getTextContent()
+    items = tc.items || []
+  } catch { return }
+
+  const frag = document.createDocumentFragment()
+  const pending: { el: HTMLSpanElement; width: number }[] = []
+  // 词间距判定：和 parse_pdf_layout.mjs 用同一个系数。多数排版好的 PDF
+  // 内容流里**根本没有空格字符**，词与词之间只有坐标间隔 —— 照搬条目文本
+  // 会让选区变成 "Troy,Imustadmit"，反查段落时整串都切不开。
+  let prevRight: number | null = null
+  let prevTop: number | null = null
+  for (const it of items) {
+    const str = String(it.str ?? '')
+    if (!str.trim()) continue
+    const tx = pdfjsLib.Util.transform(vp.transform, it.transform)
+    const fontH = Math.hypot(tx[2], tx[3]) || 10
+    const width = it.width * vp.scale
+    const sameLine = prevTop !== null && Math.abs(tx[5] - prevTop) < fontH * 0.5
+    const gap = prevRight === null ? 0 : tx[4] - prevRight
+    const needsSpace = sameLine && gap > fontH * 0.18 && !/\s$/.test(str)
+
+    const span = document.createElement('span')
+    // 前导空格把间隔补回来：词号取自 span 文本，位置仍由 left 决定
+    span.textContent = needsSpace && !/^\s/.test(str) ? ' ' + str : str
+    // 下标不参与定位，只用于排查「选中的是哪个条目」
+    span.dataset.i = String(frag.childNodes.length)
+    span.style.left = `${tx[4].toFixed(2)}px`
+    span.style.top = `${(tx[5] - fontH).toFixed(2)}px`
+    span.style.fontSize = `${fontH.toFixed(2)}px`
+    frag.appendChild(span)
+    pending.push({ el: span, width })
+    prevRight = tx[4] + width
+    prevTop = tx[5]
+  }
+  host.appendChild(frag)
+
+  // 字体不同 → 同样的字号排出来的宽度和 PDF 里的不一致。按条目已知宽度
+  // 横向缩放对齐：目标宽 / 实测宽。放在第二遍做，因为要先上屏才能量。
+  for (const { el, width } of pending) {
+    const w = el.getBoundingClientRect().width
+    if (w > 1 && width > 1) el.style.transform = `scaleX(${(width / w).toFixed(4)})`
+  }
+}
+
+/** 上一次已经发出去的选区（`页:文本`），用于去重 */
+let lastSelKey = ''
+
+/**
+ * 原页划词结束。
+ *
+ * 只认「起点落在选区层里」的选区 —— 正文段落上的选区也会冒泡到 window，
+ * 不判归属就会把正文选中当成原页选中，弹两次工具条。
+ *
+ * 桌面走 mouseup，触摸屏没有 —— 长按选中由浏览器创建，只能靠 selectionchange
+ * 通知。两条路都汇到这里，用 lastSelKey 去掉重复触发。
+ */
+function onSelectionEnd() {
+  setTimeout(() => {
+    const host = textEl.value
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null
+    if (!host || !sel || sel.isCollapsed || !sel.rangeCount) return
+    if (!sel.anchorNode || !host.contains(sel.anchorNode)) return
+
+    const raw = sel.toString()
+    const text = raw.replace(/[\u00ad\u00ac]/g, '').replace(/\s+/g, ' ').trim()
+    if (text.length < 2 || text.length > 4000) return
+    const key = `${pageNum.value}:${text}`
+    if (key === lastSelKey) return
+    lastSelKey = key
+
+    const vp = lastVp
+    const stage = host.getBoundingClientRect()
+    const range = sel.getRangeAt(0)
+    const boxes = Array.from(range.getClientRects()).filter((b) => b.width > 1 && b.height > 1)
+    if (!vp || !boxes.length) return
+
+    const rects: PdfRect[] = boxes.map((b) => {
+      // 视口坐标 → PDF 用户空间。上沿给 y_top、下沿给 y_bottom，
+      // 再按「基线 = 下沿 + 0.2 行高」换算回 buildHighlights 的约定，
+      // 两边必须是同一套，否则新标记会比自己画出来的高亮矮一截
+      const [x1, yTop] = vp.convertToPdfPoint(b.left - stage.left, b.top - stage.top)
+      const [x2, yBot] = vp.convertToPdfPoint(b.right - stage.left, b.bottom - stage.top)
+      const h = Math.max(1, yTop - yBot)
+      return {
+        p: pageNum.value,
+        x: +Math.min(x1, x2).toFixed(2),
+        y: +(yBot + h * 0.2).toFixed(2),
+        w: +Math.abs(x2 - x1).toFixed(2),
+        h: +h.toFixed(2),
+      }
+    })
+
+    emit('select-text', {
+      page: pageNum.value,
+      text,
+      rects: mergeLineRects(rects),
+      clientRect: {
+        left: range.getBoundingClientRect().left,
+        top: range.getBoundingClientRect().top,
+        right: range.getBoundingClientRect().right,
+        bottom: range.getBoundingClientRect().bottom,
+      },
+    })
+  }, 10)
+}
+
+/** 同一行上的多个框合并成一条，否则一个短语会画出一串小方块 */
+function mergeLineRects(rects: PdfRect[]): PdfRect[] {
+  const sorted = [...rects].sort((a, b) => a.p - b.p || b.y - a.y || a.x - b.x)
+  const out: PdfRect[] = []
+  for (const r of sorted) {
+    const cur = out[out.length - 1]
+    if (
+      cur && cur.p === r.p
+      && Math.abs(r.y - cur.y) <= Math.max(2, cur.h * 0.45)
+      && r.x - (cur.x + cur.w) <= Math.max(12, cur.h * 1.4)
+      && r.x >= cur.x - 1
+    ) {
+      const right = Math.max(cur.x + cur.w, r.x + r.w)
+      cur.w = +(right - cur.x).toFixed(2)
+      cur.h = Math.max(cur.h, r.h)
+    } else {
+      out.push({ ...r })
+    }
+  }
+  return out
+}
+
+/** 原页上刚建好的标记：本地补一份矩形，立刻就能看到高亮 */
+function addMarkRects(markId: string, rects: PdfRect[]) {
+  if (!markId || !rects?.length) return
+  localRects.value = { ...localRects.value, [markId]: rects }
+  if (lastVp) buildHighlights(lastVp)
+}
+
+/**
+ * 在原页上给一句提示。
+ *
+ * 划词建标记失败时**必须**说一句：调用方在画布上方，页面级提示条被浮层挡住，
+ * 用户看到的就是「选了字、点了按钮，什么都没发生」。
+ */
+function notify(msg: string) {
+  status.value = msg
+  setTimeout(() => { if (status.value === msg) status.value = '' }, 2600)
+}
+
+defineExpose({ addMarkRects, notify })
+
 // 打开时才初始化；重复打开复用同一个 pdfDoc（换页比重新拉整本快得多）
 watch(() => props.open, async (v) => {
   if (!v) return
@@ -315,6 +493,21 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => window.addEventListener('keydown', onKey))
+
+// 触摸屏没有 mouseup：长按选中是浏览器自己建的，只能靠 selectionchange 通知。
+// 桌面端不挂这个监听 —— 拖选过程中它会连续触发，工具条跟着抖。
+const IS_TOUCH = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
+let selTimer: any = null
+function onDocSelectionChange() {
+  if (!props.open || !IS_TOUCH) return
+  clearTimeout(selTimer)
+  selTimer = setTimeout(() => onSelectionEnd(), 260)
+}
+onMounted(() => { if (IS_TOUCH) document.addEventListener('selectionchange', onDocSelectionChange) })
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', onDocSelectionChange)
+  clearTimeout(selTimer)
+})
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   if (renderTask) { try { renderTask.cancel() } catch {} }
@@ -481,6 +674,31 @@ onBeforeUnmount(() => { window.removeEventListener('resize', onResize); clearTim
 .pdfv-canvas {
   display: block;
 }
+
+/* 选区层：文字透明，只为了让浏览器有可选择的文本节点。
+   容器不吃指针事件（否则挡住高亮框的 hover 和 title），
+   单个 span 吃 —— 用户必须能在字上按下鼠标开始拖选。 */
+.pdfv-text {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: text;
+  line-height: 1;
+  z-index: 2;
+}
+/* span 是 JS 建的，拿不到 scoped 的 data-v 属性，必须用 :deep 穿透 ——
+   写 `.pdfv-text span` 会编译成 `.pdfv-text span[data-v-x]`，一条都命中不了，
+   文字会以普通行内流显示成一大段黑字，压在画面上 */
+.pdfv-text :deep(span) {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0 0;
+  pointer-events: auto;
+  cursor: text;
+}
+.pdfv-text ::selection { background: rgba(59, 130, 246, 0.34); }
 
 .pdfv-layer {
   position: absolute;

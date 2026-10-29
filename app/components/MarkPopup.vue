@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="mark-popup" :style="popupStyle" ref="popupRef">
+    <div v-if="visible" class="mark-popup" :class="{ 'mp-over-pdf': overPdf }" :style="popupStyle" ref="popupRef">
       <div class="mp-header" :style="{ background: mark.color }" @mousedown="startDrag" @touchstart.stop="startDragTouch">
         <span class="mp-type">{{ typeLabel }}</span>
         <div class="mp-header-actions">
@@ -86,7 +86,7 @@
 
   <!-- 配图选择弹窗 -->
   <Teleport to="body">
-    <div v-if="img.open" class="mp-picker-overlay" @click.self="closeImagePicker">
+    <div v-if="img.open" class="mp-picker-overlay" :class="{ 'mp-over-pdf': overPdf }" @click.self="closeImagePicker">
       <div class="mp-picker">
         <div class="mp-picker-head">
           <span class="mp-picker-title">配图</span>
@@ -156,7 +156,7 @@ import type { Mark } from '#shared/types'
 import { setMarkdownImageWidth } from '#shared/utils/explainRenderer'
 import { compressImageFile } from '~/utils/imageCompress'
 
-const props = defineProps<{ visible: boolean; mark: Mark; textId?: string; loading: boolean; typing: boolean; typingContent: string; position: { x: number; y: number }; autoGenerate: boolean; hasPdf?: boolean }>()
+const props = defineProps<{ visible: boolean; mark: Mark; textId?: string; loading: boolean; typing: boolean; typingContent: string; position: { x: number; y: number }; autoGenerate: boolean; hasPdf?: boolean; overPdf?: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'update-note', n: string): void; (e: 'delete'): void; (e: 'pronounce', w: string): void; (e: 'update-detail', d: string): void; (e: 'generate'): void; (e: 'update-auto-generate', value: boolean): void; (e: 'open-pdf'): void }>()
 
 const expanded = ref(true); const localNote = ref(''); const popupX = ref(0); const popupY = ref(0); const popupW = ref(380); const popupH = ref(420); const isPlaying = ref(false)
@@ -483,6 +483,9 @@ const popupStyle = computed(() => ({ left: `${popupX.value}px`, top: `${popupY.v
 </script>
 
 <style scoped>
+/* 从 PDF 原页建标记时，弹窗要浮在浮层（6000）之上，否则用户只看到一片灰 */
+.mark-popup.mp-over-pdf { z-index: 6200; }
+.mp-picker-overlay.mp-over-pdf { z-index: 6250; }
 .mark-popup { position: fixed; z-index: 3000; background: #ffffff; border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,0.22); overflow: hidden; display: flex; flex-direction: column; }
 .mp-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; color: #ffffff; cursor: grab; flex-shrink: 0; }
 .mp-header:active { cursor: grabbing; }

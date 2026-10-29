@@ -763,7 +763,7 @@
 
     <!-- 选中文字浮动标记工具条（词/短/句/译） -->
     <Teleport to="body">
-      <div v-if="selToolbar.visible" class="sel-toolbar" :style="selToolbarStyle">
+      <div v-if="selToolbar.visible" class="sel-toolbar" :class="{ 'sel-toolbar--over-pdf': selToolbar.fromPdf }" :style="selToolbarStyle">
         <button class="sel-btn" style="--c:#f59e0b" @click="createMark('word')" title="标记为生词">
           <span class="sel-label">词</span><span class="sel-hint">标记</span>
         </button>
@@ -814,8 +814,9 @@
       :position="markPopup.position"
       :auto-generate="markAutoGenerate"
       :has-pdf="!!pdfUrl"
+      :over-pdf="markPopupOverPdf"
       @open-pdf="openPdfForMark"
-      @close="markPopup.visible = false"
+      @close="markPopup.visible = false; markPopupOverPdf = false"
       @update-note="handleUpdateNote"
       @update-detail="handleUpdateDetail"
       @generate="handleGenerateMarkDetail"
@@ -826,13 +827,15 @@
 
     <!-- PDF 原文：pdfjs 自渲染，段落里标过的词会在原页上高亮 -->
     <PdfPageViewer
+      ref="pdfViewerRef"
       :open="showPdf && !!pdfUrl"
       :src="pdfUrl"
       :page="pdfPage"
       :anchors="pdfAnchors"
       :marks="marks"
       :focus-paragraph="pdfFocusPara"
-      @close="showPdf = false"
+      @select-text="onPdfSelect"
+      @close="closePdf"
     />
 
     <!-- 迷你播放条（字幕阅读页底部） -->
@@ -1190,6 +1193,9 @@ const pdfUrl = ref(''); const showPdf = ref(false); const pdfPage = ref<number |
 /** PDF 原页锚点（段落→页码、标记→矩形）。null 表示这篇没有坐标表 */
 const pdfAnchors = ref<any>(null)
 const pdfFocusPara = ref<string | null>(null)
+const pdfViewerRef = ref<any>(null)
+/** 弹窗是否压在 PDF 浮层之上（从原页建标记时为 true，否则会藏在浮层后面） */
+const markPopupOverPdf = ref(false)
 const isPdf = computed(() => /\.pdf(\?|$)/i.test(pdfUrl.value))
 const marks = ref<Mark[]>([]); const readingPosition = ref<ReadingPosition | null>(null)
 /** 未软删除的标记（软删除 = deletedAt 非空，进回收站） */
@@ -1845,7 +1851,18 @@ function toggleParaActions() {
   paraActionsEnabled.value = !paraActionsEnabled.value
 }
 
-const selToolbar = reactive({ visible: false, x: 0, y: 0, text: '', paraId: '', startOffset: 0, endOffset: 0, hasSelection: false })
+/**
+ * 选区工具条状态。
+ * `pdfRange` / `pdfRects` 只有「在原页上划词」时才有值：
+ * 那时段落偏移由后端按词级对齐算好，不需要（也不能）再用字符串搜索；
+ * pdfRects 是选区的 PDF 坐标，建完标记直接拿来画高亮，省一次往返。
+ */
+const selToolbar = reactive({
+  visible: false, x: 0, y: 0, text: '', paraId: '', startOffset: 0, endOffset: 0, hasSelection: false,
+  fromPdf: false,
+  pdfRange: null as { paraId: string; start: number; end: number } | null,
+  pdfRects: null as any[] | null,
+})
 const selToolbarStyle = computed(() => {
   const w = typeof window !== 'undefined' ? window.innerWidth : 1024
   const h = typeof window !== 'undefined' ? window.innerHeight : 768
@@ -1886,6 +1903,10 @@ function handleTextSelect(p: Paragraph) {
     selToolbar.paraId = p.id
     selToolbar.startOffset = hintOffset
     selToolbar.endOffset = hintOffset + text.length
+    // 正文选区：清掉原页选区留下的精确偏移，否则会用上一份 PDF 的区间建标记
+    selToolbar.fromPdf = false
+    selToolbar.pdfRange = null
+    selToolbar.pdfRects = null
   }, 10)
 }
 
@@ -2130,12 +2151,26 @@ function findOffsetInSource(paraText: string, selectedText: string, hintOffset: 
   return { start: best, end: best + selectedText.length }
 }
 
-function createMark(type: MarkType) {
+async function createMark(type: MarkType) {
   const para = paragraphs.value.find(p => p.id === selToolbar.paraId)
   if (!para) return
-  const { start, end } = findOffsetInSource(para.text, selToolbar.text, selToolbar.startOffset)
-  if (start === end) return // 找不到
-  handleCreateMark(selToolbar.paraId, selToolbar.text, type, start, end)
+  // 原页划词：偏移由后端算好了，直接用。走 findOffsetInSource 会失败 ——
+  // 选区里带着 PDF 的行尾断词和软连字符，和段落文本不是同一串字符
+  const exact = selToolbar.pdfRange && selToolbar.pdfRange.paraId === selToolbar.paraId ? selToolbar.pdfRange : null
+  const { start, end } = exact || findOffsetInSource(para.text, selToolbar.text, selToolbar.startOffset)
+  if (start === end) {
+    selToolbar.visible = false; selToolbar.hasSelection = false
+    window.getSelection()?.removeAllRanges()
+    pdfViewerRef.value?.notify('定位不到这段文字在正文里的位置')
+    return
+  }
+  // 先定层级再建：build 弹窗是同步可见的，等 await 回来再抬层级会先闪一下"没出来"
+  markPopupOverPdf.value = selToolbar.fromPdf
+  const created = await handleCreateMark(selToolbar.paraId, selToolbar.text, type, start, end)
+  // 刚建的标记服务端还没有它的矩形（anchors 是打开时的快照），本地补一份
+  if (selToolbar.fromPdf && created && selToolbar.pdfRects?.length) {
+    pdfViewerRef.value?.addMarkRects(created.id, selToolbar.pdfRects)
+  }
   selToolbar.visible = false; selToolbar.hasSelection = false
   window.getSelection()?.removeAllRanges()
 }
@@ -3502,8 +3537,52 @@ async function loadPdfAnchors() {
   }
 }
 
+/**
+ * 在原页上划了一段字 → 换成段落偏移 → 弹同一套选区工具条。
+ *
+ * 换算必须走服务端：段落文本和坐标表的对齐表在那边。换算不出来就明确提示，
+ * 不能静默 —— 「选了字、点了标记、什么都没发生」是最难排查的故障形态。
+ */
+async function onPdfSelect(sel: { page: number; text: string; rects: any[]; clientRect: { left: number; top: number; right: number; bottom: number } }) {
+  try {
+    const r = await $fetch<any>('/api/pdf/locate', {
+      method: 'POST',
+      body: { id, text: sel.text, page: sel.page },
+    })
+    if (!r?.ok) {
+      pdfViewerRef.value?.notify(
+        r?.reason === 'no-layout'
+          ? '这篇没有坐标表，重新导入 PDF 后才能在原页上标记'
+          : '这段文字定位不到正文段落（可能是提取时识别错了）',
+      )
+      return
+    }
+    selToolbar.text = sel.text
+    selToolbar.paraId = r.paragraphId
+    selToolbar.startOffset = r.startOffset
+    selToolbar.endOffset = r.endOffset
+    selToolbar.pdfRange = { paraId: r.paragraphId, start: r.startOffset, end: r.endOffset }
+    selToolbar.pdfRects = sel.rects
+    selToolbar.fromPdf = true
+    selToolbar.hasSelection = true
+    selToolbar.x = (sel.clientRect.left + sel.clientRect.right) / 2
+    selToolbar.y = sel.clientRect.bottom
+    selToolbar.visible = true
+  } catch {
+    pdfViewerRef.value?.notify('定位失败，请稍后重试')
+  }
+}
+
 function openPdfAtParagraph(para: Paragraph) {
   openPdf(para)
+}
+
+/** 关原页时顺手收起选区工具条（它是 Teleport 到 body 的，不跟着浮层一起消失） */
+function closePdf() {
+  showPdf.value = false
+  selToolbar.visible = false
+  selToolbar.hasSelection = false
+  selToolbar.fromPdf = false
 }
 
 /** 从标记弹窗跳到原页：先用标记所在段落定位，找不到就只开原页 */
@@ -4000,7 +4079,7 @@ function sentenceAt(text: string, start: number, end: number): string {
 
 async function handleCreateMark(pid: string, text: string, type: MarkType, startOffset: number, endOffset: number) {
   const dup = marks.value.find(m => m.paragraphId === pid && m.startOffset === startOffset && m.endOffset === endOffset)
-  if (dup) return
+  if (dup) return dup
   const paraText = paragraphs.value.find(p => p.id === pid)?.text || ''
   const m: Mark = { id: `m_${Date.now()}`, paragraphId: pid, startOffset, endOffset, text, type, color: MARK_COLORS[type], detail: '', note: '', context: sentenceAt(paraText, startOffset, endOffset), createdAt: new Date().toISOString() }
   marks.value.push(m)
@@ -4010,6 +4089,7 @@ async function handleCreateMark(pid: string, text: string, type: MarkType, start
   // 与 AI 生成并行写库，不再让保存往返阻塞首字（生产 Turso 模式下每次保存为多次远程写）
   void saveMarks()
   if (markAutoGenerate.value) void handleGenerateMarkDetail()
+  return m
 }
 
 /** 手动触发 AI 生成当前标记的解释内容 */
@@ -4040,6 +4120,7 @@ async function handleGenerateMarkDetail() {
 }
 
 function handleShowMark(mark: Mark) {
+  markPopupOverPdf.value = false
   markPopup.mark = mark; markPopup.visible = true; markPopup.loading = false; markPopup.typing = false; markPopup.typingContent = ''
   markPopup.position = { x: Math.min(window.innerWidth - 420, 400), y: 120 }
 }
@@ -4426,6 +4507,8 @@ onUnmounted(() => { /* clickTimer 已移除 */ })
   background: #ffffff; border: 0.5px solid rgba(0,0,0,0.1); border-radius: 12px;
   padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); transform: translate(-50%, 0);
 }
+/* 在 PDF 原页上划词时，工具条要压过浮层（浮层是 6000） */
+.sel-toolbar--over-pdf { z-index: 6200; }
 .sel-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 42px; padding: 5px 7px; border: 1.5px solid transparent; border-radius: 9px; background: #f8fafc; cursor: pointer; transition: all 0.12s; }
 .sel-label { font-size: 14px; font-weight: 700; color: var(--c); }
 .sel-hint { font-size: 10px; color: #a09e97; line-height: 1; }
