@@ -43,6 +43,42 @@ function parseWithPyMuPDF4LLM(pdfPath: string): PdfParseResult | null {
   }
 }
 
+// ====== 版面重建（pdfjs + 行/段还原）=======
+// 与 parse_pdf_js.mjs 的区别：那个只按 y 分行、join('') 拼字，会丢词间空格
+// （"of creation" → "ofcreation"）、把双栏拼成一行、抹掉所有段落边界。
+// 这个按 x 间距补空格、按行距/缩进/句末判断段落，并且能输出词级坐标
+// 供「在原页上高亮标记」用。
+//
+// 放在最前面试：它是唯一同时给出段落结构和坐标的路径。
+// 有任何异常都返回 null，由后面的 pymupdf4llm / pdfjs 接手 —— 导入不能因为
+// 新代码挂掉，这是硬要求。
+function parseWithLayout(pdfPath: string, geomPath?: string): PdfParseResult | null {
+  try {
+    const args = [path.resolve('server/scripts/parse_pdf_layout.mjs'), pdfPath]
+    if (geomPath) args.push(`--geometry=${geomPath}`)
+    const result = execFileSync(process.execPath, args, {
+      encoding: 'utf-8',
+      timeout: 120_000,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const stdout = String(result).trim()
+    if (!stdout || stdout.startsWith('PDF_PARSE_ERROR')) {
+      console.warn('[parse-pdf] 版面重建失败:', stdout.slice(0, 200))
+      return null
+    }
+    const parsed = JSON.parse(stdout)
+    if (!parsed?.markdown?.trim()) return null
+    return {
+      markdown: parsed.markdown,
+      chapters: Array.isArray(parsed.chapters) ? parsed.chapters : [],
+    }
+  } catch (err: any) {
+    console.warn('[parse-pdf] 版面重建调用失败:', err?.message || err)
+    return null
+  }
+}
+
 // ====== pdfjs-dist 回退（纯 JS，无 Python 依赖） ======
 // 场景：服务器/本机没有 pymupdf4llm 时，Python 路径必然失败。
 // pdfjs-dist 已是项目依赖，用它抽取文字层，保证 PDF 上传始终可用。
@@ -88,9 +124,13 @@ export default defineEventHandler(async (event) => {
   const pdfPath = path.join(uploadsDir, `${Date.now()}_${safeName}`)
   await writeFile(pdfPath, fileEntry.data)
 
-  // 优先 pymupdf4llm（版面感知、能识别章节）；失败则回退纯 JS 解析
-  let result = parseWithPyMuPDF4LLM(pdfPath)
-  let parser = 'pymupdf4llm'
+  // 主路径：版面重建（段落结构 + 坐标）；失败降级 pymupdf4llm；再失败降级纯 JS 抽取
+  let result = parseWithLayout(pdfPath)
+  let parser = 'layout'
+  if (!result) {
+    result = parseWithPyMuPDF4LLM(pdfPath)
+    parser = 'pymupdf4llm'
+  }
   if (!result) {
     result = parseWithPdfJs(pdfPath)
     parser = 'pdfjs'
@@ -98,7 +138,7 @@ export default defineEventHandler(async (event) => {
   if (!result) {
     throw createError({
       statusCode: 500,
-      message: 'PDF 解析失败：pymupdf4llm 不可用，且 pdfjs 未能提取文字层',
+      message: 'PDF 解析失败：版面重建、pymupdf4llm、pdfjs 均未能提取文字层',
     })
   }
 
