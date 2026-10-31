@@ -62,6 +62,20 @@ const PROBE = `(() => {
     toolsOut: [...document.querySelectorAll('.tb-right button, .tb-right a')]
       .map((el) => +el.getBoundingClientRect().right.toFixed(1))
       .filter((x) => x > window.innerWidth - 1).length,
+    /* 顶栏收口件：手机靠这些替代文字按钮，桌面必须反过来看不见 */
+    more: r('.more-btn'),
+    moreMenu: r('.more-menu'),
+    kindSelect: r('.kind-select'),
+    aiBtn: r('.ai-btn'),
+    toolIco: r('.tool-ico'),
+    toolTxt: r('.tool-txt'),
+    toolMinH: Math.min(
+      ...[...document.querySelectorAll('.tool-group .tool')]
+        .map((el) => el.getBoundingClientRect().height)
+        .concat([999]),
+    ),
+    menuItems: [...document.querySelectorAll('.more-menu .more-item')]
+      .map((el) => el.textContent.trim()),
   }
 })()`
 
@@ -100,6 +114,32 @@ try {
     `提示右 ${m.hint.right} / 缩放条左 ${m.zoom.x}`)
   check('触屏提示不含「滚轮」', !m.hintText.includes('滚轮'), JSON.stringify(m.hintText))
 
+  // ── 顶栏收口：手机把主功能收进「更多」、工具改图标、类型改下拉 ──
+  check('手机出现「更多」按钮且在屏内', m.more && m.more.w > 0 && m.more.right <= m.win,
+    `x ${m.more?.x} w ${m.more?.w} / 视口 ${m.win}`)
+  check('手机不收桌面那套 AI 切题按钮（已进菜单）', !m.aiBtn || m.aiBtn.w === 0, `宽 ${m.aiBtn?.w}`)
+  check('手机工具按钮只剩图标', m.toolIco && m.toolIco.w > 0 && (!m.toolTxt || m.toolTxt.w === 0),
+    `图标 ${m.toolIco?.w} / 文字 ${m.toolTxt?.w}`)
+  check('手机工具触摸目标高度 ≥ 26px', m.toolMinH >= 26, `最小 ${m.toolMinH?.toFixed(1)}px`)
+  check('手机类型选择为下拉', m.kindSelect && m.kindSelect.w > 0, `宽 ${m.kindSelect?.w}`)
+
+  // 菜单能开、不出屏、含主功能
+  await browser.evalInPage(`document.querySelector('.more-btn').click(); true`)
+  await sleep(450)
+  const mn = await browser.evalInPage(PROBE)
+  check('「更多」菜单可展开', mn.moreMenu && mn.moreMenu.h > 40, `高 ${mn.moreMenu?.h}`)
+  check('菜单不出屏', mn.moreMenu && mn.moreMenu.right <= mn.win + 0.5,
+    `菜单右 ${mn.moreMenu?.right} / 视口 ${mn.win}`)
+  check('菜单含 AI 切题与错题本',
+    mn.menuItems.some((t) => t.includes('AI 切题')) && mn.menuItems.some((t) => t.includes('错题本')),
+    JSON.stringify(mn.menuItems))
+
+  // 点空白处收起（菜单是浮层，不收会盖住画布）
+  await browser.evalInPage(`document.body.dispatchEvent(new MouseEvent('click', { bubbles: true })); true`)
+  await sleep(350)
+  const mc = await browser.evalInPage(PROBE)
+  check('点空白处菜单收起', !mc.moreMenu || mc.moreMenu.h === 0, `高 ${mc.moreMenu?.h}`)
+
   // ── 320：老机型 ──
   await setPhone(browser, 320, 720)
   await sleep(700)
@@ -114,6 +154,11 @@ try {
   await sleep(600)
   const d = await browser.evalInPage(PROBE)
   check('桌面顶栏仍是单行', d.topbar.h <= 56, `顶栏高 ${d.topbar.h}`)
+  check('桌面不出现「更多」按钮', !d.more || d.more.w === 0, `宽 ${d.more?.w}`)
+  check('桌面 AI 切题仍平铺可见', d.aiBtn && d.aiBtn.w > 0, `宽 ${d.aiBtn?.w}`)
+  check('桌面工具显示文字而非图标', d.toolTxt && d.toolTxt.w > 0 && (!d.toolIco || d.toolIco.w === 0),
+    `文字 ${d.toolTxt?.w} / 图标 ${d.toolIco?.w}`)
+  check('桌面类型是彩色按钮组而非下拉', !d.kindSelect || d.kindSelect.w === 0, `下拉宽 ${d.kindSelect?.w}`)
   check('桌面提示回到鼠标文案', d.hintText.includes('滚轮'), JSON.stringify(d.hintText))
   check('桌面画布未被挤出屏', d.docScroll === d.win && d.vp.w > 300, `画布宽 ${d.vp.w}`)
 } catch (e) {

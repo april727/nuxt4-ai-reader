@@ -15,11 +15,47 @@
         <span v-else-if="pages.length" class="tb-page">单页</span>
       </div>
 
+      <!-- 手机上工具栏塞不下：主功能收进这里（桌面隐藏，见 .more-wrap 样式） -->
+      <div class="more-wrap">
+        <button class="tb-icon more-btn" title="更多（AI 切题 / 错题本）" @click.stop="moreMenu = !moreMenu">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
+          </svg>
+        </button>
+        <div v-if="moreMenu" class="more-menu" @click.stop>
+          <button class="more-item" :disabled="aiRunning" @click="moreAi('page')">
+            <span class="more-ico">✦</span>AI 切题 · 当前页
+          </button>
+          <button v-if="pages.length > 1" class="more-item" :disabled="aiRunning" @click="moreAi('all')">
+            <span class="more-ico">✦</span>AI 切题 · 全部 {{ pages.length }} 页
+          </button>
+          <div class="more-sep"></div>
+          <NuxtLink class="more-item" to="/sheet/wrong">
+            <span class="more-ico">✎</span>试卷错题本
+          </NuxtLink>
+        </div>
+      </div>
+
       <div class="tb-right">
         <div class="tool-group">
-          <button class="tool" :class="{ on: tool === 'pan' }" title="平移（V）" @click="tool = 'pan'">平移</button>
-          <button class="tool" :class="{ on: tool === 'box' }" title="框选（B）" @click="tool = 'box'">框选</button>
-          <button class="tool" :class="{ on: tool === 'cover' }" title="遮答案（C）：框住答案区，复习时盖上" @click="tool = 'cover'">遮答案</button>
+          <button class="tool" :class="{ on: tool === 'pan' }" title="平移（V）" @click="tool = 'pan'">
+            <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 4.5v15M4.5 12h15" />
+              <path d="M9.6 6.9 12 4.5l2.4 2.4M9.6 17.1 12 19.5l2.4-2.4M6.9 9.6 4.5 12l2.4 2.4M17.1 9.6 19.5 12l-2.4 2.4" />
+            </svg><span class="tool-txt">平移</span>
+          </button>
+          <button class="tool" :class="{ on: tool === 'box' }" title="框选（B）" @click="tool = 'box'">
+            <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.6" y="4.6" width="16.8" height="14.8" rx="2" stroke-dasharray="3.2 2.4" />
+            </svg><span class="tool-txt">框选</span>
+          </button>
+          <button class="tool" :class="{ on: tool === 'cover' }" title="遮答案（C）：框住答案区，复习时盖上" @click="tool = 'cover'">
+            <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.6 12S6.1 5.9 12 5.9 21.4 12 21.4 12 17.9 18.1 12 18.1 2.6 12 2.6 12Z" />
+              <circle cx="12" cy="12" r="2.7" />
+              <path d="M4.2 19.8 19.8 4.2" />
+            </svg><span class="tool-txt">遮答案</span>
+          </button>
         </div>
         <button
           v-if="coverTotal"
@@ -27,7 +63,10 @@
           :class="{ on: answersVisible }"
           :title="answersVisible ? '当前显示答案，点击盖上' : '当前已遮挡，点击临时全显'"
           @click="answersVisible = !answersVisible"
-        >{{ answersVisible ? '显示答案' : `答案已遮 ${coverTotal}` }}</button>
+        >
+          <span class="ans-full">{{ answersVisible ? '显示答案' : `答案已遮 ${coverTotal}` }}</span>
+          <span class="ans-short">{{ answersVisible ? '已显示' : `已遮 ${coverTotal}` }}</span>
+        </button>
         <div class="kind-group">
           <button
             v-for="m in kinds"
@@ -39,6 +78,15 @@
             @click="defaultKind = m.k"
           >{{ m.label }}</button>
         </div>
+        <!-- 手机上五个彩色按钮占掉半行，换成系统下拉（原生 picker，触屏更好点） -->
+        <select
+          v-model="defaultKind"
+          class="kind-select"
+          :style="{ color: curKind.color, borderColor: curKind.color }"
+          title="框选后默认存为"
+        >
+          <option v-for="m in kinds" :key="m.k" :value="m.k">{{ m.label }}</option>
+        </select>
         <div class="ai-wrap">
           <button class="tool ai-btn" :disabled="aiRunning" @click="aiMenu = !aiMenu" :title="aiRunning ? 'AI 正在切题…' : 'AI 自动切题（本地图直传模型）'">
             {{ aiRunning ? '切题中…' : 'AI 切题' }}
@@ -49,7 +97,7 @@
           </div>
         </div>
         <NuxtLink class="tb-link" to="/sheet/wrong" title="试卷错题本（按间隔重复复习）">错题本</NuxtLink>
-        <span class="save-state" :class="saveState">{{ saveText }}</span>
+        <span class="save-state" :class="saveState" :title="saveText || '已保存'"><i class="save-dot"></i><span class="save-txt">{{ saveText }}</span></span>
       </div>
     </header>
 
@@ -128,6 +176,8 @@ const panelW = ref(368)
 const canvasRef = ref<any>(null)
 
 const kinds = SHEET_KINDS
+/** 手机下拉框的当前色（跟着默认类型走，让选择器本身也能当颜色图例） */
+const curKind = computed(() => kinds.find(k => k.k === defaultKind.value) || kinds[0])
 
 const pageIdx = computed(() => Math.max(0, pages.value.findIndex(p => p.id === activePageId.value)))
 const currentPage = computed(() => pages.value[pageIdx.value] || null)
@@ -179,11 +229,13 @@ onMounted(async () => {
   }
   window.addEventListener('keydown', onKey)
   window.addEventListener('beforeunload', flushSave)
+  document.addEventListener('click', onDocClick)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('beforeunload', flushSave)
+  document.removeEventListener('click', onDocClick)
   flushSave()
 })
 
@@ -333,6 +385,31 @@ function goPage(idx: number) {
 
 // ── AI 自动切题 ──
 const aiMenu = ref(false)
+/** 手机上「更多」菜单（桌面不渲染这个按钮，菜单项也都藏起来） */
+const moreMenu = ref(false)
+
+/** 菜单项的 AI 切题：先收起菜单再跑，否则 loading 态被菜单盖住看不见 */
+function moreAi(scope: 'page' | 'all') {
+  moreMenu.value = false
+  void runAutoTag(scope)
+}
+
+function closeMenus() {
+  moreMenu.value = false
+  aiMenu.value = false
+}
+
+/**
+ * 点空白处收起「更多」菜单。
+ *
+ * 菜单容器与触发按钮都带 @click.stop，这里只会收到「点到了别处」的事件；
+ * 仍判一次 closest 是给将来往菜单里塞没有 stop 的元素留保险。
+ */
+function onDocClick(e: MouseEvent) {
+  if (!moreMenu.value) return
+  const t = e.target as HTMLElement | null
+  if (!t?.closest?.('.more-wrap')) moreMenu.value = false
+}
 const aiRunning = ref(false)
 const aiPreview = ref<{
   count: number
@@ -419,7 +496,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'b' || e.key === 'B') tool.value = 'box'
   else if (e.key === 'c' || e.key === 'C') tool.value = 'cover'
   else if (e.key === 'a' || e.key === 'A') answersVisible.value = !answersVisible.value
-  else if (e.key === 'Escape') { selectedId.value = undefined; aiMenu.value = false }
+  else if (e.key === 'Escape') { selectedId.value = undefined; closeMenus() }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId.value) {
     e.preventDefault()
     onRemove(selectedId.value)
@@ -473,6 +550,11 @@ function goBack() {
   font-family: 'DM Sans', sans-serif; font-size: 11.5px; color: #6b6862;
   padding: 4px 9px; border-radius: 6px;
 }
+/* 工具按钮：桌面显示文字，手机只留图标（见 @media 段） */
+.tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+}
+.tool-ico { display: none; width: 15px; height: 15px; flex-shrink: 0; }
 .tool.on { background: #fff; color: #3d3591; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08); }
 .kind-pick.on { background: #fff; }
 .answer-toggle {
@@ -532,6 +614,40 @@ function goBack() {
 .save-state { font-size: 11px; color: #a09e97; min-width: 42px; text-align: right; }
 .save-state.saved { color: #0f6e56; }
 .save-state.error { color: #a32d2d; }
+.save-dot { display: none; }
+
+/* ── 手机上才出现的收口件（桌面全部隐藏）── */
+.more-wrap { display: none; position: relative; flex-shrink: 0; }
+.more-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+}
+.more-btn svg { width: 16px; height: 16px; }
+.more-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  min-width: 158px; padding: 4px;
+  background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+}
+.more-item {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  border: none; background: transparent; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 12.5px; color: #3f3d38;
+  padding: 9px 10px; border-radius: 7px; text-decoration: none;
+  white-space: nowrap; text-align: left;
+}
+.more-item:hover { background: #f5f4f0; color: #3d3591; }
+.more-item:disabled { opacity: 0.5; cursor: default; }
+.more-ico { font-size: 11px; color: #8a8880; width: 12px; text-align: center; }
+.more-sep { height: 1px; margin: 4px 6px; background: rgba(0, 0, 0, 0.07); }
+
+/* 手机的类型选择：五个彩色按钮横向占满半行，换成原生下拉 */
+.kind-select {
+  display: none; font-family: 'DM Sans', sans-serif; font-size: 11.5px;
+  padding: 3px 4px; border-radius: 7px; border: 0.5px solid rgba(0, 0, 0, 0.14);
+  background: #fff; max-width: 78px;
+}
+.ans-short { display: none; }
 
 .sheet-body { display: flex; flex: 1; overflow: hidden; }
 .sheet-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -568,15 +684,41 @@ function goBack() {
   }
   /* 工具整组不能压扁：压扁后「遮答案」会变成竖排两个字，看着像乱码 */
   .tb-right > * { flex-shrink: 0; }
-  .save-state { margin-left: auto; }
-  .kind-group { display: none; }
+
+  /* 页码是第一行唯一的状态信息，窄屏上不能淡到看不见 */
+  .tb-page { font-size: 12px; color: #5f5d57; }
+  .tb-icon.sm { width: 26px; height: 26px; }
+
+  /* 收口：AI 切题与错题本进「更多」菜单，工具只留图标，类型换下拉，保存状态换圆点 */
+  .more-wrap { display: block; }
+  .ai-wrap, .tb-link, .kind-group { display: none; }
+  .kind-select { display: inline-block; }
+  .tool { padding: 6px 9px; }
+  .tool-ico { display: block; }
+  .tool-txt { display: none; }
+  .ans-full { display: none; }
+  .ans-short { display: inline; }
+
+  .save-state { margin-left: auto; min-width: 0; text-align: center; }
+  .save-txt { display: none; }
+  .save-dot {
+    display: block; width: 9px; height: 9px; border-radius: 50%;
+    background: transparent; transition: background 0.2s;
+  }
+  .save-state.saved .save-dot { background: #0f6e56; }
+  .save-state.saving .save-dot { background: #ba7517; animation: dot-pulse 1s ease-in-out infinite; }
+  .save-state.error .save-dot { background: #a32d2d; }
+
   .reader-panel { display: none; }
   .panel-divider { display: none; }
 }
 
+@keyframes dot-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+
 /* 320~360 的老机型再收一档，让工具条留在同一行，不因换行把顶栏撑到 80px */
 @media (max-width: 360px) {
-  .tool, .kind-pick, .tb-link, .ai-btn, .answer-toggle { font-size: 11px; padding: 3px 7px; }
+  /* .tool 不在这一档：它已经是图标按钮，再压内边距会低于触摸目标可点尺寸 */
+  .kind-pick, .tb-link, .ai-btn, .answer-toggle { font-size: 11px; padding: 3px 7px; }
   .tb-right { column-gap: 4px; }
 }
 </style>
