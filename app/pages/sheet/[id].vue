@@ -105,7 +105,8 @@
       <div class="sheet-main">
         <SheetCanvas
           ref="canvasRef"
-          :page="currentPage"
+          :pages="pages"
+          :active-page-id="activePageId"
           :annotations="annotations"
           :tool="tool"
           :selected-id="selectedId"
@@ -113,6 +114,7 @@
           @create="onCreate"
           @create-cover="onCreateCover"
           @select="onSelectBox"
+          @active-page="onActivePage"
           @ready="onCanvasReady"
         />
       </div>
@@ -182,20 +184,6 @@ const curKind = computed(() => kinds.find(k => k.k === defaultKind.value) || kin
 const pageIdx = computed(() => Math.max(0, pages.value.findIndex(p => p.id === activePageId.value)))
 const currentPage = computed(() => pages.value[pageIdx.value] || null)
 
-// ── 读取 ──
-/**
- * 预取其余页面的图（本地磁盘 + immutable 缓存，代价很低）。
- * 不做预取的话，翻页时才开始下载，多页试卷每翻一页都要等一次空白。
- */
-function prefetchPages() {
-  for (const p of pages.value) {
-    if (!p?.url) continue
-    const img = new Image()
-    img.decoding = 'async'
-    img.src = p.url
-  }
-}
-
 onMounted(async () => {
   try {
     const row = await $fetch<any>(`/api/text/${id}`)
@@ -218,7 +206,6 @@ onMounted(async () => {
     } else if (qPage && pages.value.some(p => p.id === qPage)) {
       activePageId.value = qPage
     }
-    prefetchPages()
   } catch {
     // 保持在空态，用户可以返回
   } finally {
@@ -282,17 +269,31 @@ async function saveTitle() {
 }
 
 // ── 标注操作 ──
-function onCreate(bbox: { x: number; y: number; w: number; h: number }) {
+/**
+ * 同一次手势可能收到两条 create：真机上 pointerup 与 pointercancel 的先后顺序不保证，
+ * 画布那边两个事件都接到同一条收尾逻辑上。600ms 内"页 + 坐标完全一致"视为重复。
+ */
+let lastCreate = { key: '', at: 0 }
+
+function onCreate(v: { pageId: string; bbox: SheetBBox }) {
+  const b = v.bbox
+  const key = `${v.pageId}|${b.x.toFixed(4)}|${b.y.toFixed(4)}|${b.w.toFixed(4)}|${b.h.toFixed(4)}`
+  const now = Date.now()
+  if (key === lastCreate.key && now - lastCreate.at < 600) return
+  lastCreate = { key, at: now }
+
   const a: SheetAnno = {
     id: `an_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    pageId: activePageId.value,
+    pageId: v.pageId,
     kind: defaultKind.value,
-    bbox,
+    bbox: v.bbox,
     note: '',
     createdAt: new Date().toISOString(),
   }
   annotations.value = [...annotations.value, a]
   selectedId.value = a.id
+  // 在别的页上框的题，要把它变成当前页，否则面板列表和顶栏页码对不上
+  if (v.pageId !== activePageId.value) activePageId.value = v.pageId
 }
 
 function onSelectBox(boxId: string) {
@@ -304,14 +305,15 @@ function onSelectBox(boxId: string) {
  * 只改了当前页的 covers，存库走独立接口（mutateSegments + CAS）。
  * 不能搭 annotations 的顺风车：两者是不同字段，整体覆盖会把页结构冲掉。
  */
-function onCreateCover(bbox: SheetBBox) {
-  const idx = pageIdx.value
+function onCreateCover(v: { pageId: string; bbox: SheetBBox }) {
+  const idx = pages.value.findIndex(p => p.id === v.pageId)
+  if (idx < 0) return
   const p = pages.value[idx]
-  if (!p) return
-  const covers = [...(p.covers || []), bbox]
+  const covers = [...(p.covers || []), v.bbox]
   pages.value[idx] = { ...p, covers }
   void saveCovers(p.id, covers)
   answersVisible.value = false // 刚画完就显形会让人以为没画上
+  if (p.id !== activePageId.value) activePageId.value = p.id
 }
 
 function onRemoveCover(ci: number) {
@@ -324,8 +326,9 @@ function onRemoveCover(ci: number) {
 }
 
 function onFocusCover(ci: number) {
-  const b = currentPage.value?.covers?.[ci]
-  if (b) canvasRef.value?.focusOn?.(b)
+  const p = currentPage.value
+  const b = p?.covers?.[ci]
+  if (p && b) canvasRef.value?.focusOn?.(p.id, b)
 }
 
 async function saveCovers(pageId: string, covers: SheetBBox[]) {
@@ -358,20 +361,22 @@ function onGoto(pageId: string, boxId: string) {
   const target = annotations.value.find(a => a.id === boxId)
   if (!target) return
   selectedId.value = boxId
-  if (pageId !== activePageId.value) {
-    pendingFocus = target
-    activePageId.value = pageId
-  } else {
-    canvasRef.value?.focusOn?.(target.bbox)
-  }
+  // 连续画布里跨页不再需要"换图再等 ready"：focusOn 自己会算出该页在画布上的位置
+  activePageId.value = pageId
+  canvasRef.value?.focusOn?.(pageId, target.bbox)
 }
 
 function onCanvasReady() {
   if (pendingFocus) {
-    const b = pendingFocus.bbox
+    const f = pendingFocus
     pendingFocus = null
-    nextTick(() => canvasRef.value?.focusOn?.(b))
+    nextTick(() => canvasRef.value?.focusOn?.(f.pageId, f.bbox))
   }
+}
+
+/** 滚动画布导致当前页变化：只同步状态，不回滚视图（回滚会把用户拽回去） */
+function onActivePage(pageId: string) {
+  activePageId.value = pageId
 }
 
 // ── 页码 ──
