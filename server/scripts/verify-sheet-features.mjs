@@ -171,7 +171,18 @@ try {
     thumbOk.startsWith('ok|') && thumbOk.includes('/api/file/'),
     thumbOk.slice(0, 60))
 
-  await page.evalInPage(`document.querySelector('.wp-card').click()`)
+  /*
+   * 点「种子错题」那一张，而不是第一张。
+   * 列表一旦有了历史数据，种子项就不再排第一；点错卡片同样会让「今日到期」减一，
+   * 第 13 项照样绿，但第 14 项查的 W_ID 完全没动 —— 表现成 SRS 没推进，实际是点错了行。
+   */
+  const orderApi = await api('/api/sheet/wrong/list?due=0')
+  const seedIdx = orderApi.items.findIndex((i) => i.id === W_ID)
+  await page.evalInPage(`(() => {
+    const el = document.querySelectorAll('.wp-card')[${seedIdx}]
+    if (el) el.click()
+    return !!el
+  })()`)
   await waitFor(() => page.evalInPage(`!!document.querySelector('.wp-modal')`), { timeout: 5000, label: '复习浮层' })
   const modalBox = await page.evalInPage(`!!document.querySelector('.wp-sheet-box')`)
   check('12 浮层里在原卷上框出该题', modalBox)

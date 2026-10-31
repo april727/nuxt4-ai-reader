@@ -32,6 +32,12 @@ try {
       deviceScaleFactor: 2,
       mobile: true,
     })
+    // mobile:true 只改视口，不改 (hover)/(pointer) 媒体特性与 maxTouchPoints，
+    // 于是「按指针类型切文案」的代码在截图里永远走桌面分支。SHOT_TOUCH=1 补上这一层。
+    if (process.env.SHOT_TOUCH) {
+      await b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+      await b.send('Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' })
+    }
   }
   if (process.env.SHOT_NOCACHE) {
     // 量「冷启动」传输量时必须关缓存，否则全是 disk cache 命中，统计里只剩零星几个

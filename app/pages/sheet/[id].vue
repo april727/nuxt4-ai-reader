@@ -541,8 +541,42 @@ function goBack() {
   background: rgba(247, 246, 243, 0.8); font-size: 13px; color: #8a8880;
 }
 
+/**
+ * 手机：顶栏折成两行。
+ *
+ * 原先所有控件挤在一行（返回 + 标题 + 页码 + 三个工具 + 答案开关 + AI + 错题本 + 保存状态），
+ * 合计约 520px，窄屏下溢出：页码块被挤到标题上叠成「第五单页」，最后几项直接出屏；
+ * 更要命的是溢出让文档宽度变成 435，画布按 435 算 fitWidth，试卷右侧那列题号被裁掉。
+ * 所以这里必须换行，而不是缩小字号或隐藏按钮。
+ */
 @media (max-width: 720px) {
+  .sheet-app { overflow: hidden; }
+  .sheet-topbar {
+    flex-wrap: wrap; height: auto;
+    padding: 6px 10px; row-gap: 6px; column-gap: 8px;
+  }
+  /* flex-basis 必须给 0：用 auto 时标题的「内容宽度」参与换行计算，
+     320px 屏上会把页码整块挤到下一行，白占 30px 高度 */
+  .tb-left { flex: 1 1 0; min-width: 0; }
+  /* 16px 是 iOS 不自动放大的下限，14.5px 会让整页在聚焦标题时被推着缩放 */
+  /* min-width:0 必须给：input 的 min-content 宽度由 size 属性（默认 20 字符）决定，
+     不压掉它，320px 屏上标题会把页码挤到第三行 */
+  .tb-title { max-width: none; min-width: 0; font-size: 16px; padding: 2px 4px; }
+  .tb-right {
+    flex: 1 1 100%; flex-wrap: wrap;
+    justify-content: flex-start; row-gap: 6px; column-gap: 6px;
+  }
+  /* 工具整组不能压扁：压扁后「遮答案」会变成竖排两个字，看着像乱码 */
+  .tb-right > * { flex-shrink: 0; }
+  .save-state { margin-left: auto; }
   .kind-group { display: none; }
   .reader-panel { display: none; }
+  .panel-divider { display: none; }
+}
+
+/* 320~360 的老机型再收一档，让工具条留在同一行，不因换行把顶栏撑到 80px */
+@media (max-width: 360px) {
+  .tool, .kind-pick, .tb-link, .ai-btn, .answer-toggle { font-size: 11px; padding: 3px 7px; }
+  .tb-right { column-gap: 4px; }
 }
 </style>

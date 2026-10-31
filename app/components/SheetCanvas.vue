@@ -59,16 +59,12 @@
       <button title="放大" @click="zoomBy(1.25)">+</button>
     </div>
 
-    <div class="sheet-hint">
-      {{ tool === 'box' ? '按住拖动框选题目'
-        : tool === 'cover' ? '按住拖动盖住答案区 · 点遮罩可临时看 3 秒'
-        : '拖动平移 · 滚轮上下 · 双击适配宽度' }}
-    </div>
+    <div class="sheet-hint">{{ hintText }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { SheetPage, SheetAnno, SheetBBox } from '~/utils/sheetTypes'
 
 const props = defineProps<{
@@ -126,6 +122,52 @@ function togglePeek(i: number) {
   peekTimer = setTimeout(() => { peekIdx.value = null; peekTimer = null }, 3000)
 }
 onBeforeUnmount(() => { if (peekTimer) clearTimeout(peekTimer) })
+
+/**
+ * 触屏设备给另一套提示文案。
+ * 「滚轮上下 · 双击适配宽度」在手机上既做不到也没意义，写在那儿只会教用户做无效操作。
+ */
+const coarse = ref(false)
+const hintText = computed(() => {
+  if (props.tool === 'box') return '拖动框选题目'
+  if (props.tool === 'cover') return '拖动盖住答案 · 点遮罩看 3 秒'
+  return coarse.value ? '单指拖动 · 双指缩放' : '拖动平移 · 滚轮上下 · 双击适配宽度'
+})
+
+/**
+ * 视口宽度一变就重算「适配宽度」。
+ *
+ * 顶栏在窄屏会折成两行、手机的地址栏收起也会改高度，这两种情况都可能在图片
+ * 加载之后才发生；只靠 onImgLoad 里那一次 fitWidth，晚到的布局变化会把试卷右侧裁掉。
+ * 用户手动缩放过（zoom ≠ 1）就不去抢他的视角。
+ */
+let ro: ResizeObserver | null = null
+let lastVpW = 0
+let hoverMq: MediaQueryList | null = null
+function syncCoarse() {
+  // 两个信号取或：媒体查询在部分安卓 WebView 上不报 (hover: none)，maxTouchPoints 兜底
+  coarse.value = (hoverMq?.matches ?? false) || navigator.maxTouchPoints > 0
+}
+onMounted(() => {
+  hoverMq = window.matchMedia('(hover: none)')
+  syncCoarse()
+  // 设备形态可能中途变（外接/拔出鼠标、DevTools 切设备模式），文案跟着走
+  hoverMq.addEventListener?.('change', syncCoarse)
+  const el = vp.value
+  if (!el || typeof ResizeObserver === 'undefined') return
+  lastVpW = el.clientWidth
+  ro = new ResizeObserver(() => {
+    const w = el.clientWidth
+    if (!w || w === lastVpW) return
+    lastVpW = w
+    if (zoom.value === 1 && imgW.value) fitWidth()
+  })
+  ro.observe(el)
+})
+onBeforeUnmount(() => {
+  hoverMq?.removeEventListener?.('change', syncCoarse)
+  ro?.disconnect(); ro = null
+})
 
 const stageStyle = computed(() => ({
   width: imgW.value ? `${imgW.value}px` : '100%',
@@ -486,5 +528,15 @@ defineExpose({ fitAll, fitWidth, focusOn })
   background: rgba(255, 255, 255, 0.86);
   border-radius: 7px; padding: 4px 9px;
   pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .sheet-hint {
+    left: 10px; bottom: 12px;
+    /* 让开右下角缩放条：不给上限时两段字在窄屏上会直接叠成一片 */
+    max-width: calc(100% - 132px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sheet-zoombar { right: 10px; bottom: 10px; }
 }
 </style>
