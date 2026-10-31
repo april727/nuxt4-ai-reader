@@ -4,6 +4,8 @@
  *   node server/scripts/shot.mjs "/read/txt_xxx" out.png
  *   SHOT_JS='document.querySelector(".pim").scrollIntoView()' node server/scripts/shot.mjs /read/xxx a.png
  *   SHOT_W=390 SHOT_H=844 node server/scripts/shot.mjs /read/xxx mobile.png   # 模拟手机
+ *   SHOT_BASE=https://ai-reader-vocab.app.workbuddy.host SHOT_SHARE=ENMLXP5IHR \
+ *     node server/scripts/shot.mjs /sheet/xxx live.png    # 拍线上（先用 sharecode 建边缘会话）
  *
  * 注意：在 Git Bash 里传以 / 开头的路径要加 MSYS_NO_PATHCONV=1，
  * 否则 MSYS 会把 "/read/xxx" 当成 Unix 路径转换成 "F:/.../PortableGit/read/xxx"。
@@ -22,8 +24,13 @@ const env = readFileSync('.env', 'utf8').split(/\r?\n/).reduce((a, l) => {
 }, {})
 const token = createHash('sha256').update(env.SITE_PASSWORD || '').digest('hex')
 
-const base = await resolveBase()
+const base = await resolveBase(process.env.SHOT_BASE)
 const b = await launchChrome({ port: 9444, profile: 'server/data/.tmp-shot', base, token })
+// 线上直连会 403：网关按 sharecode 发边缘 cookie，必须先用同一个浏览器走一次分享链接
+if (process.env.SHOT_SHARE) {
+  await b.goto(`${base}/?sharecode=${encodeURIComponent(process.env.SHOT_SHARE)}`)
+  await sleep(800)
+}
 try {
   if (process.env.SHOT_W) {
     await b.send('Emulation.setDeviceMetricsOverride', {
