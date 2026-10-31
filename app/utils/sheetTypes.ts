@@ -30,6 +30,44 @@ export interface SheetAnno {
 
 export type SheetBBox = SheetAnno['bbox']
 
+/** 单题判定：全对 / 半对 / 全错 / 未作答 */
+export type SheetVerdict = 'right' | 'half' | 'wrong' | 'blank'
+
+/**
+ * 单题判分。
+ *
+ * 与 SheetAnno 分开存（挂在 texts.grading 上）的原因：标注描述「这道题在哪」，
+ * 判分描述「这次作答对不对」。两者生命周期不同 —— 删掉框，判分应跟着消失；
+ * 但改框的类型（错题→重点）不该动分数。
+ */
+export interface SheetGrade {
+  verdict: SheetVerdict
+  /** 本题满分。逐题手填，默认值见 DEFAULT_MAX_SCORE */
+  max: number
+  /** 实得分。手动填，或点判定按钮自动给（对=max，半对=max/2，错/未做=0） */
+  got: number
+}
+
+/** 一份试卷的整卷判分，key 为 annotation id */
+export interface SheetGrading {
+  items: Record<string, SheetGrade>
+  updatedAt?: string
+}
+
+/** 第一次判某题时的满分预置值（小学单题常见 2 分），逐题可改 */
+export const DEFAULT_MAX_SCORE = 2
+
+export const SHEET_VERDICTS = [
+  { v: 'right', label: '对', mark: '✓', color: '#0f6e56', wash: 'rgba(15,110,86,0.10)' },
+  { v: 'half', label: '半对', mark: '½', color: '#ba7517', wash: 'rgba(186,117,23,0.10)' },
+  { v: 'wrong', label: '错', mark: '✗', color: '#a32d2d', wash: 'rgba(163,45,45,0.10)' },
+  { v: 'blank', label: '未做', mark: '—', color: '#6b6862', wash: 'rgba(110,104,98,0.10)' },
+] as const
+
+export function sheetVerdictMeta(v: string) {
+  return SHEET_VERDICTS.find(m => m.v === v) || SHEET_VERDICTS[2]
+}
+
 /** 四类标注：颜色与命名全局唯一来源，避免画布/面板/顶栏三处不一致 */
 export const SHEET_KINDS = [
   { k: 'wrong', label: '错题', color: '#a32d2d', wash: 'rgba(163,45,45,0.08)' },

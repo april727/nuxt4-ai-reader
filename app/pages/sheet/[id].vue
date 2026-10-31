@@ -13,6 +13,12 @@
           <button class="tb-icon sm" :disabled="pageIdx >= pages.length - 1" @click="goPage(pageIdx + 1)">›</button>
         </template>
         <span v-else-if="pages.length" class="tb-page">单页</span>
+        <span
+          v-if="gradeStats.n"
+          class="tb-score"
+          :class="{ low: gradeStats.rate < 60 }"
+          :title="`已判 ${gradeStats.n} 题 · 正确率 ${gradeStats.rate}%`"
+        >{{ gradeStats.got }}<i>/{{ gradeStats.max }}</i></span>
       </div>
 
       <!-- 手机上工具栏塞不下：主功能收进这里（桌面隐藏，见 .more-wrap 样式） -->
@@ -110,6 +116,7 @@
           :tool="tool"
           :selected-id="selectedId"
           :answers-visible="answersVisible"
+          :grading="grading"
           @create="onCreate"
           @create-cover="onCreateCover"
           @select="onSelectBox"
@@ -126,6 +133,7 @@
           :selected-id="selectedId"
           :covers="currentPage?.covers || []"
           :page-no="pageIdx + 1"
+          :grading="grading"
           @select="selectedId = $event"
           @remove="onRemove"
           @set-kind="onSetKind"
@@ -133,8 +141,44 @@
           @goto="onGoto"
           @remove-cover="onRemoveCover"
           @focus-cover="onFocusCover"
+          @set-verdict="onSetVerdict"
+          @set-score="onSetScore"
+          @reset-grading="onResetGrading"
         />
       </aside>
+    </div>
+
+    <!-- 手机没有右侧面板：选中某题时底部浮出判分条（桌面靠 CSS 隐藏） -->
+    <div v-if="selectedAnno" class="grade-dock">
+      <div class="gd-verdicts">
+        <button
+          v-for="m in verdictOptions"
+          :key="m.v"
+          class="gd-v"
+          :class="{ on: selectedGrade?.verdict === m.v }"
+          :style="selectedGrade?.verdict === m.v
+            ? { background: m.color, borderColor: m.color, color: '#fff' }
+            : { color: m.color }"
+          :title="m.label"
+          @click="onSetVerdict(selectedAnno.id, m.v)"
+        >{{ m.mark }}</button>
+      </div>
+      <label class="gd-num">
+        <span>满分</span>
+        <input
+          type="number" min="0" step="0.5" inputmode="decimal" :value="dockMax"
+          @change="onSetScore(selectedAnno.id, 'max', Number(($event.target as HTMLInputElement).value))"
+        >
+      </label>
+      <label class="gd-num">
+        <span>得分</span>
+        <input
+          type="number" min="0" step="0.5" inputmode="decimal" :value="dockGot"
+          @change="onSetScore(selectedAnno.id, 'got', Number(($event.target as HTMLInputElement).value))"
+        >
+      </label>
+      <span class="gd-total" :style="{ color: dockVerdictColor() }">{{ dockGot }}/{{ dockMax }}</span>
+      <button class="gd-x" title="取消选中" @click="selectedId = undefined">×</button>
     </div>
 
     <div v-if="loading" class="sheet-loading">加载中…</div>
@@ -153,8 +197,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import type { SheetPage, SheetAnno, SheetBBox } from '~/utils/sheetTypes'
-import { SHEET_KINDS } from '~/utils/sheetTypes'
+import type { SheetPage, SheetAnno, SheetBBox, SheetGrade, SheetVerdict } from '~/utils/sheetTypes'
+import { SHEET_KINDS, SHEET_VERDICTS, DEFAULT_MAX_SCORE, sheetVerdictMeta } from '~/utils/sheetTypes'
 
 const route = useRoute()
 const id = String(route.params.id)
@@ -162,6 +206,8 @@ const id = String(route.params.id)
 const title = ref('')
 const pages = ref<SheetPage[]>([])
 const annotations = ref<SheetAnno[]>([])
+/** 整卷判分：key 为 annotation id。与 annotations 分库存，见 grading.post.ts */
+const grading = ref<Record<string, SheetGrade>>({})
 const activePageId = ref('')
 const selectedId = ref<string | undefined>()
 const tool = ref<'pan' | 'box' | 'cover'>('pan')
@@ -176,6 +222,7 @@ const panelW = ref(368)
 const canvasRef = ref<any>(null)
 
 const kinds = SHEET_KINDS
+const verdictOptions = SHEET_VERDICTS
 /** 手机下拉框的当前色（跟着默认类型走，让选择器本身也能当颜色图例） */
 const curKind = computed(() => kinds.find(k => k.k === defaultKind.value) || kinds[0])
 
@@ -206,6 +253,9 @@ onMounted(async () => {
     title.value = row.title || ''
     pages.value = Array.isArray(row.segments) ? row.segments : []
     annotations.value = Array.isArray(row.annotations) ? row.annotations : []
+    grading.value = row.grading && typeof row.grading === 'object' && row.grading.items && typeof row.grading.items === 'object'
+      ? row.grading.items
+      : {}
     activePageId.value = pages.value[0]?.id || ''
     // 深链：错题本「在试卷里打开」会带 page / box，直接落到那道题上
     const qPage = String(route.query.page || '')
@@ -273,6 +323,97 @@ async function doSave() {
 
 function flushSave() {
   if (saveState.value === 'saving') void doSave()
+  if (gradeTimer) void doSaveGrading()
+}
+
+// ── 判分保存（独立接口、独立防抖）──
+/**
+ * 为什么不跟 annotations 共用一个定时器：
+ * 点一下 ✓ 只改了分数，标注那份 JSON 一个字没动，但共用队列会把它一起重写一遍；
+ * 反过来标注正等着 500ms 合并时点判分，也会把标注保存推迟。分开互不干扰。
+ */
+let gradeTimer: ReturnType<typeof setTimeout> | null = null
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100
+}
+
+function saveGradingSoon() {
+  saveState.value = 'saving'
+  if (gradeTimer) clearTimeout(gradeTimer)
+  gradeTimer = setTimeout(doSaveGrading, 450)
+}
+
+async function doSaveGrading() {
+  if (gradeTimer) { clearTimeout(gradeTimer); gradeTimer = null }
+  try {
+    await $fetch(`/api/sheet/${id}/grading`, { method: 'POST', body: { items: grading.value } })
+    saveState.value = 'saved'
+  } catch {
+    saveState.value = 'error'
+  }
+}
+
+// ── 判分操作 ──
+function gradeMaxOf(annoId: string) {
+  return grading.value[annoId]?.max ?? DEFAULT_MAX_SCORE
+}
+
+function onSetVerdict(annoId: string, verdict: string) {
+  const v = (['right', 'half', 'wrong', 'blank'].includes(verdict) ? verdict : 'wrong') as SheetVerdict
+  const max = gradeMaxOf(annoId)
+  const got = v === 'right' ? max : v === 'half' ? round2(max / 2) : 0
+  grading.value = { ...grading.value, [annoId]: { verdict: v, max, got } }
+  // 判错的题目自动收进错题本。只动「题目」类框：用户手动标成「重点/批注」的
+  // 不该因为判了个错就被改类型，那是两件事。
+  if (v === 'wrong' || v === 'blank') {
+    const a = annotations.value.find(x => x.id === annoId)
+    if (a?.kind === 'q') onSetKind(annoId, 'wrong')
+  }
+  saveGradingSoon()
+}
+
+function onSetScore(annoId: string, field: 'max' | 'got', value: number) {
+  const clamp = (n: number) => round2(Math.min(1000, Math.max(0, Number.isFinite(n) ? n : 0)))
+  const cur = grading.value[annoId]
+  const max = field === 'max' ? clamp(value) : (cur?.max ?? DEFAULT_MAX_SCORE)
+  let got = field === 'got' ? clamp(value) : (cur?.got ?? 0)
+  if (got > max) got = max
+  // 已有判定就保留：改满分不该把「错」自动变成「对」，那是两种不同的操作
+  const verdict: SheetVerdict = cur?.verdict
+    ?? (max > 0 && got >= max ? 'right' : got > 0 ? 'half' : 'wrong')
+  grading.value = { ...grading.value, [annoId]: { verdict, max, got } }
+  saveGradingSoon()
+}
+
+function onResetGrading() {
+  grading.value = {}
+  if (gradeTimer) { clearTimeout(gradeTimer); gradeTimer = null }
+  void doSaveGrading()
+}
+
+/** 整卷统计：只算现存题目，grading 里的幽灵条目不计入总分 */
+const gradeStats = computed(() => {
+  let max = 0
+  let got = 0
+  let n = 0
+  for (const a of annotations.value) {
+    const g = grading.value[a.id]
+    if (!g) continue
+    max += g.max || 0
+    got += g.got || 0
+    n++
+  }
+  return { max: round2(max), got: round2(got), n, rate: max > 0 ? Math.round((got / max) * 100) : 0 }
+})
+
+const selectedAnno = computed(() => annotations.value.find(a => a.id === selectedId.value) || null)
+const selectedGrade = computed(() => (selectedId.value ? grading.value[selectedId.value] || null : null))
+const dockMax = computed(() => selectedGrade.value?.max ?? DEFAULT_MAX_SCORE)
+const dockGot = computed(() => selectedGrade.value?.got ?? 0)
+
+function dockVerdictColor() {
+  return selectedGrade.value ? sheetVerdictMeta(selectedGrade.value.verdict).color : '#8a8880'
 }
 
 async function saveTitle() {
@@ -341,6 +482,12 @@ async function saveCovers(pageId: string, covers: SheetBBox[]) {
 function onRemove(boxId: string) {
   annotations.value = annotations.value.filter(a => a.id !== boxId)
   if (selectedId.value === boxId) selectedId.value = undefined
+  // 框没了分数也不该留：服务端保存时也会按现存注解过滤，这里同步掉免得本地统计出现幽灵分
+  if (grading.value[boxId]) {
+    const { [boxId]: _dropped, ...rest } = grading.value
+    grading.value = rest
+    saveGradingSoon()
+  }
 }
 
 function onSetKind(boxId: string, kind: string) {
@@ -542,6 +689,53 @@ function goBack() {
 
 .tb-center { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .tb-page { font-size: 11.5px; color: #8a8880; font-variant-numeric: tabular-nums; }
+/* 整卷得分：只在判过分之后出现，别让它一开始就占着位置 */
+.tb-score {
+  font-family: 'DM Mono', monospace; font-size: 12.5px; font-weight: 600;
+  color: #0f6e56; background: rgba(15, 110, 86, 0.09);
+  border-radius: 20px; padding: 1px 8px; font-variant-numeric: tabular-nums;
+}
+.tb-score i { font-style: normal; font-weight: 400; color: #7fa79c; font-size: 11px; }
+.tb-score.low { color: #a32d2d; background: rgba(163, 45, 45, 0.09); }
+.tb-score.low i { color: #c89393; }
+
+/* 手机判分浮条：桌面隐藏，靠右侧面板判分 */
+.grade-dock {
+  display: none;
+  position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 1200;
+  align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(8px);
+}
+.gd-verdicts { display: flex; gap: 4px; }
+.gd-v {
+  width: 34px; height: 30px; flex-shrink: 0;
+  border: 0.5px solid rgba(0, 0, 0, 0.14); background: transparent;
+  border-radius: 7px; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+.gd-num { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; color: #6b6862; }
+.gd-num input {
+  width: 40px; box-sizing: border-box;
+  border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 6px;
+  padding: 4px 4px; font-family: 'DM Mono', monospace; font-size: 12px;
+  color: #1a1a18; background: #fff; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.gd-num input:focus { border-color: rgba(61, 53, 145, 0.45); }
+.gd-total {
+  margin-left: auto; font-family: 'DM Mono', monospace;
+  font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.gd-x {
+  border: none; background: transparent; cursor: pointer;
+  color: #b4b2a9; font-size: 17px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
 
 .tb-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .tool-group, .kind-group { display: flex; gap: 2px; background: #f2f0ec; border-radius: 8px; padding: 2px; }
@@ -711,6 +905,11 @@ function goBack() {
 
   .reader-panel { display: none; }
   .panel-divider { display: none; }
+
+  /* 手机没有右侧面板，判分改走底部浮条；画布留出它的高度，否则最后一题被压在下面 */
+  .grade-dock { display: flex; }
+  .sheet-body { padding-bottom: 62px; box-sizing: border-box; }
+  .tb-score { font-size: 12px; padding: 1px 7px; }
 }
 
 @keyframes dot-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }

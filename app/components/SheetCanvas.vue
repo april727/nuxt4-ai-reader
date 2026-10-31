@@ -48,6 +48,7 @@
         @click.stop="emit('select', item.a.id)"
       >
         <span class="anno-num" :style="numStyle">{{ item.i + 1 }}</span>
+        <span v-if="gradeOf(item.a.id)" class="anno-grade" :style="gradeBadgeStyle(item.a.id)">{{ gradeText(item.a.id) }}</span>
       </div>
 
       <div v-if="draft" class="sheet-anno draft" :class="{ 'draft-cover': drag?.mode === 'cover' }" :style="boxStyle(draft)"></div>
@@ -65,7 +66,8 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import type { SheetPage, SheetAnno, SheetBBox } from '~/utils/sheetTypes'
+import type { SheetPage, SheetAnno, SheetBBox, SheetGrade } from '~/utils/sheetTypes'
+import { sheetVerdictMeta } from '~/utils/sheetTypes'
 
 const props = defineProps<{
   page: SheetPage | null
@@ -74,6 +76,8 @@ const props = defineProps<{
   selectedId?: string
   /** 顶栏「显示答案」开着时不再渲染遮挡块 */
   answersVisible?: boolean
+  /** 整卷判分，key 为 annotation id */
+  grading?: Record<string, SheetGrade>
 }>()
 
 const emit = defineEmits<{
@@ -194,6 +198,36 @@ const numStyle = computed(() => {
     padding: `${3 / s}px ${5 / s}px`,
   }
 })
+
+// ── 判分角标 ──
+/**
+ * 角标贴在框内右上角而不是框外：试卷第 1 题的框往往就贴着页面顶边，
+ * 放到框外会被 .sheet-stage 的边界裁掉，判了分却看不见。
+ */
+function gradeOf(annoId: string): SheetGrade | null {
+  return props.grading?.[annoId] || null
+}
+
+function gradeText(annoId: string) {
+  const g = gradeOf(annoId)
+  if (!g) return ''
+  const mark = sheetVerdictMeta(g.verdict).mark
+  // 满分 0 说明这题还没定分值，只给判定符号，别显示一个没有意义的「0」
+  return g.max > 0 ? `${mark} ${g.got}` : mark
+}
+
+function gradeBadgeStyle(annoId: string) {
+  const s = totalScale.value || 1
+  const g = gradeOf(annoId)
+  return {
+    background: sheetVerdictMeta(g?.verdict || 'wrong').color,
+    fontSize: `${Math.min(17, 9 / s)}px`,
+    padding: `${1.5 / s}px ${4 / s}px`,
+    borderRadius: `${3 / s}px`,
+    right: `${2 / s}px`,
+    top: `${2 / s}px`,
+  }
+}
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, v))
@@ -450,6 +484,16 @@ defineExpose({ fitAll, fitWidth, focusOn })
 .sheet-anno.k-note { border-color: #0f6e56; background: rgba(15, 110, 86, 0.08); }
 .sheet-anno.k-q { border-color: #5b57c4; background: rgba(91, 87, 196, 0.06); border-style: dashed; }
 .sheet-anno.active { box-shadow: 0 0 0 2px rgba(61, 53, 145, 0.35); }
+.anno-grade {
+  position: absolute;
+  color: #fff;
+  font-family: 'DM Mono', monospace;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  pointer-events: none;
+  letter-spacing: 0.2px;
+}
 .sheet-anno.draft {
   border-style: dashed;
   border-color: #3d3591;

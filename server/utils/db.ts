@@ -33,9 +33,44 @@ const SNAPSHOT_KEEP = Number(process.env['LOCAL_SNAPSHOT_KEEP'] || 3)
 let housekeepingStarted = false
 let localHandle: Promise<any> | null = null
 
+/**
+ * 本地主库补列清单。
+ *
+ * 本地（node:sqlite）根本不走 createTablesSqljs —— 历史列一直是由
+ * sync-from-turso 的 ensureColumns 按**云端 pragma** 补的，也就是「云端有本地才有」。
+ * 后果：给本地加一个新列时，如果云端还没部署，本地会直接报
+ * `table texts has no column named grading`，而且报错点离原因很远（在写接口里）。
+ *
+ * 所以在这里补一道：拿到句柄就把本地缺的列加上，不依赖云端、也不依赖
+ * 用户是不是刚好触发过一次同步。表还不存在（全新库）就跳过，交给建表逻辑。
+ */
+const LOCAL_ENSURE_COLUMNS: Array<[string, string, string]> = [
+  // 试卷判分：整卷覆盖写，key 为 annotation id
+  ['texts', 'grading', "TEXT DEFAULT '{}'"],
+]
+
+async function ensureLocalSchema(db: any) {
+  for (const [table, col, def] of LOCAL_ENSURE_COLUMNS) {
+    try {
+      const info = db.all(`PRAGMA table_info(${table})`)
+      if (!info || !info.length) continue
+      if (info.some((c: any) => c.name === col)) continue
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+      console.log(`[db-local] 补列 ${table}.${col}`)
+    } catch (e: any) {
+      console.warn(`[db-local] 补列失败 ${table}.${col}: ${e.message}`)
+    }
+  }
+}
+
 /** 取本地主库句柄，并在首次取用时启动后台维护任务 */
 function localDb(): Promise<any> {
-  if (!localHandle) localHandle = getLocalDb()
+  if (!localHandle) {
+    localHandle = getLocalDb().then(async (db) => {
+      if (db) await ensureLocalSchema(db)
+      return db
+    })
+  }
   if (!housekeepingStarted) {
     housekeepingStarted = true
     localHandle.then((db) => { if (db) scheduleLocalHousekeeping() }).catch(() => { /* ignore */ })
@@ -111,7 +146,7 @@ async function getTursoDb(): Promise<any> {
 
 async function createTablesTurso() {
   const db = tursoClient!
-  await db.execute(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY,title TEXT,text TEXT,source TEXT,folder TEXT DEFAULT 'default',excerpt TEXT,filePath TEXT,analysis TEXT,segments TEXT,explanations TEXT,marks TEXT,readingPosition TEXT,paragraphChats TEXT DEFAULT '',videoMeta TEXT DEFAULT '',videoSubtitles TEXT DEFAULT '',subtitlePractice TEXT DEFAULT '',completedAt TEXT DEFAULT NULL,notes TEXT DEFAULT '',paragraphNotes TEXT DEFAULT '[]',paragraphNotesMap TEXT DEFAULT '{}',chapters TEXT DEFAULT '[]',cover TEXT DEFAULT '',deletedAt TEXT DEFAULT NULL,contentKind TEXT DEFAULT 'text',annotations TEXT DEFAULT '[]',createdAt TEXT,updatedAt TEXT)`)
+  await db.execute(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY,title TEXT,text TEXT,source TEXT,folder TEXT DEFAULT 'default',excerpt TEXT,filePath TEXT,analysis TEXT,segments TEXT,explanations TEXT,marks TEXT,readingPosition TEXT,paragraphChats TEXT DEFAULT '',videoMeta TEXT DEFAULT '',videoSubtitles TEXT DEFAULT '',subtitlePractice TEXT DEFAULT '',completedAt TEXT DEFAULT NULL,notes TEXT DEFAULT '',paragraphNotes TEXT DEFAULT '[]',paragraphNotesMap TEXT DEFAULT '{}',chapters TEXT DEFAULT '[]',cover TEXT DEFAULT '',deletedAt TEXT DEFAULT NULL,contentKind TEXT DEFAULT 'text',annotations TEXT DEFAULT '[]',grading TEXT DEFAULT '{}',createdAt TEXT,updatedAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY,name TEXT,parent TEXT DEFAULT '',isPrivate INTEGER DEFAULT 0,passwordHash TEXT DEFAULT '',createdAt TEXT)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY,readCount INTEGER DEFAULT 0,lastReadAt TEXT,markCount INTEGER DEFAULT 0)`)
   await db.execute(`CREATE TABLE IF NOT EXISTS knowledge_points (id TEXT PRIMARY KEY,content TEXT NOT NULL,note TEXT DEFAULT '',sourceId TEXT DEFAULT '',sourceTitle TEXT DEFAULT '',sourceType TEXT DEFAULT 'selection',sourceContext TEXT DEFAULT '',customGroup TEXT DEFAULT '',tags TEXT DEFAULT '[]',chatHistory TEXT DEFAULT '[]',sortOrder INTEGER DEFAULT 0,createdAt TEXT,updatedAt TEXT)`)
@@ -155,6 +190,8 @@ async function createTablesTurso() {
     ['texts','contentKind',"TEXT DEFAULT 'text'"],
     // 试卷标注：叠加层数据（bbox 归一化坐标 + kind），原图像素不修改
     ['texts','annotations',"TEXT DEFAULT '[]'"],
+    // 试卷判分：整卷覆盖写，key 为 annotation id（对错 + 满分 + 实得）
+    ['texts','grading',"TEXT DEFAULT '{}'"],
   ]) {
     try { await db.execute(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`) } catch {}
   }
@@ -255,7 +292,7 @@ async function getSqljsDb(): Promise<any> {
 }
 
 function createTablesSqljs() {
-  sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT, folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT, analysis TEXT, segments TEXT, explanations TEXT, marks TEXT, readingPosition TEXT, paragraphChats TEXT, createdAt TEXT, updatedAt TEXT, chapters TEXT DEFAULT '[]', cover TEXT DEFAULT '', deletedAt TEXT DEFAULT NULL, contentKind TEXT DEFAULT 'text', annotations TEXT DEFAULT '[]', reviewIntervalDays INTEGER DEFAULT 7, nextReviewAt TEXT DEFAULT NULL, reviewCount INTEGER DEFAULT 0, lastReviewedAt TEXT DEFAULT NULL, selfRating TEXT DEFAULT '')`)
+  sqljsDb.run(`CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, title TEXT, text TEXT, source TEXT, folder TEXT DEFAULT 'default', excerpt TEXT, filePath TEXT, analysis TEXT, segments TEXT, explanations TEXT, marks TEXT, readingPosition TEXT, paragraphChats TEXT, createdAt TEXT, updatedAt TEXT, chapters TEXT DEFAULT '[]', cover TEXT DEFAULT '', deletedAt TEXT DEFAULT NULL, contentKind TEXT DEFAULT 'text', annotations TEXT DEFAULT '[]', grading TEXT DEFAULT '{}', reviewIntervalDays INTEGER DEFAULT 7, nextReviewAt TEXT DEFAULT NULL, reviewCount INTEGER DEFAULT 0, lastReviewedAt TEXT DEFAULT NULL, selfRating TEXT DEFAULT '')`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY, name TEXT, parent TEXT DEFAULT '', createdAt TEXT)`)
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS stats (textId TEXT PRIMARY KEY, readCount INTEGER DEFAULT 0, lastReadAt TEXT, markCount INTEGER DEFAULT 0)`)
   // 段落结构历史（与 Turso 分支保持一致）
@@ -276,6 +313,7 @@ function createTablesSqljs() {
   try { sqljsDb.run('ALTER TABLE texts ADD COLUMN deletedAt TEXT DEFAULT NULL') } catch {}
   try { sqljsDb.run("ALTER TABLE texts ADD COLUMN contentKind TEXT DEFAULT 'text'") } catch {}
   try { sqljsDb.run("ALTER TABLE texts ADD COLUMN annotations TEXT DEFAULT '[]'") } catch {}
+  try { sqljsDb.run("ALTER TABLE texts ADD COLUMN grading TEXT DEFAULT '{}'") } catch {}
   sqljsDb.run(`CREATE TABLE IF NOT EXISTS knowledge_points (id TEXT PRIMARY KEY, content TEXT NOT NULL, note TEXT DEFAULT '', sourceId TEXT DEFAULT '', sourceTitle TEXT DEFAULT '', sourceType TEXT DEFAULT 'selection', sourceContext TEXT DEFAULT '', customGroup TEXT DEFAULT '', tags TEXT DEFAULT '[]', sortOrder INTEGER DEFAULT 0, createdAt TEXT, updatedAt TEXT)`)
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN customGroup TEXT DEFAULT ''") } catch {}
   try { sqljsDb.run("ALTER TABLE knowledge_points ADD COLUMN chatHistory TEXT DEFAULT '[]'") } catch {}

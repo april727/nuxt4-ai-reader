@@ -20,6 +20,19 @@
       </button>
     </div>
 
+    <!-- 整卷判分汇总：总分不落库，这里按现存题目现算 -->
+    <div class="sp-grade">
+      <div class="sp-grade-top">
+        <span class="sp-grade-title">判分</span>
+        <span class="sp-grade-score">{{ gotTotal }}<i>/{{ maxTotal }}</i></span>
+        <span v-if="maxTotal" class="sp-grade-rate">{{ rate }}%</span>
+        <span class="sp-grade-flex"></span>
+        <button v-if="gradedCount" class="sp-grade-clear" title="清空整卷判分" @click="emit('resetGrading')">清空</button>
+      </div>
+      <div v-if="maxTotal" class="sp-grade-bar"><i :style="{ width: rate + '%' }"></i></div>
+      <div v-else class="sp-grade-hint">框出题目后，选中它即可判对错</div>
+    </div>
+
     <div class="sp-list">
       <div v-if="!visible.length" class="sp-empty">
         <p>还没有标注</p>
@@ -32,6 +45,7 @@
             <div class="sp-item-top">
               <span class="kind" :style="{ color: metaOf(a.kind).color }">{{ metaOf(a.kind).label }}</span>
               <span class="page">第 {{ pageNo(a.pageId) }} 页</span>
+              <span v-if="gOf(a.id)" class="item-score" :style="{ color: scoreColor(a.id) }">{{ scoreText(a.id) }}</span>
             </div>
             <div class="sp-item-note">{{ a.note || '（无备注）' }}</div>
           </div>
@@ -48,6 +62,38 @@
               :style="a.kind === m.k ? { borderColor: m.color, color: m.color, background: m.wash } : {}"
               @click="emit('setKind', a.id, m.k)"
             >{{ m.label }}</button>
+          </div>
+          <div class="grade-box">
+            <div class="grade-verdicts">
+              <button
+                v-for="m in verdicts"
+                :key="m.v"
+                class="grade-v"
+                :class="{ on: gOf(a.id)?.verdict === m.v }"
+                :style="gOf(a.id)?.verdict === m.v ? { borderColor: m.color, color: '#fff', background: m.color } : { color: m.color }"
+                :title="`判为「${m.label}」，得分自动给 ${autoScoreHint(a.id, m.v)}`"
+                @click="emit('setVerdict', a.id, m.v)"
+              >{{ m.mark }} {{ m.label }}</button>
+            </div>
+            <div class="grade-nums">
+              <label class="gn">
+                <span>满分</span>
+                <input
+                  type="number" min="0" step="0.5" inputmode="decimal"
+                  :value="gOf(a.id)?.max ?? DEFAULT_MAX_SCORE"
+                  @change="onNum(a.id, 'max', $event)"
+                >
+              </label>
+              <label class="gn">
+                <span>得分</span>
+                <input
+                  type="number" min="0" step="0.5" inputmode="decimal"
+                  :value="gOf(a.id)?.got ?? 0"
+                  @change="onNum(a.id, 'got', $event)"
+                >
+              </label>
+              <span class="gn-total">分</span>
+            </div>
           </div>
           <textarea
             class="note-input"
@@ -84,8 +130,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { SheetAnno, SheetPage } from '~/utils/sheetTypes'
-import { SHEET_KINDS, sheetKindMeta } from '~/utils/sheetTypes'
+import type { SheetAnno, SheetPage, SheetGrade } from '~/utils/sheetTypes'
+import { SHEET_KINDS, SHEET_VERDICTS, DEFAULT_MAX_SCORE, sheetKindMeta, sheetVerdictMeta } from '~/utils/sheetTypes'
 
 const props = defineProps<{
   annotations: SheetAnno[]
@@ -95,6 +141,8 @@ const props = defineProps<{
   covers?: { x: number; y: number; w: number; h: number }[]
   /** 当前页码（从 1 开始） */
   pageNo?: number
+  /** 整卷判分，key 为 annotation id */
+  grading?: Record<string, SheetGrade>
 }>()
 
 const emit = defineEmits<{
@@ -105,6 +153,9 @@ const emit = defineEmits<{
   (e: 'goto', pageId: string, id: string): void
   (e: 'removeCover', index: number): void
   (e: 'focusCover', index: number): void
+  (e: 'setVerdict', id: string, verdict: string): void
+  (e: 'setScore', id: string, field: 'max' | 'got', value: number): void
+  (e: 'resetGrading'): void
 }>()
 
 const covers = computed(() => props.covers || [])
@@ -138,6 +189,57 @@ function idxOf(a: SheetAnno) {
 function pageNo(pageId: string) {
   return Math.max(1, props.pages.findIndex(p => p.id === pageId) + 1)
 }
+
+// ── 判分 ──
+const verdicts = SHEET_VERDICTS
+
+/** 未判分的题返回 null：控件显示默认满分与 0 分，但没有任何判定被选中 */
+function gOf(annoId: string): SheetGrade | null {
+  return props.grading?.[annoId] || null
+}
+
+/** 提示文案：点这个判定会把得分自动定成多少，省得用户猜 */
+function autoScoreHint(annoId: string, verdict: string) {
+  const max = gOf(annoId)?.max ?? DEFAULT_MAX_SCORE
+  if (verdict === 'right') return `${round2(max)} 分`
+  if (verdict === 'half') return `${round2(max / 2)} 分`
+  return '0 分'
+}
+
+function onNum(annoId: string, field: 'max' | 'got', e: Event) {
+  const raw = Number((e.target as HTMLInputElement).value)
+  emit('setScore', annoId, field, Number.isFinite(raw) ? raw : 0)
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100
+}
+
+/**
+ * 统计只算「现存标注」的分数。
+ * grading 里可能还留着已被删掉的框（服务端下次保存才清理），
+ * 直接按 grading 求和会把幽灵分算进总分。
+ */
+const gradedEntries = computed(() => {
+  const g = props.grading || {}
+  return props.annotations.map(a => g[a.id]).filter(Boolean) as SheetGrade[]
+})
+
+const gradedCount = computed(() => gradedEntries.value.length)
+const maxTotal = computed(() => round2(gradedEntries.value.reduce((s, g) => s + (g.max || 0), 0)))
+const gotTotal = computed(() => round2(gradedEntries.value.reduce((s, g) => s + (g.got || 0), 0)))
+const rate = computed(() => (maxTotal.value > 0 ? Math.round((gotTotal.value / maxTotal.value) * 100) : 0))
+
+function scoreText(annoId: string) {
+  const g = gOf(annoId)
+  if (!g) return ''
+  return `${sheetVerdictMeta(g.verdict).mark} ${round2(g.got)}/${round2(g.max)}`
+}
+
+function scoreColor(annoId: string) {
+  const g = gOf(annoId)
+  return g ? sheetVerdictMeta(g.verdict).color : ''
+}
 </script>
 
 <style scoped>
@@ -155,6 +257,67 @@ function pageNo(pageId: string) {
 .sp-filters {
   display: flex; flex-wrap: wrap; gap: 5px;
   padding: 0 14px 10px; flex-shrink: 0;
+}
+
+/* ── 判分汇总 ── */
+.sp-grade {
+  flex-shrink: 0;
+  margin: 0 14px 10px;
+  padding: 9px 11px 10px;
+  border-radius: 9px;
+  background: rgba(61, 53, 145, 0.045);
+  border: 0.5px solid rgba(61, 53, 145, 0.12);
+}
+.sp-grade-top { display: flex; align-items: baseline; gap: 7px; }
+.sp-grade-title {
+  font-size: 11px; color: #6b6862; letter-spacing: 0.3px;
+}
+.sp-grade-score {
+  font-family: 'DM Mono', monospace; font-size: 19px; font-weight: 600;
+  color: #1a1a18; font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.sp-grade-score i { font-style: normal; font-size: 12.5px; font-weight: 400; color: #a09e97; }
+.sp-grade-rate {
+  font-size: 11px; color: #3d3591; background: rgba(61, 53, 145, 0.09);
+  border-radius: 20px; padding: 1px 6px; font-variant-numeric: tabular-nums;
+}
+.sp-grade-flex { flex: 1; }
+.sp-grade-clear {
+  border: none; background: transparent; cursor: pointer; padding: 2px 3px;
+  font-family: 'DM Sans', sans-serif; font-size: 11.5px; color: #a09e97;
+}
+.sp-grade-clear:hover { color: #a32d2d; }
+.sp-grade-bar {
+  height: 3px; border-radius: 2px; margin-top: 7px;
+  background: rgba(0, 0, 0, 0.07); overflow: hidden;
+}
+.sp-grade-bar i { display: block; height: 100%; border-radius: 2px; background: #0f6e56; transition: width 0.18s; }
+.sp-grade-hint { font-size: 11px; color: #a09e97; margin-top: 6px; line-height: 1.4; }
+
+/* ── 单题判分控件 ── */
+.grade-box { margin-bottom: 7px; }
+.grade-verdicts { display: flex; gap: 4px; margin-bottom: 5px; }
+.grade-v {
+  flex: 1; border: 0.5px solid rgba(0, 0, 0, 0.14); background: transparent;
+  border-radius: 6px; padding: 4px 0; cursor: pointer;
+  font-family: 'DM Sans', sans-serif; font-size: 11.5px; font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+.grade-v:hover { background: rgba(0, 0, 0, 0.04); }
+.grade-nums { display: flex; align-items: center; gap: 6px; }
+.gn { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #6b6862; }
+.gn input {
+  width: 46px; box-sizing: border-box;
+  border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 5px;
+  padding: 3px 5px; font-family: 'DM Mono', monospace; font-size: 12px;
+  color: #1a1a18; background: #fff; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.gn input:focus { border-color: rgba(61, 53, 145, 0.45); }
+.gn-total { font-size: 10.5px; color: #a09e97; }
+.item-score {
+  font-family: 'DM Mono', monospace; font-size: 10.5px; font-weight: 500;
+  margin-left: auto; font-variant-numeric: tabular-nums;
 }
 .sp-chip {
   display: inline-flex; align-items: center; gap: 4px;
